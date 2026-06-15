@@ -1,0 +1,399 @@
+/* ============================================================
+   Belfast Commando — Game UI Stylesheet
+   Palette: overcast greys, brick red, amber/orange HUD accent
+   Font: bold condensed stack, heavy weights, tight tracking
+   ============================================================ */
+
+/* -- Reset & base ------------------------------------------ */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+:root {
+  --accent:       #ff7a1a;
+  --accent-glow:  rgba(255, 122, 26, 0.45);
+  --brick:        #c0392b;
+  --white:        #f0ede8;
+  --dim:          rgba(240, 237, 232, 0.55);
+  --bg-dark:      rgba(6, 7, 9, 0.86);
+  --bg-card:      rgba(14, 16, 18, 0.92);
+  font-family: "Arial Narrow", "Inter", system-ui, sans-serif;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+html, body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #000;
+}
+
+/* -- App container + canvas -------------------------------- */
+#app {
+  position: fixed;
+  inset: 0;
+  background: #000;
+}
+
+#app canvas,
+#app > canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* -- HUD overlay ------------------------------------------- */
+#hud {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  pointer-events: none;
+  color: var(--white);
+  font-family: "Arial Narrow", "Inter", system-ui, sans-serif;
+}
+
+/* Damage vignette — JS animates opacity to ~0.8 on hit */
+#hud-damage {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  background: radial-gradient(
+    ellipse at center,
+    transparent 38%,
+    rgba(200, 20, 20, 0.55) 72%,
+    rgba(180, 8, 8, 0.88) 100%
+  );
+}
+
+/* -- HUD corners ------------------------------------------- */
+.hud-corner {
+  position: absolute;
+  padding: 22px 26px;
+}
+
+.hud-corner.top-left    { top: 0; left: 0; }
+.hud-corner.top-right   { top: 0; right: 0; text-align: right; }
+.hud-corner.bottom-left  { bottom: 0; left: 0; }
+.hud-corner.bottom-right { bottom: 0; right: 0; text-align: right; }
+
+/* Dim uppercase label */
+.hud-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.20em;
+  text-transform: uppercase;
+  opacity: 0.58;
+  margin-bottom: 4px;
+}
+
+/* Score — big bold number */
+#hud-score {
+  font-size: 34px;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  line-height: 1;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.75);
+}
+
+/* Combo — accent, hidden until .active */
+#hud-combo {
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: 0.10em;
+  color: var(--accent);
+  margin-top: 6px;
+  min-height: 18px;
+  opacity: 0;
+  transform: scale(0.88);
+  transition: opacity 0.10s ease-out, transform 0.10s ease-out;
+}
+
+#hud-combo.active {
+  opacity: 1;
+  transform: scale(1);
+  text-shadow: 0 0 10px var(--accent), 0 0 22px var(--accent-glow);
+}
+
+/* Level — sector label */
+#hud-level {
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  opacity: 0.88;
+}
+
+/* Timer — monospace, larger */
+#hud-timer {
+  font-size: 26px;
+  font-weight: 700;
+  font-family: "Courier New", "Consolas", monospace;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.06em;
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.65);
+  margin-top: 3px;
+}
+
+/* Objective line — dim, small */
+#hud-objective {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  opacity: 0.46;
+  margin-top: 5px;
+}
+
+/* -- Crosshair --------------------------------------------- */
+/* Centered via translate; opacity driven by JS (0 in menu, 1 playing) */
+#crosshair {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 0;
+  height: 0;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.18s ease;
+}
+
+.ch {
+  position: absolute;
+  background: #fff;
+  /* never intercept gameplay clicks at screen center */
+  pointer-events: none;
+  /* subtle drop shadow so it reads on any scene colour */
+  box-shadow: 0 0 3px rgba(0, 0, 0, 0.95), 0 0 1px #000;
+}
+
+/* Vertical ticks (top / bottom) */
+.ch-t, .ch-b {
+  width: 2px;
+  height: 9px;
+  left: -1px;
+}
+
+/* ch-t: bottom edge 8 px above center */
+.ch-t { bottom: 8px; }
+
+/* ch-b: top edge 8 px below center */
+.ch-b { top: 8px; }
+
+/* Horizontal ticks (left / right) */
+.ch-l, .ch-r {
+  width: 9px;
+  height: 2px;
+  top: -1px;
+}
+
+/* ch-l: right edge 8 px left of center */
+.ch-l { right: 8px; }
+
+/* ch-r: left edge 8 px right of center */
+.ch-r { left: 8px; }
+
+/* -- Style callouts ---------------------------------------- */
+#hud-callouts {
+  position: absolute;
+  top: 58%;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  pointer-events: none;
+  min-width: 160px;
+}
+
+@keyframes callout-pop {
+  0%   { transform: translateY(0px)   scale(0.72); opacity: 0;   }
+  16%  { transform: translateY(-7px)  scale(1.07); opacity: 1;   }
+  32%  { transform: translateY(-12px) scale(1.00); opacity: 1;   }
+  100% { transform: translateY(-40px) scale(0.88); opacity: 0;   }
+}
+
+/* JS creates .callout divs and removes them after 1 s */
+.callout {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  line-height: 1.2;
+  animation: callout-pop 1s cubic-bezier(0.22, 0.61, 0.36, 1) forwards;
+}
+
+.callout-label {
+  font-size: 15px;
+  font-weight: 900;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--accent);
+  text-shadow: 0 0 8px rgba(255, 122, 26, 0.72);
+}
+
+.callout-pts {
+  font-size: 12px;
+  font-weight: 700;
+  color: #ffc566;
+  letter-spacing: 0.06em;
+}
+
+/* -- Health bar -------------------------------------------- */
+.hud-bar {
+  width: 220px;
+  height: 14px;
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 3px;
+  overflow: hidden;
+  margin-bottom: 5px;
+}
+
+#hud-health-fill {
+  height: 100%;
+  width: 100%;          /* JS overrides width 0-100% */
+  background: #3fb950;  /* JS overrides colour: green/amber/red */
+  border-radius: 2px;
+  transition: width 0.18s ease-out, background 0.30s ease;
+}
+
+#hud-health-text {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  opacity: 0.66;
+}
+
+/* -- Weapon label ------------------------------------------ */
+#hud-weapon {
+  font-size: 18px;
+  font-weight: 900;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  color: var(--white);
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.65);
+}
+
+/* -- Full-screen overlay (menu / pause / result) ----------- */
+#overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: auto;
+  /* Belfast night backdrop with a vignette pull */
+  background: radial-gradient(
+    ellipse at center,
+    rgba(8, 10, 13, 0.78) 0%,
+    rgba(3, 4, 6, 0.96) 100%
+  );
+}
+
+/* JS toggles .hidden to show/hide */
+#overlay.hidden {
+  display: none;
+}
+
+/* Centered card */
+#overlay-card {
+  max-width: 620px;
+  width: 90%;
+  padding: 44px 50px;
+  background: var(--bg-card);
+  border: 1px solid rgba(255, 122, 26, 0.28);
+  border-top: 2px solid var(--accent);
+  border-radius: 4px;
+  text-align: center;
+  font-family: "Arial Narrow", "Inter", system-ui, sans-serif;
+  box-shadow:
+    0 0 80px rgba(0, 0, 0, 0.85),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+/* Title */
+#overlay-title {
+  font-size: 44px;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--accent);
+  text-shadow:
+    0 0 24px rgba(255, 122, 26, 0.55),
+    0 2px 4px rgba(0, 0, 0, 0.85);
+  margin-bottom: 22px;
+  line-height: 1.05;
+}
+
+/* Body copy */
+#overlay-body {
+  font-size: 15px;
+  line-height: 1.72;
+  color: rgba(240, 237, 232, 0.78);
+  margin-bottom: 28px;
+}
+
+/* Bold highlights within body (scores, bonuses) */
+#overlay-body b {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+/* -- Controls grid ----------------------------------------- */
+/* Injected by JS as .controls-grid inside #overlay-body */
+.controls-grid {
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 6px 18px;
+  max-width: 390px;
+  margin: 20px auto 0;
+  text-align: left;
+}
+
+.controls-grid span {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: rgba(240, 237, 232, 0.52);
+  align-self: center;
+}
+
+/* Key cap chip — override the accent b rule above */
+#overlay-body .controls-grid b {
+  display: inline-block;
+  font-size: 12px;
+  font-weight: 700;
+  font-family: "Courier New", "Consolas", monospace;
+  letter-spacing: 0.04em;
+  color: var(--white);
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-bottom: 2px solid rgba(255, 255, 255, 0.30);
+  border-radius: 4px;
+  padding: 2px 8px;
+  white-space: nowrap;
+  text-shadow: none;
+}
+
+/* -- CTA hint (pulsing) ------------------------------------ */
+@keyframes pulse-hint {
+  0%, 100% { opacity: 0.52; }
+  50%       { opacity: 1.00; }
+}
+
+#overlay-hint {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--white);
+  animation: pulse-hint 1.7s ease-in-out infinite;
+}

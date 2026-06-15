@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="stylesheet" href="/src/styles.css" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Belfast Commando</title>
+    <script type="module" src="/src/main.js"></script>
+  </head>
+
+  <body>
+    <!-- Three.js renderer canvas mounts here -->
+    <div id="app"></div>
+
+    <!-- Heads-up display -->
+    <div id="hud">
+      <div id="hud-damage"></div>
+
+      <!-- top-left: score + combo -->
+      <div class="hud-corner top-left">
+        <div class="hud-label">SCORE</div>
+        <div id="hud-score">0</div>
+        <div id="hud-combo"></div>
+      </div>
+
+      <!-- top-right: level + timer -->
+      <div class="hud-corner top-right">
+        <div id="hud-level">BELFAST · SECTOR 1</div>
+        <div id="hud-timer">0:00.0</div>
+        <div id="hud-objective">Breach to the exit gate</div>
+      </div>
+
+      <!-- center crosshair -->
+      <div id="crosshair">
+        <span class="ch ch-t"></span>
+        <span class="ch ch-b"></span>
+        <span class="ch ch-l"></span>
+        <span class="ch ch-r"></span>
+      </div>
+
+      <!-- style callouts -->
+      <div id="hud-callouts"></div>
+
+      <!-- bottom-left: health -->
+      <div class="hud-corner bottom-left">
+        <div class="hud-bar"><div id="hud-health-fill"></div></div>
+        <div id="hud-health-text">100 HP</div>
+      </div>
+
+      <!-- bottom-right: weapon -->
+      <div class="hud-corner bottom-right">
+        <div class="hud-label">WEAPON</div>
+        <div id="hud-weapon">Sidearm</div>
+      </div>
+    </div>
+
+    <!-- Menu / pause / result overlay -->
+    <div id="overlay">
+      <div id="overlay-card">
+        <h1 id="overlay-title">BELFAST COMMANDO</h1>
+        <div id="overlay-body"></div>
+        <div id="overlay-hint">Click to deploy</div>
+      </div>
+    </div>
+  </body>
+</html>

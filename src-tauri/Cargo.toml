@@ -1,0 +1,33 @@
+[package]
+name = "belfast-commando"
+version = "0.1.0"
+description = "A Tauri App"
+authors = ["you"]
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "belfast_commando_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Optional Steamworks integration — enabled by `cargo build --features steam`.
+# Requires the Steam client to be running at launch (gracefully degraded if not).
+steamworks = { version = "0.13", optional = true }
+
+[features]
+# `steam` pulls in the steamworks crate.  Without this flag the crate compiles
+# with zero dependency on the Steam SDK; all commands return stub responses.
+steam = ["dep:steamworks"]
+
