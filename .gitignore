@@ -12,6 +12,9 @@ dist
 dist-ssr
 *.local
 
+# Generated AI assets (large binaries — keep out of git; curate into public/ as needed)
+assets/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

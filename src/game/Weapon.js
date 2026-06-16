@@ -8,10 +8,15 @@ const _spread = new THREE.Vector3();
 
 /** Weapon definitions — placeholder low-poly viewmodels, distinct feel. */
 const WEAPONS = [
-  { name: "Sidearm", color: 0x2b2b2b, damage: 34, rpm: 360, auto: false, pellets: 1, spread: 0.004, size: [0.12, 0.16, 0.4] },
-  { name: "SMG", color: 0x3a3f44, damage: 18, rpm: 850, auto: true, pellets: 1, spread: 0.018, size: [0.1, 0.18, 0.55] },
-  { name: "Boomstick", color: 0x4a3520, damage: 16, rpm: 95, auto: false, pellets: 8, spread: 0.07, size: [0.16, 0.18, 0.6] },
+  { name: "Sidearm", model: "weapon_pistol", color: 0x2b2b2b, damage: 34, rpm: 360, auto: false, pellets: 1, spread: 0.004, size: [0.12, 0.16, 0.4] },
+  { name: "SMG", model: "weapon_ak", color: 0x3a3f44, damage: 18, rpm: 850, auto: true, pellets: 1, spread: 0.018, size: [0.1, 0.18, 0.55] },
+  { name: "Boomstick", model: null, color: 0x4a3520, damage: 16, rpm: 95, auto: false, pellets: 8, spread: 0.07, size: [0.16, 0.18, 0.6] },
 ];
+
+// Per-weapon viewmodel transform when using a GLB (tuning surface — the source
+// images were side profiles, so the mesh length runs along X and is yawed to
+// point the barrel forward (-Z)).
+const VM = { pos: [0.2, -0.24, -0.5], rotY: -Math.PI / 2 };
 
 const MAX_EFFECTS = 64;
 
@@ -25,9 +30,10 @@ const MAX_EFFECTS = 64;
  */
 export class Weapon {
   /** @param {THREE.Camera} camera */
-  constructor(camera, scene) {
+  constructor(camera, scene, assets = null) {
     this.camera = camera;
     this.scene = scene;
+    this.assets = assets;
     this.ctx = null;
 
     this.raycaster = new THREE.Raycaster();
@@ -70,23 +76,66 @@ export class Weapon {
     if (this._gun) this.viewmodel.remove(this._gun);
     const w = this.current;
     const g = new THREE.Group();
-    const body = new THREE.Mesh(
-      new THREE.BoxGeometry(...w.size),
-      new THREE.MeshStandardMaterial({ color: w.color, roughness: 0.5, metalness: 0.3 }),
-    );
-    g.add(body);
-    // little barrel
-    const barrel = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.03, 0.03, 0.3, 8),
-      new THREE.MeshStandardMaterial({ color: 0x111111 }),
-    );
-    barrel.rotation.x = Math.PI / 2;
-    barrel.position.set(0, 0.02, -w.size[2] / 2 - 0.12);
-    g.add(barrel);
-    g.position.set(0.22, -0.2, -0.5);
+
+    const model = this.assets && w.model ? this.assets.getModel(w.model) : null;
+    if (model) {
+      model.rotation.y = VM.rotY;
+      g.add(model);
+      g.position.set(...VM.pos);
+    } else {
+      // Placeholder box gun.
+      const body = new THREE.Mesh(
+        new THREE.BoxGeometry(...w.size),
+        new THREE.MeshStandardMaterial({ color: w.color, roughness: 0.5, metalness: 0.3 }),
+      );
+      g.add(body);
+      const barrel = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.03, 0.03, 0.3, 8),
+        new THREE.MeshStandardMaterial({ color: 0x111111 }),
+      );
+      barrel.rotation.x = Math.PI / 2;
+      barrel.position.set(0, 0.02, -w.size[2] / 2 - 0.12);
+      g.add(barrel);
+      g.position.set(0.22, -0.2, -0.5);
+    }
+
     this.viewmodel.add(g);
     this._gun = g;
     this._gunRest = g.position.clone();
+    this._applySprites();
+  }
+
+  /** Apply AI VFX/decal textures once the AssetManager has loaded them. */
+  _applySprites() {
+    if (!this.assets) return;
+    const mf = this.assets.getSprite("muzzle_flash");
+    if (mf && this.muzzle) {
+      this.muzzle.material.map = mf;
+      this.muzzle.material.color.set(0xffffff);
+      this.muzzle.material.blending = THREE.AdditiveBlending;
+      this.muzzle.material.needsUpdate = true;
+    }
+    this._bloodTex = this.assets.getSprite("blood");
+    this._holeTex = this.assets.getSprite("bullet_hole");
+    this._kickTex = this.assets.getSprite("kick_impact");
+  }
+
+  /** Additive kick-impact burst at a world point (called by Player on connect). */
+  kickFx(point) {
+    const mat = new THREE.MeshBasicMaterial({
+      transparent: true,
+      opacity: 1,
+      depthWrite: false,
+      fog: false,
+      blending: THREE.AdditiveBlending,
+    });
+    if (this._kickTex) mat.map = this._kickTex;
+    else mat.color.set(0xffd27f);
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(1.5, 1.5), mat);
+    m.position.set(point.x, Math.max(point.y, 0.9), point.z);
+    m.quaternion.copy(this.camera.quaternion);
+    this.scene.add(m);
+    this._track(m, 0.28);
   }
 
   _bind() {
@@ -217,12 +266,19 @@ export class Weapon {
   }
 
   _spawnImpact(point, color, isBlood) {
-    // A small camera-facing quad that fades — cheap "decal"/spark puff.
-    const size = isBlood ? 0.4 : 0.22;
-    const mesh = new THREE.Mesh(
-      new THREE.PlaneGeometry(size, size),
-      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.95, depthWrite: false, fog: false }),
-    );
+    // A small camera-facing quad that fades — textured "decal"/spark puff.
+    // Decal sprites are dark-on-white → MultiplyBlending keys out the white.
+    const size = isBlood ? 0.55 : 0.3;
+    const tex = isBlood ? this._bloodTex : this._holeTex;
+    const mat = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.95, depthWrite: false, fog: false });
+    if (tex) {
+      mat.map = tex;
+      mat.color.set(0xffffff);
+      mat.blending = THREE.MultiplyBlending;
+    } else {
+      mat.color.set(color);
+    }
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(size, size), mat);
     mesh.position.copy(point);
     mesh.quaternion.copy(this.camera.quaternion);
     this.scene.add(mesh);

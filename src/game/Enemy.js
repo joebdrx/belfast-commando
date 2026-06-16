@@ -42,33 +42,40 @@ export class Enemy {
     this.group = new THREE.Group();
     this.group.position.copy(position);
 
-    const bodyMat = new THREE.MeshStandardMaterial({
-      color: 0xc0392b,
-      roughness: 0.7,
-      metalness: 0.05,
-    });
-    this._bodyMat = bodyMat;
+    // Prefer the AI-generated soldier GLB; fall back to placeholder shapes.
+    // `_bodyMat` drives the hit-flash and only exists for the placeholder.
+    this._bodyMat = null;
+    if (opts.model) {
+      this.group.add(opts.model);
+    } else {
+      const bodyMat = new THREE.MeshStandardMaterial({
+        color: 0xc0392b,
+        roughness: 0.7,
+        metalness: 0.05,
+      });
+      this._bodyMat = bodyMat;
 
-    // Body (capsule)
-    const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.34, 0.9, 4, 8), bodyMat);
-    body.position.y = 0.95;
-    this.group.add(body);
+      // Body (capsule)
+      const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.34, 0.9, 4, 8), bodyMat);
+      body.position.y = 0.95;
+      this.group.add(body);
 
-    // Head
-    const head = new THREE.Mesh(
-      new THREE.SphereGeometry(0.22, 10, 8),
-      new THREE.MeshStandardMaterial({ color: 0xe2b07a, roughness: 0.8 }),
-    );
-    head.position.y = 1.7;
-    this.group.add(head);
+      // Head
+      const head = new THREE.Mesh(
+        new THREE.SphereGeometry(0.22, 10, 8),
+        new THREE.MeshStandardMaterial({ color: 0xe2b07a, roughness: 0.8 }),
+      );
+      head.position.y = 1.7;
+      this.group.add(head);
 
-    // A little "rifle" so it reads as a soldier
-    const gun = new THREE.Mesh(
-      new THREE.BoxGeometry(0.08, 0.08, 0.7),
-      new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.5 }),
-    );
-    gun.position.set(0.25, 1.1, 0.35);
-    this.group.add(gun);
+      // A little "rifle" so it reads as a soldier
+      const gun = new THREE.Mesh(
+        new THREE.BoxGeometry(0.08, 0.08, 0.7),
+        new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.5 }),
+      );
+      gun.position.set(0.25, 1.1, 0.35);
+      this.group.add(gun);
+    }
 
     // Muzzle flash sprite (hidden until firing)
     this.flash = new THREE.Mesh(
@@ -82,6 +89,11 @@ export class Enemy {
       }),
     );
     this.flash.position.set(0.25, 1.1, 0.72);
+    if (opts.flashTex) {
+      this.flash.material.map = opts.flashTex;
+      this.flash.material.color.set(0xffffff);
+      this.flash.material.blending = THREE.AdditiveBlending;
+    }
     this.group.add(this.flash);
     this._flashTime = 0;
     this._hitFlash = 0;
@@ -109,10 +121,12 @@ export class Enemy {
     if (this.dead) return;
     this.health -= amount;
     if (dir) this.knock.addScaledVector(dir, force);
-    // Flinch flash (mutate emissive in place — no per-hit allocation)
-    this._bodyMat.emissive.set(0xff5544);
-    this._bodyMat.emissiveIntensity = 0.9;
-    this._hitFlash = 0.08;
+    // Flinch flash (placeholder only — mutate emissive in place, no allocation)
+    if (this._bodyMat) {
+      this._bodyMat.emissive.set(0xff5544);
+      this._bodyMat.emissiveIntensity = 0.9;
+      this._hitFlash = 0.08;
+    }
     if (this.health <= 0) this._die(dir);
   }
 
@@ -144,8 +158,8 @@ export class Enemy {
       this.knock.multiplyScalar(Math.max(0, 1 - dt * 6));
     }
 
-    // Hit-flash decay
-    if (this._hitFlash > 0) {
+    // Hit-flash decay (placeholder only)
+    if (this._hitFlash > 0 && this._bodyMat) {
       this._hitFlash -= dt;
       if (this._hitFlash <= 0) this._bodyMat.emissiveIntensity = 0;
     }

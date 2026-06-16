@@ -1,4 +1,5 @@
 import { Engine } from "./game/Engine.js";
+import { AssetManager } from "./game/AssetManager.js";
 import { Level } from "./game/Level.js";
 import { Player } from "./game/Player.js";
 import { Weapon } from "./game/Weapon.js";
@@ -38,7 +39,17 @@ class Game {
     this.audio = new Audio();
     this.score = new Score(this.hud);
     this.player = new Player(this.engine.camera, this.dom);
-    this.weapon = new Weapon(this.engine.camera, this.engine.scene);
+
+    // Shared PBR materials build instantly (flat fallback); Poly Haven textures,
+    // the overcast environment, and the AI-generated GLBs stream in over the
+    // next moment. Fire-and-forget so nothing blocks the menu→pointer-lock
+    // gesture. Weapon takes `assets` so its viewmodel can use the gun GLBs.
+    this.assets = new AssetManager(this.engine.renderer);
+    this.weapon = new Weapon(this.engine.camera, this.engine.scene, this.assets);
+    this.assets
+      .load(this.engine.scene)
+      .then(() => this.weapon._buildViewmodel()) // refresh once gun GLBs are in
+      .catch((e) => console.warn("[assets]", e));
 
     this.state = "menu"; // menu | playing | paused | dead | complete | victory
     this.levelIndex = 0;
@@ -94,7 +105,7 @@ class Game {
   _loadLevel(index) {
     if (this.level) this.level.dispose();
     this.weapon.reset();
-    this.level = new Level(this.engine.scene, index);
+    this.level = new Level(this.engine.scene, index, this.assets);
     this.ctx.level = this.level;
     this.levelIndex = index;
 

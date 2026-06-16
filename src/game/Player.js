@@ -304,6 +304,7 @@ export class Player {
       if (_tmp.dot(_forward) > KICK_CONE) {
         door.kick();
         this.ctx.score.add(150, "BREACH!");
+        this.ctx.weapon.kickFx(door.center);
         this.ctx.audio.kick();
         this.ctx.steamFirstKick();
         connected = true;
@@ -321,6 +322,7 @@ export class Player {
       if (_tmp.dot(_forward) > KICK_CONE) {
         e.takeKick(_tmp);
         this.ctx.score.add(250, "BOOT KILL!");
+        this.ctx.weapon.kickFx(e.position);
         this.ctx.audio.kick();
         this.ctx.steamFirstKick();
         connected = true;

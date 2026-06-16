@@ -13,7 +13,7 @@ const _hit = new THREE.Vector3();
  * awards style points. Placeholder = a slab of "wood".
  */
 class Door {
-  constructor(hingePos, width, openDir = 1, facing = 0) {
+  constructor(hingePos, width, openDir = 1, facing = 0, slabMat = null, slabModel = null) {
     this.width = width;
     this.open = false;
     this.openProgress = 0;
@@ -28,22 +28,30 @@ class Door {
 
     const slab = new THREE.Mesh(
       new THREE.BoxGeometry(width, 2.6, 0.14),
-      new THREE.MeshStandardMaterial({ color: 0x5a3a22, roughness: 0.85 }),
+      slabMat || new THREE.MeshStandardMaterial({ color: 0x5a3a22, roughness: 0.85 }),
     );
     slab.position.set(width / 2, 1.3, 0);
     this.pivot.add(slab);
 
-    // Handle accent
-    const handle = new THREE.Mesh(
-      new THREE.SphereGeometry(0.06, 8, 6),
-      new THREE.MeshStandardMaterial({ color: 0xd4af37, metalness: 0.6, roughness: 0.3 }),
-    );
-    handle.position.set(width - 0.18, 1.25, 0.1);
-    this.pivot.add(handle);
-
-    // World-space collider while closed (recomputed once at build).
-    this._closedBox = new THREE.Box3().setFromObject(this.pivot).expandByScalar(0.02);
+    // Collider/LOS proxy is ALWAYS the thin slab (model-independent). Compute
+    // it from the slab only, before adding the GLB.
+    this._closedBox = new THREE.Box3().setFromObject(slab).expandByScalar(0.02);
     this.center = this._closedBox.getCenter(new THREE.Vector3());
+
+    if (slabModel) {
+      // Use the AI door leaf for visuals; the slab becomes an invisible proxy.
+      slab.visible = false;
+      slabModel.position.set(width / 2, 0, 0);
+      this.pivot.add(slabModel);
+    } else {
+      // Handle accent (placeholder door only)
+      const handle = new THREE.Mesh(
+        new THREE.SphereGeometry(0.06, 8, 6),
+        new THREE.MeshStandardMaterial({ color: 0xd4af37, metalness: 0.6, roughness: 0.3 }),
+      );
+      handle.position.set(width - 0.18, 1.25, 0.1);
+      this.pivot.add(handle);
+    }
   }
 
   getCollider() {
@@ -74,9 +82,10 @@ class Door {
  * enemies, and a glowing exit gate. Difficulty scales with the level index.
  */
 export class Level {
-  constructor(scene, index = 0) {
+  constructor(scene, index = 0, assets = null) {
     this.scene = scene;
     this.index = index;
+    this.assets = assets;
     this.group = new THREE.Group();
     scene.add(this.group);
 
@@ -92,19 +101,28 @@ export class Level {
     this.spawn = new THREE.Vector3(0, 1.7, 4);
     this.exit = null;
 
+    // Pull shared, textured materials from the AssetManager when present;
+    // otherwise fall back to flat colours so the level still builds.
     this._materials = {
-      brick: new THREE.MeshStandardMaterial({ color: 0x8a4b3a, roughness: 0.95 }),
-      brickDark: new THREE.MeshStandardMaterial({ color: 0x6e3b2e, roughness: 0.95 }),
-      tarmac: new THREE.MeshStandardMaterial({ color: 0x33373b, roughness: 1.0 }),
-      concrete: new THREE.MeshStandardMaterial({ color: 0x6b6f72, roughness: 0.9 }),
-      crate: new THREE.MeshStandardMaterial({ color: 0x7a5a30, roughness: 0.8 }),
-      barrel: new THREE.MeshStandardMaterial({ color: 0x355e3b, roughness: 0.6, metalness: 0.3 }),
+      brick: this._mat("brick", 0x8a4b3a, 0.95),
+      brickDark: this._mat("brick_dark", 0x6e3b2e, 0.95),
+      tarmac: this._mat("tarmac", 0x33373b, 1.0),
+      concrete: this._mat("concrete", 0x6b6f72, 0.9),
+      crate: this._mat("crate", 0x7a5a30, 0.8),
+      barrel: this._mat("barrel", 0x355e3b, 0.6, 0.3),
+      door: this._mat("door", 0x5a3a22, 0.85),
     };
 
     this._build();
   }
 
   // ---- construction helpers ------------------------------------------------
+
+  /** Shared textured material from AssetManager, or a flat-colour fallback. */
+  _mat(slug, color, roughness = 0.9, metalness = 0.0) {
+    if (this.assets) return this.assets.getMaterial(slug);
+    return new THREE.MeshStandardMaterial({ color, roughness, metalness });
+  }
 
   _box(w, h, d, mat, x, y, z, { collider = true, los = false } = {}) {
     const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
@@ -169,18 +187,17 @@ export class Level {
       const z = -2 - rng() * (length - 12);
       const x = (rng() - 0.5) * (halfW * 1.4);
       if (rng() < 0.5) {
-        // Crate
-        this._box(1.1, 1.1, 1.1, this._materials.crate, x, 0.55, z, { los: false });
+        this._prop("crate_supply", x, z, 1.1, 1.1, 1.1, () => {
+          const m = new THREE.Mesh(new THREE.BoxGeometry(1.1, 1.1, 1.1), this._materials.crate);
+          m.position.set(x, 0.55, z);
+          this.group.add(m);
+        });
       } else {
-        // Barrel
-        const b = new THREE.Mesh(
-          new THREE.CylinderGeometry(0.45, 0.45, 1.2, 12),
-          this._materials.barrel,
-        );
-        b.position.set(x, 0.6, z);
-        this.group.add(b);
-        const box = new THREE.Box3().setFromObject(b);
-        this.colliders.push(box);
+        this._prop("barrel_explosive", x, z, 0.9, 1.2, 0.9, () => {
+          const b = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.45, 1.2, 12), this._materials.barrel);
+          b.position.set(x, 0.6, z);
+          this.group.add(b);
+        });
       }
     }
 
@@ -199,6 +216,9 @@ export class Level {
       ];
       this._addEnemy(pos, { patrol });
     }
+
+    // --- Set-dressing props (AI GLBs) ------------------------------------
+    this._setDressing(length, halfW, rng);
 
     // --- Exit gate at the far end ----------------------------------------
     const exitZ = -length + 6;
@@ -243,7 +263,8 @@ export class Level {
     // The kickable door, hinged on one side of the opening, swinging inward.
     const hinge = new THREE.Vector3(wallX, 0, zCenter - doorW / 2);
     const facing = side === -1 ? Math.PI / 2 : -Math.PI / 2;
-    const door = new Door(hinge, doorW, side, facing);
+    const doorModel = this.assets ? this.assets.getModel("door_kickable") : null;
+    const door = new Door(hinge, doorW, side, facing, this._materials.door, doorModel);
     door._baseFacing = facing;
     this.group.add(door.pivot);
     this.doors.push(door);
@@ -254,17 +275,97 @@ export class Level {
     this._addEnemy(new THREE.Vector3(roomX + side * 1.0, 0, zCenter), {});
   }
 
-  _addEnemy(pos, opts) {
+  /**
+   * Place a prop using its AI-generated GLB when available (ground-anchored at
+   * x,z), else run the fallback geometry builder. Always registers an AABB
+   * collider of the given footprint so gameplay collision is model-independent.
+   */
+  _prop(slug, x, z, w, h, d, makeFallback) {
+    const model = this.assets && this.assets.getModel(slug);
+    if (model) {
+      model.position.set(x, 0, z);
+      this.group.add(model);
+    } else {
+      makeFallback();
+    }
+    this.colliders.push(
+      new THREE.Box3(
+        new THREE.Vector3(x - w / 2, 0, z - d / 2),
+        new THREE.Vector3(x + w / 2, h, z + d / 2),
+      ),
+    );
+  }
+
+  /** Scatter purely-visual AI props along the street (big ones get colliders). */
+  _setDressing(length, halfW, rng) {
+    if (!this.assets) return;
+    const place = (slug, x, z, ry, footprint) => {
+      const m = this.assets.getModel(slug);
+      if (!m) return;
+      m.position.set(x, 0, z);
+      m.rotation.y = ry;
+      this.group.add(m);
+      if (footprint) {
+        const [hw, hd, h] = footprint;
+        this.colliders.push(
+          new THREE.Box3(
+            new THREE.Vector3(x - hw, 0, z - hd),
+            new THREE.Vector3(x + hw, h, z + hd),
+          ),
+        );
+      }
+    };
+
+    // Phone booth against a wall (cover collider).
+    place("prop_phone_booth", -halfW + 0.7, -length * 0.25, Math.PI / 2, [0.5, 0.5, 2.4]);
+    // Sandbag barricades as occasional cover.
+    for (let i = 0; i < 1 + this.index; i++) {
+      const z = -8 - rng() * (length - 16);
+      const x = (rng() - 0.5) * (halfW * 1.2);
+      place("sandbag_barricade", x, z, rng() * Math.PI, [0.9, 0.55, 1.0]);
+    }
+    // Small gutter clutter — walk-through decoration (no collider).
+    const clutter = ["prop_wheelie_bin", "prop_traffic_cone", "prop_bicycle"];
+    for (let i = 0; i < 6 + this.index * 2; i++) {
+      const slug = clutter[(rng() * clutter.length) | 0];
+      const side = rng() < 0.5 ? -1 : 1;
+      const x = side * (halfW - 0.6 - rng() * 0.7);
+      const z = -4 - rng() * (length - 10);
+      place(slug, x, z, rng() * Math.PI * 2, null);
+    }
+  }
+
+  _addEnemy(pos, opts = {}) {
+    // Alternate the two AI-generated soldier variants; fall back to placeholder.
+    if (this.assets) {
+      const slug = this.enemies.length % 2 ? "enemy_variant" : "enemy_soldier";
+      const model = this.assets.getModel(slug);
+      opts = { ...opts, flashTex: this.assets.getSprite("muzzle_flash") };
+      if (model) opts.model = model;
+    }
     const e = new Enemy(pos, opts);
     this.group.add(e.group);
     this.enemies.push(e);
   }
 
   _buildCar(x, z) {
-    // Kept axis-aligned so the AABB colliders match the visible mesh. Both the
-    // chassis and the head-height cabin block movement + line-of-sight (cover).
-    this._box(2.0, 0.9, 4.2, new THREE.MeshStandardMaterial({ color: 0x2b2b2b, roughness: 0.9 }), x, 0.7, z, { los: true });
-    this._box(1.8, 0.7, 2.0, new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.8 }), x, 1.45, z, { los: true });
+    const model = this.assets && this.assets.getModel("prop_car");
+    if (model) {
+      model.position.set(x, 0, z);
+      model.rotation.y = Math.PI / 2; // align length with the street (tune)
+      this.group.add(model);
+      // Model-independent collider + LOS footprint (cover).
+      const box = new THREE.Box3(
+        new THREE.Vector3(x - 1.0, 0, z - 2.1),
+        new THREE.Vector3(x + 1.0, 1.5, z + 2.1),
+      );
+      this.colliders.push(box);
+      this.losBlockers.push(box);
+    } else {
+      // Placeholder: axis-aligned chassis + head-height cabin.
+      this._box(2.0, 0.9, 4.2, new THREE.MeshStandardMaterial({ color: 0x2b2b2b, roughness: 0.9 }), x, 0.7, z, { los: true });
+      this._box(1.8, 0.7, 2.0, new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.8 }), x, 1.45, z, { los: true });
+    }
   }
 
   // ---- runtime API ---------------------------------------------------------
@@ -323,9 +424,10 @@ export class Level {
 
   dispose() {
     this.scene.remove(this.group);
-    // Dispose the shared material registry exactly once.
+    // `_materials` may be owned by the AssetManager and reused across levels —
+    // only dispose them if THIS level created its own flat-colour fallbacks.
     const shared = new Set(Object.values(this._materials));
-    shared.forEach((m) => m.dispose());
+    if (!this.assets) shared.forEach((m) => m.dispose());
     this.group.traverse((o) => {
       if (o.geometry) o.geometry.dispose();
       // Inline (per-mesh) materials still need disposing; skip the shared ones.
