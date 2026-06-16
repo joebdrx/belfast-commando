@@ -81,9 +81,12 @@ class Door {
 /**
  * Level
  * -----
- * Procedurally assembles a linear Belfast street segment: tarmac, red-brick
- * buildings with kickable doors into side rooms, street cover, patrolling
- * enemies, and a glowing exit gate. Difficulty scales with the level index.
+ * Procedurally assembles an OPEN Belfast quarter: a 3×3 grid of red-brick
+ * building blocks separated by a navigable street grid. Each block is an
+ * enclosed room (walls + ceiling + pitched roof) entered by kicking its door.
+ * Enemies patrol the streets and hole up inside the buildings — the sector is
+ * cleared (level complete) only when every invader is down. Difficulty and the
+ * enemy count scale with the level index.
  */
 export class Level {
   constructor(scene, index = 0, assets = null) {
@@ -104,8 +107,8 @@ export class Level {
     /** @type {Array<{root:THREE.Object3D, hitbox:THREE.Box3, collider:THREE.Box3, pos:THREE.Vector3, exploded:boolean}>} */
     this.barrels = [];
 
-    this.spawn = new THREE.Vector3(0, 1.7, 4);
-    this.exit = null;
+    this.spawn = new THREE.Vector3(-12, 1.7, 38);
+    this.exit = null; // no exit gate — clearing the sector completes the level
 
     // Pull shared, textured materials from the AssetManager when present;
     // otherwise fall back to flat colours so the level still builds.
@@ -119,13 +122,21 @@ export class Level {
       door: this._mat("door", 0x5a3a22, 0.85),
       roof: this._mat("roof", 0x474a4f, 0.85),
       pavement: this._mat("pavement", 0x6e706d, 0.92),
-      // Flat architectural materials (windows, kerbs, paint, hills).
+      // Flat architectural materials (windows, kerbs, paint, hills, ceilings).
       glass: new THREE.MeshStandardMaterial({ color: 0x121a1f, roughness: 0.16, metalness: 0.2, envMapIntensity: 1.6 }),
       frame: new THREE.MeshStandardMaterial({ color: 0xb6bbbd, roughness: 0.7 }),
       kerb: new THREE.MeshStandardMaterial({ color: 0x8b8e8b, roughness: 0.92 }),
       paint: new THREE.MeshStandardMaterial({ color: 0xeae6da, roughness: 0.55 }),
       hill: new THREE.MeshStandardMaterial({ color: 0x3a4138, roughness: 1.0 }),
+      ceiling: new THREE.MeshStandardMaterial({ color: 0x4a4d4f, roughness: 0.95 }),
     };
+
+    // Grid geometry shared across builders.
+    this.PITCH = 24; // block centre spacing (block + street)
+    this.BLOCK = 14; // building footprint (square)
+    this.WALL_H = 5;
+    this.COORDS = [-this.PITCH, 0, this.PITCH]; // block centres: -24, 0, +24
+    this.GRID_HALF = this.PITCH + this.BLOCK / 2; // outer extent: 31
 
     this._build();
   }
@@ -151,63 +162,44 @@ export class Level {
   }
 
   _build() {
-    const length = 56 + this.index * 16; // street length grows with progression
-    const halfW = 5; // street half-width
-    const wallH = 5;
+    const { COORDS, PITCH, BLOCK, WALL_H, GRID_HALF } = this;
 
-    // --- Tarmac floor -----------------------------------------------------
+    // --- Ground: wet tarmac covering the whole quarter + the spawn approach.
+    const groundSize = (GRID_HALF + 30) * 2;
     const floor = new THREE.Mesh(
-      new THREE.PlaneGeometry(halfW * 2 + 6, length + 8),
+      new THREE.PlaneGeometry(groundSize, groundSize),
       this._materials.tarmac,
     );
     floor.rotation.x = -Math.PI / 2;
-    floor.position.set(0, 0, -length / 2 + 4);
+    floor.position.set(0, 0, 0);
     this.group.add(floor);
 
-    // --- Side buildings with periodic door gaps ---------------------------
-    // We lay each side as a series of brick segments; gaps become doorways
-    // leading into a small room (with an enemy).
-    const segLen = 8;
-    const doorEveryN = 2; // a door roughly every 2 segments
-    const segments = Math.floor(length / segLen);
+    // Player deploys on the southern street, facing north into the grid.
+    this.spawn = new THREE.Vector3(-PITCH / 2, 1.7, GRID_HALF + 7);
 
-    for (let side = -1; side <= 1; side += 2) {
-      const x = side * halfW;
-      for (let s = 0; s < segments; s++) {
-        const zCenter = 2 - s * segLen;
-        const isDoor = s > 0 && s % doorEveryN === 0 && s < segments - 1;
-        if (isDoor) {
-          const doorW = 1.5;
-          // Two short wall stubs flanking the doorway.
-          const stub = (segLen - doorW) / 2;
-          this._box(0.6, wallH, stub, this._materials.brick, x, wallH / 2, zCenter + (segLen / 2 - stub / 2), { los: true });
-          this._box(0.6, wallH, stub, this._materials.brick, x, wallH / 2, zCenter - (segLen / 2 - stub / 2), { los: true });
-          // Lintel above the door
-          this._box(0.6, wallH - 2.7, doorW, this._materials.brickDark, x, 2.7 + (wallH - 2.7) / 2, zCenter, { collider: false });
-          this._spawnRoom(side, x, zCenter, doorW);
-        } else {
-          this._box(0.6, wallH, segLen, side === -1 ? this._materials.brick : this._materials.brickDark, x, wallH / 2, zCenter, { los: true });
-        }
+    const rng = mulberry32(2024 + this.index * 131);
+
+    // --- 3×3 city blocks: enclosed rooms with kickable doors. -------------
+    // Roughly half the blocks hide an invader; the rest are empty rooms to
+    // breach. Street enemies (added below) guarantee a fight regardless.
+    for (const cz of COORDS) {
+      for (const cx of COORDS) {
+        const withEnemy = rng() < 0.55;
+        this._buildBlock(cx, cz, withEnemy);
       }
     }
 
-    // End walls (start cap + far cap with exit gap handled below)
-    this._box(halfW * 2 + 0.6, wallH, 0.6, this._materials.brickDark, 0, wallH / 2, 5.5, { los: true });
+    // --- Street network paint + far horizon. ------------------------------
+    this._buildRoadPaint();
+    this._buildBackdrop();
 
-    // --- Building architecture (terraced-house look) ----------------------
-    this._buildSidewalks(length, halfW);
-    this._buildRoofs(length, halfW, wallH);
-    this._buildChimneys(length, halfW, wallH);
-    this._buildWindows(length, halfW, wallH);
-    this._buildRoadPaint(length, halfW);
-    this._buildBackdrop(length, halfW);
-
-    // --- Street cover -----------------------------------------------------
-    const rng = mulberry32(1234 + this.index * 97);
-    const coverCount = 5 + this.index * 2;
-    for (let i = 0; i < coverCount; i++) {
-      const z = -2 - rng() * (length - 12);
-      const x = (rng() - 0.5) * (halfW * 1.4);
+    // --- Street cover: crates + explosive barrels in the open lanes. ------
+    const coverCount = 6 + this.index * 2;
+    let placed = 0;
+    for (let guard = 0; placed < coverCount && guard < coverCount * 20; guard++) {
+      const x = (rng() - 0.5) * GRID_HALF * 2;
+      const z = (rng() - 0.5) * GRID_HALF * 2;
+      if (!this._inStreet(x, z)) continue;
       if (rng() < 0.5) {
         this._prop("crate_supply", x, z, 1.1, 1.1, 1.1, () => {
           const m = new THREE.Mesh(new THREE.BoxGeometry(1.1, 1.1, 1.1), this._materials.crate);
@@ -217,83 +209,213 @@ export class Level {
       } else {
         this._addBarrel(x, z);
       }
+      placed++;
     }
 
-    // Burnt-out car roadblock partway down (good cover + LOS blocker)
-    this._buildCar(0.8, -length * 0.45);
+    // Burnt-out car roadblock at a street intersection (cover + LOS blocker).
+    this._buildCar(PITCH / 2, -PITCH / 2);
 
-    // --- Street enemies (patrolling) --------------------------------------
-    const streetEnemies = 3 + this.index;
-    for (let i = 0; i < streetEnemies; i++) {
-      const z = -10 - (i / streetEnemies) * (length - 16) - rng() * 4;
-      const x = (rng() - 0.5) * (halfW * 1.2);
-      const pos = new THREE.Vector3(x, 0, z);
+    // --- Street enemies patrolling the open grid. -------------------------
+    const streetEnemies = 5 + this.index * 2;
+    let spawned = 0;
+    for (let guard = 0; spawned < streetEnemies && guard < streetEnemies * 30; guard++) {
+      const x = (rng() - 0.5) * GRID_HALF * 2;
+      const z = (rng() - 0.5) * GRID_HALF * 2;
+      if (!this._inStreet(x, z)) continue;
+      if (Math.hypot(x - this.spawn.x, z - this.spawn.z) < 9) continue; // not on top of spawn
       const patrol = [
-        new THREE.Vector3(-halfW + 1.5, 0, z),
-        new THREE.Vector3(halfW - 1.5, 0, z),
+        new THREE.Vector3(x, 0, z - 3.5),
+        new THREE.Vector3(x, 0, z + 3.5),
       ];
-      this._addEnemy(pos, { patrol });
+      this._addEnemy(new THREE.Vector3(x, 0, z), { patrol });
+      spawned++;
     }
 
-    // --- Set-dressing props (AI GLBs) ------------------------------------
-    this._setDressing(length, halfW, rng);
-
-    // --- Sectarian wall murals -------------------------------------------
-    this._addMurals(length, halfW, rng);
-
-    // --- Exit gate at the far end ----------------------------------------
-    const exitZ = -length + 6;
-    const gate = new THREE.Mesh(
-      new THREE.BoxGeometry(halfW * 2, 0.2, 0.2),
-      new THREE.MeshStandardMaterial({ color: 0x2ecc71, emissive: 0x144d2b, emissiveIntensity: 1 }),
-    );
-    gate.position.set(0, 2.6, exitZ);
-    this.group.add(gate);
-    const pillarMat = new THREE.MeshStandardMaterial({ color: 0x2ecc71, emissive: 0x0e7a3a, emissiveIntensity: 0.8 });
-    for (const sx of [-halfW + 0.3, halfW - 0.3]) {
-      const p = new THREE.Mesh(new THREE.BoxGeometry(0.3, 5, 0.3), pillarMat);
-      p.position.set(sx, 2.5, exitZ);
-      this.group.add(p);
-    }
-    this.exit = {
-      mesh: gate,
-      box: new THREE.Box3(
-        new THREE.Vector3(-halfW, 0, exitZ - 1.5),
-        new THREE.Vector3(halfW, 4, exitZ + 1.5),
-      ),
-    };
+    // --- Set-dressing props + sectarian wall murals. ----------------------
+    this._setDressing(rng);
+    this._addMurals(rng);
   }
 
-  /** Small room behind a doorway with a kickable door + one enemy. */
-  _spawnRoom(side, wallX, zCenter, doorW) {
-    const depth = 5;
-    const roomX = wallX + side * (depth / 2 + 0.3);
-    const wallH = 4;
-    const mat = this._materials.concrete;
+  /**
+   * One city block: an enclosed brick room (4 walls + floor + ceiling), a
+   * pitched roof, a chimney, surface-mounted windows, and a kickable door on
+   * the south (+Z) face. Optionally garrisons one invader inside.
+   */
+  _buildBlock(cx, cz, withEnemy) {
+    const half = this.BLOCK / 2;
+    const t = 0.6;
+    const wallH = this.WALL_H;
+    const doorW = 1.7;
+    const brick = this._materials.brick;
+    const brickDark = this._materials.brickDark;
 
-    // Back + two side walls of the room
-    this._box(0.4, wallH, doorW + 4, mat, wallX + side * (depth + 0.6), wallH / 2, zCenter, { los: true });
-    this._box(depth + 0.6, wallH, 0.4, mat, roomX, wallH / 2, zCenter + (doorW + 4) / 2, { los: true });
-    this._box(depth + 0.6, wallH, 0.4, mat, roomX, wallH / 2, zCenter - (doorW + 4) / 2, { los: true });
-    // Floor patch
-    const f = new THREE.Mesh(new THREE.PlaneGeometry(depth + 0.6, doorW + 4), this._materials.concrete);
+    // Pavement apron the building sits on (walk-over slab, no collider).
+    const pave = new THREE.Mesh(
+      new THREE.BoxGeometry(this.BLOCK + 3, 0.12, this.BLOCK + 3),
+      this._materials.pavement,
+    );
+    pave.position.set(cx, 0.06, cz);
+    this.group.add(pave);
+
+    // Interior floor.
+    const f = new THREE.Mesh(
+      new THREE.PlaneGeometry(this.BLOCK - 0.4, this.BLOCK - 0.4),
+      this._materials.concrete,
+    );
     f.rotation.x = -Math.PI / 2;
-    f.position.set(roomX, 0.01, zCenter);
+    f.position.set(cx, 0.13, cz);
     this.group.add(f);
 
-    // The kickable door, hinged on one side of the opening, swinging inward.
-    const hinge = new THREE.Vector3(wallX, 0, zCenter - doorW / 2);
-    const facing = side === -1 ? Math.PI / 2 : -Math.PI / 2;
+    // Walls: N solid, E/W solid, S split around the doorway.
+    this._box(this.BLOCK, wallH, t, brick, cx, wallH / 2, cz - half, { los: true }); // north
+    this._box(t, wallH, this.BLOCK, brickDark, cx - half, wallH / 2, cz, { los: true }); // west
+    this._box(t, wallH, this.BLOCK, brickDark, cx + half, wallH / 2, cz, { los: true }); // east
+
+    const stub = (this.BLOCK - doorW) / 2;
+    this._box(stub, wallH, t, brick, cx - (doorW / 2 + stub / 2), wallH / 2, cz + half, { los: true });
+    this._box(stub, wallH, t, brick, cx + (doorW / 2 + stub / 2), wallH / 2, cz + half, { los: true });
+    // Lintel above the door (no collider — it's overhead).
+    this._box(doorW, wallH - 2.7, t, brickDark, cx, 2.7 + (wallH - 2.7) / 2, cz + half, { collider: false });
+
+    // Ceiling — interior rooms are now enclosed overhead.
+    const ceil = new THREE.Mesh(
+      new THREE.BoxGeometry(this.BLOCK, t, this.BLOCK),
+      this._materials.ceiling,
+    );
+    ceil.position.set(cx, wallH + t / 2 - 0.05, cz);
+    this.group.add(ceil);
+
+    // Kickable door on the south face, hinged at the left jamb, swinging inward.
+    const hinge = new THREE.Vector3(cx - doorW / 2, 0, cz + half);
     const doorModel = this.assets ? this.assets.getModel("door_kickable") : null;
-    const door = new Door(hinge, doorW, side, facing, this._materials.door, doorModel);
-    door._baseFacing = facing;
+    const door = new Door(hinge, doorW, 1, 0, this._materials.door, doorModel);
     this.group.add(door.pivot);
     this.doors.push(door);
     this.colliders.push(door._closedBox);
     this.losBlockers.push(door._closedBox);
 
-    // Enemy guarding the room
-    this._addEnemy(new THREE.Vector3(roomX + side * 1.0, 0, zCenter), {});
+    // Pitched roof + chimney + windows.
+    this._buildRoof(cx, cz);
+    this._buildChimney(cx, cz);
+    this._addWindow(cx - 2.6, 3.3, cz + half, 0, 1); // south, left of door
+    this._addWindow(cx + 2.6, 3.3, cz + half, 0, 1); // south, right of door
+    this._addWindow(cx + half, 3.3, cz - 2.4, 1, 0); // east
+    this._addWindow(cx - half, 3.3, cz + 2.4, -1, 0); // west
+
+    if (withEnemy) this._addEnemy(new THREE.Vector3(cx, 0, cz), {});
+  }
+
+  /** Shallow pitched (gable) roof, ridge running along X over the block. */
+  _buildRoof(cx, cz) {
+    const half = this.BLOCK / 2;
+    const wallH = this.WALL_H;
+    const rise = 1.8;
+    const slopeLen = Math.hypot(rise, half);
+    const angle = Math.atan2(rise, half);
+    for (const sgn of [-1, 1]) {
+      const panel = new THREE.Mesh(
+        new THREE.BoxGeometry(this.BLOCK + 0.8, 0.18, slopeLen + 0.3),
+        this._materials.roof,
+      );
+      panel.position.set(cx, wallH + rise / 2, cz + (sgn * half) / 2);
+      panel.rotation.x = sgn * angle; // outer eave dips, ridge lifts to centre
+      this.group.add(panel);
+    }
+    // Ridge cap along the apex.
+    const ridge = new THREE.Mesh(
+      new THREE.BoxGeometry(this.BLOCK + 0.9, 0.22, 0.3),
+      this._materials.kerb,
+    );
+    ridge.position.set(cx, wallH + rise, cz);
+    this.group.add(ridge);
+  }
+
+  /** A brick chimney stack with pots, set near a corner of the ridge. */
+  _buildChimney(cx, cz) {
+    const ridgeY = this.WALL_H + 1.8;
+    const sx = cx + (this.BLOCK / 2 - 2.5);
+    const stack = new THREE.Mesh(new THREE.BoxGeometry(0.8, 1.4, 0.7), this._materials.brick);
+    stack.position.set(sx, ridgeY + 0.5, cz);
+    this.group.add(stack);
+    for (const ox of [-0.2, 0.2]) {
+      const pot = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.12, 0.35, 8), this._materials.kerb);
+      pot.position.set(sx + ox, ridgeY + 1.35, cz);
+      this.group.add(pot);
+    }
+  }
+
+  /**
+   * A surface-mounted sash window centred at (x,y,z) on a wall whose outward
+   * normal is (nx,nz). The frame sits just proud of the wall's outer face.
+   */
+  _addWindow(x, y, z, nx, nz) {
+    const fw = 1.0, fh = 1.3;
+    const spanX = nz !== 0; // normal ±Z → the wall runs along X
+    const frameGeo = spanX
+      ? new THREE.BoxGeometry(fw + 0.15, fh + 0.15, 0.1)
+      : new THREE.BoxGeometry(0.1, fh + 0.15, fw + 0.15);
+    const frame = new THREE.Mesh(frameGeo, this._materials.frame);
+    frame.position.set(x + nx * 0.32, y, z + nz * 0.32);
+    this.group.add(frame);
+
+    const glass = new THREE.Mesh(new THREE.PlaneGeometry(fw, fh), this._materials.glass);
+    glass.position.set(x + nx * 0.37, y, z + nz * 0.37);
+    glass.rotation.y = spanX ? (nz > 0 ? 0 : Math.PI) : (nx > 0 ? Math.PI / 2 : -Math.PI / 2);
+    this.group.add(glass);
+
+    const sill = new THREE.Mesh(
+      spanX ? new THREE.BoxGeometry(fw + 0.3, 0.1, 0.18) : new THREE.BoxGeometry(0.18, 0.1, fw + 0.3),
+      this._materials.kerb,
+    );
+    sill.position.set(x + nx * 0.3, y - fh / 2 - 0.1, z + nz * 0.3);
+    this.group.add(sill);
+  }
+
+  /** Dashed centre lines down every street lane in the grid. */
+  _buildRoadPaint() {
+    const { PITCH, GRID_HALF } = this;
+    const lanes = [-PITCH / 2, PITCH / 2]; // street centres at ±12
+    for (const sx of lanes) {
+      for (let z = -GRID_HALF; z <= GRID_HALF; z += 3.2) {
+        const dash = new THREE.Mesh(new THREE.PlaneGeometry(0.16, 1.6), this._materials.paint);
+        dash.rotation.x = -Math.PI / 2;
+        dash.position.set(sx, 0.03, z);
+        this.group.add(dash);
+      }
+    }
+    for (const sz of lanes) {
+      for (let x = -GRID_HALF; x <= GRID_HALF; x += 3.2) {
+        const dash = new THREE.Mesh(new THREE.PlaneGeometry(1.6, 0.16), this._materials.paint);
+        dash.rotation.x = -Math.PI / 2;
+        dash.position.set(x, 0.03, sz);
+        this.group.add(dash);
+      }
+    }
+  }
+
+  /** Distant hazy hills ringing the quarter, far off on the horizon. */
+  _buildBackdrop() {
+    const baseR = this.GRID_HALF + 62; // ~93m out — well beyond the buildings
+    const n = 22;
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * Math.PI * 2;
+      const r = baseR + (i % 3) * 12;
+      const hill = new THREE.Mesh(new THREE.SphereGeometry(30, 12, 8), this._materials.hill);
+      hill.scale.set(2.2, 0.6 + (i % 4) * 0.12, 1);
+      hill.position.set(Math.cos(a) * r, -14, Math.sin(a) * r);
+      this.group.add(hill);
+    }
+  }
+
+  /** True when (x,z) is in a street lane, not inside a building footprint. */
+  _inStreet(x, z) {
+    const m = this.BLOCK / 2 + 0.8;
+    for (const cz of this.COORDS) {
+      for (const cx of this.COORDS) {
+        if (Math.abs(x - cx) < m && Math.abs(z - cz) < m) return false;
+      }
+    }
+    return true;
   }
 
   /**
@@ -317,149 +439,41 @@ export class Level {
     );
   }
 
-  /** Paint sectarian murals onto the inner faces of the building walls. */
-  _addMurals(length, halfW, rng) {
+  /** Paint sectarian murals onto the street-facing (east) faces of blocks. */
+  _addMurals(rng) {
     const murals = this.assets ? this.assets.getMurals() : [];
     if (!murals.length) return;
-    const count = 3 + this.index;
-    for (let i = 0; i < count; i++) {
-      const tex = murals[(rng() * murals.length) | 0];
-      const side = rng() < 0.5 ? -1 : 1;
-      const z = -7 - rng() * (length - 16);
-      const size = 2.6 + rng() * 1.3;
-      const mesh = new THREE.Mesh(
-        new THREE.PlaneGeometry(size, size),
-        new THREE.MeshStandardMaterial({
-          map: tex,
-          roughness: 0.95,
-          metalness: 0,
-          polygonOffset: true,
-          polygonOffsetFactor: -2,
-        }),
-      );
-      // Sit just in front of the wall's inner face (walls are 0.6 thick, so the
-      // inner face is at halfW-0.3), facing the street centre.
-      mesh.position.set(side * (halfW - 0.34), 0.2 + size / 2, z);
-      mesh.rotation.y = side === -1 ? Math.PI / 2 : -Math.PI / 2;
-      this.group.add(mesh);
-    }
-  }
-
-  /** Raised, kerbed concrete pavements down both sides of the street. */
-  _buildSidewalks(length, halfW) {
-    const zc = -length / 2 + 4;
-    const face = halfW - 0.3; // wall inner face
-    const pw = 1.5; // pavement width
-    for (let side = -1; side <= 1; side += 2) {
-      const pave = new THREE.Mesh(new THREE.BoxGeometry(pw, 0.12, length + 8), this._materials.pavement);
-      pave.position.set(side * (face - pw / 2), 0.06, zc);
-      this.group.add(pave);
-      const kerb = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.2, length + 8), this._materials.kerb);
-      kerb.position.set(side * (face - pw), 0.1, zc);
-      this.group.add(kerb);
-    }
-  }
-
-  /** Pitched grey-slate roofs sloping back over each terrace. */
-  _buildRoofs(length, halfW, wallH) {
-    const zc = -length / 2 + 4;
-    const rise = 2.2, run = 2.6;
-    const slope = Math.hypot(rise, run);
-    const angle = Math.atan2(rise, run);
-    for (let side = -1; side <= 1; side += 2) {
-      const eaveX = side * (halfW - 0.1);
-      const ridgeX = side * (halfW + run);
-      const roof = new THREE.Mesh(new THREE.BoxGeometry(slope, 0.2, length + 8), this._materials.roof);
-      roof.position.set((eaveX + ridgeX) / 2, wallH + rise / 2, zc);
-      roof.rotation.z = side * angle; // outer edge lifts to the ridge
-      this.group.add(roof);
-      // eave fascia + ridge cap
-      const fascia = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.4, length + 8), this._materials.frame);
-      fascia.position.set(side * (halfW - 0.05), wallH + 0.05, zc);
-      this.group.add(fascia);
-      const ridge = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.28, length + 8), this._materials.kerb);
-      ridge.position.set(ridgeX, wallH + rise, zc);
-      this.group.add(ridge);
-    }
-  }
-
-  /** Brick chimney stacks with pots along the ridges. */
-  _buildChimneys(length, halfW, wallH) {
-    const ridgeY = wallH + 2.2;
-    for (let side = -1; side <= 1; side += 2) {
-      const cx = side * (halfW + 2.3);
-      for (let z = -3; z > -length; z -= 9) {
-        const stack = new THREE.Mesh(new THREE.BoxGeometry(0.8, 1.4, 0.7), this._materials.brick);
-        stack.position.set(cx, ridgeY + 0.5, z);
-        this.group.add(stack);
-        for (const ox of [-0.2, 0.2]) {
-          const pot = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.12, 0.35, 8), this._materials.kerb);
-          pot.position.set(cx + ox, ridgeY + 1.35, z);
-          this.group.add(pot);
-        }
+    const half = this.BLOCK / 2;
+    let count = 0;
+    const maxMurals = 4 + this.index;
+    for (const cz of this.COORDS) {
+      for (const cx of this.COORDS) {
+        if (count >= maxMurals || rng() > 0.5) continue;
+        const tex = murals[(rng() * murals.length) | 0];
+        const size = 2.6 + rng() * 1.2;
+        const mesh = new THREE.Mesh(
+          new THREE.PlaneGeometry(size, size),
+          new THREE.MeshStandardMaterial({
+            map: tex,
+            roughness: 0.95,
+            metalness: 0,
+            polygonOffset: true,
+            polygonOffsetFactor: -2,
+          }),
+        );
+        // Just proud of the east wall's outer face, facing the street.
+        mesh.position.set(cx + half + 0.33, 0.2 + size / 2, cz);
+        mesh.rotation.y = -Math.PI / 2;
+        this.group.add(mesh);
+        count++;
       }
     }
   }
 
-  /** Surface-mounted sash windows in a grid on the brick facades. */
-  _buildWindows(length, halfW, wallH) {
-    const face = halfW - 0.3;
-    const rows = [1.45, 3.4];
-    for (let side = -1; side <= 1; side += 2) {
-      const ry = side === -1 ? Math.PI / 2 : -Math.PI / 2;
-      for (let z = -2; z > -length + 3; z -= 3.2) {
-        let nearDoor = false;
-        for (const d of this.doors) {
-          if (Math.sign(d.center.x) === side && Math.abs(d.center.z - z) < 1.7) { nearDoor = true; break; }
-        }
-        if (nearDoor) continue;
-        for (const y of rows) {
-          const frame = new THREE.Mesh(new THREE.BoxGeometry(0.06, 1.4, 1.15), this._materials.frame);
-          frame.position.set(side * (face + 0.02), y, z);
-          this.group.add(frame);
-          const glass = new THREE.Mesh(new THREE.PlaneGeometry(0.92, 1.15), this._materials.glass);
-          glass.position.set(side * (face + 0.06), y, z);
-          glass.rotation.y = ry;
-          this.group.add(glass);
-          const sill = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.1, 1.3), this._materials.kerb);
-          sill.position.set(side * (face + 0.07), y - 0.72, z);
-          this.group.add(sill);
-        }
-      }
-    }
-  }
-
-  /** Dashed white centre line + solid edge lines on the wet road. */
-  _buildRoadPaint(length, halfW) {
-    const zc = -length / 2 + 4;
-    for (let z = 2; z > -length; z -= 3.2) {
-      const dash = new THREE.Mesh(new THREE.PlaneGeometry(0.16, 1.6), this._materials.paint);
-      dash.rotation.x = -Math.PI / 2;
-      dash.position.set(0, 0.03, z);
-      this.group.add(dash);
-    }
-    for (let side = -1; side <= 1; side += 2) {
-      const edge = new THREE.Mesh(new THREE.PlaneGeometry(0.12, length + 8), this._materials.paint);
-      edge.rotation.x = -Math.PI / 2;
-      edge.position.set(side * (halfW - 1.65), 0.03, zc);
-      this.group.add(edge);
-    }
-  }
-
-  /** Distant hazy hills beyond the far end (Belfast hills through the rain). */
-  _buildBackdrop(length, halfW) {
-    const farZ = -length - 12;
-    for (let i = -3; i <= 3; i++) {
-      const hill = new THREE.Mesh(new THREE.SphereGeometry(34, 14, 9), this._materials.hill);
-      hill.scale.set(1.8, 0.75, 1);
-      hill.position.set(i * 32, -16, farZ - Math.abs(i) * 5);
-      this.group.add(hill);
-    }
-  }
-
-  /** Scatter purely-visual AI props along the street (big ones get colliders). */
-  _setDressing(length, halfW, rng) {
+  /** Scatter purely-visual AI props through the streets (big ones get colliders). */
+  _setDressing(rng) {
     if (!this.assets) return;
+    const { GRID_HALF } = this;
     const place = (slug, x, z, ry, footprint) => {
       const m = this.assets.getModel(slug);
       if (!m) return;
@@ -477,21 +491,28 @@ export class Level {
       }
     };
 
-    // Phone booth against a wall (cover collider).
-    place("prop_phone_booth", -halfW + 0.7, -length * 0.25, Math.PI / 2, [0.5, 0.5, 2.4]);
-    // Sandbag barricades as occasional cover.
-    for (let i = 0; i < 1 + this.index; i++) {
-      const z = -8 - rng() * (length - 16);
-      const x = (rng() - 0.5) * (halfW * 1.2);
+    // Phone booth on a corner pavement.
+    place("prop_phone_booth", -this.PITCH / 2 + 1.2, 4, 0, [0.5, 0.5, 2.4]);
+
+    // Sandbag barricades as occasional street cover.
+    for (let i = 0; i < 2 + this.index; i++) {
+      let x, z, guard = 0;
+      do {
+        x = (rng() - 0.5) * GRID_HALF * 2;
+        z = (rng() - 0.5) * GRID_HALF * 2;
+      } while (!this._inStreet(x, z) && guard++ < 30);
       place("sandbag_barricade", x, z, rng() * Math.PI, [0.9, 0.55, 1.0]);
     }
-    // Small gutter clutter — walk-through decoration (no collider).
+
+    // Gutter clutter — walk-through decoration (no collider).
     const clutter = ["prop_wheelie_bin", "prop_traffic_cone", "prop_bicycle"];
-    for (let i = 0; i < 6 + this.index * 2; i++) {
+    for (let i = 0; i < 8 + this.index * 2; i++) {
+      let x, z, guard = 0;
+      do {
+        x = (rng() - 0.5) * GRID_HALF * 2;
+        z = (rng() - 0.5) * GRID_HALF * 2;
+      } while (!this._inStreet(x, z) && guard++ < 30);
       const slug = clutter[(rng() * clutter.length) | 0];
-      const side = rng() < 0.5 ? -1 : 1;
-      const x = side * (halfW - 0.6 - rng() * 0.7);
-      const z = -4 - rng() * (length - 10);
       place(slug, x, z, rng() * Math.PI * 2, null);
     }
   }
@@ -637,8 +658,9 @@ export class Level {
     return true;
   }
 
-  checkExit(playerPos) {
-    return this.exit ? this.exit.box.containsPoint(playerPos) : false;
+  /** Retained for compatibility; the grid has no exit gate (clear to win). */
+  checkExit() {
+    return false;
   }
 
   get enemiesRemaining() {
@@ -648,10 +670,6 @@ export class Level {
   update(dt, ctx) {
     for (const d of this.doors) d.update(dt);
     for (const e of this.enemies) e.update(dt, ctx);
-    // Pulse the exit gate.
-    if (this.exit) {
-      this.exit.mesh.material.emissiveIntensity = 1 + Math.sin(ctx.time * 4) * 0.4;
-    }
   }
 
   dispose() {

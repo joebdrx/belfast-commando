@@ -40,10 +40,12 @@ const DEFS = {
  * facing. These transforms are the tuning surface — tweak per model.
  */
 const MODEL_DEFS = {
-  // characters / enemies — stand on the ground, face +Z toward the player
-  enemy_soldier:    { size: 1.85, fit: "height", anchor: "bottom", rotY: Math.PI },
-  enemy_variant:    { size: 1.85, fit: "height", anchor: "bottom", rotY: Math.PI },
-  invader:          { size: 1.85, fit: "height", anchor: "bottom", rotY: Math.PI },
+  // characters / enemies — stand on the ground, face +Z toward the player.
+  // `darken` multiplies base colour so invaders read 25% darker (grimmer, and
+  // easier to read as hostile silhouettes against the pale overcast street).
+  enemy_soldier:    { size: 1.85, fit: "height", anchor: "bottom", rotY: Math.PI, darken: 0.75 },
+  enemy_variant:    { size: 1.85, fit: "height", anchor: "bottom", rotY: Math.PI, darken: 0.75 },
+  invader:          { size: 1.85, fit: "height", anchor: "bottom", rotY: Math.PI, darken: 0.75 },
   player_fighter:   { size: 1.85, fit: "height", anchor: "bottom", rotY: Math.PI },
   // first-person viewmodels — centred, scaled by their longest axis
   weapon_ak:        { size: 0.62, fit: "max", anchor: "center", rotY: 0 },
@@ -184,7 +186,14 @@ export class AssetManager {
       base.scene.traverse((o) => {
         if (o.isMesh) o.frustumCulled = false; // skinned bounds animate; avoid pop-out
         const mats = o.material ? (Array.isArray(o.material) ? o.material : [o.material]) : [];
-        for (const m of mats) if (m && m.metalness !== undefined) { m.metalness = 0; m.needsUpdate = true; }
+        for (const m of mats) {
+          if (!m) continue;
+          if (m.metalness !== undefined) m.metalness = 0;
+          // 25% darker — grimmer invaders, read as hostile silhouettes. Clones
+          // share these materials, so darkening the source once covers them all.
+          if (m.color) m.color.multiplyScalar(0.75);
+          m.needsUpdate = true;
+        }
       });
       // Measure the TRUE animated height. This rig's geometry bounding box is
       // tiny (~0.017m); the SKELETON poses it to ~1.7m, so we must measure with
@@ -294,6 +303,7 @@ export class AssetManager {
         if (!m || m.metalness === undefined) continue;
         m.metalness = 0;
         if (m.roughness !== undefined) m.roughness = Math.min(1, Math.max(0.6, m.roughness));
+        if (def.darken && m.color) m.color.multiplyScalar(def.darken);
         m.needsUpdate = true;
       }
     });

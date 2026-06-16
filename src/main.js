@@ -116,7 +116,7 @@ class Game {
 
     this.hud.setLevel(index + 1);
     this.hud.setWeapon(this.weapon.current.name);
-    this.hud.setObjective("Breach to the exit gate");
+    this.hud.setObjective("Eliminate all invaders");
     this.hud.setHealth(this.player.health, this.player.maxHealth);
     this.hud.hideOverlay();
     this.hud.setCrosshairActive(true);
@@ -262,12 +262,12 @@ class Game {
     this.hud.setTimer(this.score.levelTime);
     this.hud.setObjective(
       this.level.enemiesRemaining > 0
-        ? `Hostiles: ${this.level.enemiesRemaining}  ·  Reach the exit`
-        : "Sector clear — reach the exit!",
+        ? `Invaders remaining: ${this.level.enemiesRemaining}`
+        : "Sector clear!",
     );
 
-    // Win condition: reach the exit gate.
-    if (this.level.checkExit(this.player.position)) {
+    // Win condition: every invader in the sector is down.
+    if (this.level.enemiesRemaining === 0) {
       this._completeLevel();
     }
   }

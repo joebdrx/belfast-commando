@@ -35,7 +35,9 @@ export class Engine {
     const skyTop = new THREE.Color(0x595f64);
     const skyBottom = new THREE.Color(0x868b8e);
     this.scene.background = skyBottom.clone();
-    this.scene.fog = new THREE.FogExp2(0x868c90, 0.021);
+    // Lighter haze than a tight street — the open grid needs the far blocks
+    // and the horizon hills to read through the rain.
+    this.scene.fog = new THREE.FogExp2(0x868c90, 0.015);
 
     // --- Camera (the player's eyes) --------------------------------------
     this.camera = new THREE.PerspectiveCamera(
