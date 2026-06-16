@@ -25,3 +25,7 @@ assets/
 *.njsproj
 *.sln
 *.sw?
+
+# Playwright MCP output + scratch screenshots
+.playwright-mcp/
+/*.jpeg

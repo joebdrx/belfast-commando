@@ -1,0 +1,22 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Belfast Commando — Model Viewer (dev)</title>
+    <style>
+      html, body { margin: 0; height: 100%; overflow: hidden; background: #9aa3a8; font-family: monospace; }
+      #labels { position: fixed; inset: 0; pointer-events: none; }
+      .lbl {
+        position: absolute; top: 0; left: 0;
+        color: #fff; background: rgba(0, 0, 0, 0.65);
+        padding: 1px 5px; font-size: 12px; white-space: nowrap; border-radius: 3px;
+      }
+      #hint { position: fixed; top: 6px; left: 6px; color: #111; font-size: 12px; background: rgba(255,255,255,.5); padding: 2px 6px; }
+    </style>
+  </head>
+  <body>
+    <div id="labels"></div>
+    <div id="hint">camera: ?view=front|side|top  ·  axes: X=red Y=green Z=blue(+Z toward front camera)</div>
+    <script type="module" src="/src/viewer.js"></script>
+  </body>
+</html>

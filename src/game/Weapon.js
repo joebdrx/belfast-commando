@@ -8,15 +8,17 @@ const _spread = new THREE.Vector3();
 
 /** Weapon definitions — placeholder low-poly viewmodels, distinct feel. */
 const WEAPONS = [
-  { name: "Sidearm", model: "weapon_pistol", color: 0x2b2b2b, damage: 34, rpm: 360, auto: false, pellets: 1, spread: 0.004, size: [0.12, 0.16, 0.4] },
-  { name: "SMG", model: "weapon_ak", color: 0x3a3f44, damage: 18, rpm: 850, auto: true, pellets: 1, spread: 0.018, size: [0.1, 0.18, 0.55] },
-  { name: "Boomstick", model: null, color: 0x4a3520, damage: 16, rpm: 95, auto: false, pellets: 8, spread: 0.07, size: [0.16, 0.18, 0.6] },
+  // vmRotY yaws the GLB so the barrel points forward (-Z). The source images
+  // were side profiles, so each mesh's length runs along X — but the two guns
+  // happen to face opposite directions, hence opposite signs (verified in the
+  // model viewer).
+  { name: "Sidearm", model: "weapon_pistol", vmRotY: -Math.PI / 2, color: 0x2b2b2b, damage: 34, rpm: 360, auto: false, pellets: 1, spread: 0.004, size: [0.12, 0.16, 0.4] },
+  { name: "SMG", model: "weapon_ak", vmRotY: Math.PI / 2, color: 0x3a3f44, damage: 18, rpm: 850, auto: true, pellets: 1, spread: 0.018, size: [0.1, 0.18, 0.55] },
+  { name: "Boomstick", model: null, vmRotY: 0, color: 0x4a3520, damage: 16, rpm: 95, auto: false, pellets: 8, spread: 0.07, size: [0.16, 0.18, 0.6] },
 ];
 
-// Per-weapon viewmodel transform when using a GLB (tuning surface — the source
-// images were side profiles, so the mesh length runs along X and is yawed to
-// point the barrel forward (-Z)).
-const VM = { pos: [0.2, -0.24, -0.5], rotY: -Math.PI / 2 };
+// Shared viewmodel offset (lower-right of the view).
+const VM = { pos: [0.2, -0.24, -0.5] };
 
 const MAX_EFFECTS = 64;
 
@@ -79,7 +81,7 @@ export class Weapon {
 
     const model = this.assets && w.model ? this.assets.getModel(w.model) : null;
     if (model) {
-      model.rotation.y = VM.rotY;
+      model.rotation.y = w.vmRotY || 0;
       g.add(model);
       g.position.set(...VM.pos);
     } else {

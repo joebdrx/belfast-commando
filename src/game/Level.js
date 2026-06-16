@@ -352,12 +352,12 @@ export class Level {
     const model = this.assets && this.assets.getModel("prop_car");
     if (model) {
       model.position.set(x, 0, z);
-      model.rotation.y = Math.PI / 2; // align length with the street (tune)
+      model.rotation.y = 0; // broadside across the street (roadblock; length runs along X)
       this.group.add(model);
-      // Model-independent collider + LOS footprint (cover).
+      // Model-independent collider + LOS footprint (cover), matching the broadside footprint.
       const box = new THREE.Box3(
-        new THREE.Vector3(x - 1.0, 0, z - 2.1),
-        new THREE.Vector3(x + 1.0, 1.5, z + 2.1),
+        new THREE.Vector3(x - 2.1, 0, z - 1.0),
+        new THREE.Vector3(x + 2.1, 1.5, z + 1.0),
       );
       this.colliders.push(box);
       this.losBlockers.push(box);

@@ -80,6 +80,8 @@ class Game {
 
     this._last = performance.now();
     requestAnimationFrame(this._loop.bind(this));
+
+    if (import.meta.env.DEV) window.__game = this; // dev-only debug handle
   }
 
   // ---- state -------------------------------------------------------------

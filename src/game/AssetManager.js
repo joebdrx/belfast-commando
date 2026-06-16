@@ -191,7 +191,20 @@ export class AssetManager {
     wrap.add(root);
     wrap.scale.setScalar(scale);
     wrap.traverse((o) => {
-      if (o.isMesh) o.frustumCulled = true;
+      if (!o.isMesh) return;
+      o.frustumCulled = true;
+      // hunyuan's `enable_pbr` exports these as fully metallic (metalness=1,
+      // no metalness map). A solid-metal surface has no diffuse colour and only
+      // shows environment reflections — so faces/normals pointing at a dark part
+      // of the overcast HDRI render as a black box. These are cloth/skin/plastic
+      // placeholders, so force them non-metallic and reasonably rough.
+      const mats = Array.isArray(o.material) ? o.material : [o.material];
+      for (const m of mats) {
+        if (!m || m.metalness === undefined) continue;
+        m.metalness = 0;
+        if (m.roughness !== undefined) m.roughness = Math.min(1, Math.max(0.6, m.roughness));
+        m.needsUpdate = true;
+      }
     });
     return wrap;
   }
