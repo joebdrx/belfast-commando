@@ -14,6 +14,7 @@ export class HUD {
     this.health = this.$("hud-health-fill");
     this.healthText = this.$("hud-health-text");
     this.weapon = this.$("hud-weapon");
+    this.ammo = this.$("hud-ammo");
     this.objective = this.$("hud-objective");
     this.level = this.$("hud-level");
     this.callouts = this.$("hud-callouts");
@@ -58,6 +59,18 @@ export class HUD {
 
   setWeapon(name) {
     if (this.weapon) this.weapon.textContent = name;
+  }
+
+  setAmmo(current, mag, reloading) {
+    if (!this.ammo) return;
+    if (reloading) {
+      this.ammo.textContent = "RELOADING…";
+      this.ammo.classList.add("reloading");
+    } else {
+      this.ammo.textContent = `${current} / ${mag}`;
+      this.ammo.classList.remove("reloading");
+      this.ammo.classList.toggle("low", current <= Math.ceil(mag * 0.25));
+    }
   }
 
   setLevel(n) {

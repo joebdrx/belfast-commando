@@ -28,10 +28,17 @@ export class Enemy {
     this.sightRange = 32;
     this.damage = 6; // weak — they chip you, momentum is king
 
-    // Patrol
+    // Patrol / chase
     this.patrol = opts.patrol || null;
     this.patrolIndex = 0;
     this.speed = 1.6;
+    this.runSpeed = 3.6;
+    this.chaseRange = 7; // run at the player until this close, then stop & shoot
+
+    // Skeletal animation (rigged enemies)
+    this.mixer = null;
+    this.actions = null;
+    this._anim = null;
 
     // Knockback velocity (decays each frame)
     this.knock = new THREE.Vector3();
@@ -42,10 +49,18 @@ export class Enemy {
     this.group = new THREE.Group();
     this.group.position.copy(position);
 
-    // Prefer the AI-generated soldier GLB; fall back to placeholder shapes.
+    // Prefer the rigged + animated invader; then a static GLB; then placeholder.
     // `_bodyMat` drives the hit-flash and only exists for the placeholder.
     this._bodyMat = null;
-    if (opts.model) {
+    if (opts.rigged) {
+      this.group.add(opts.rigged.object3D);
+      this.mixer = new THREE.AnimationMixer(opts.rigged.object3D);
+      this.actions = {};
+      for (const [name, clip] of Object.entries(opts.rigged.clips)) {
+        this.actions[name] = this.mixer.clipAction(clip);
+      }
+      this._setAnim("idle");
+    } else if (opts.model) {
       this.group.add(opts.model);
     } else {
       const bodyMat = new THREE.MeshStandardMaterial({
@@ -147,11 +162,28 @@ export class Enemy {
     }
   }
 
+  /** Crossfade to a named animation clip (walk/run/idle). */
+  _setAnim(name) {
+    if (!this.actions || this._anim === name) return;
+    const next = this.actions[name] || this.actions.idle || this.actions.walk;
+    if (!next) return;
+    next.reset();
+    next.enabled = true;
+    next.setEffectiveWeight(1);
+    next.fadeIn(0.2);
+    next.play();
+    if (this._anim && this.actions[this._anim] && this.actions[this._anim] !== next) {
+      this.actions[this._anim].fadeOut(0.2);
+    }
+    this._anim = name;
+  }
+
   /**
    * @param {number} dt
    * @param {object} ctx { camera, player, level }
    */
   update(dt, ctx) {
+    if (this.mixer && !this.dead) this.mixer.update(dt);
     // Apply + decay knockback (slides the corpse/enemy back).
     if (this.knock.lengthSq() > 0.0001) {
       this.group.position.addScaledVector(this.knock, dt);
@@ -194,13 +226,25 @@ export class Enemy {
     if (canSee) {
       // Face the player (yaw only).
       this.group.rotation.y = Math.atan2(_toPlayer.x, _toPlayer.z);
-      this.fireTimer -= dt;
-      if (this.fireTimer <= 0) {
-        this.fireTimer = this.fireCooldown;
-        this._shoot(ctx);
+      if (dist > this.chaseRange) {
+        // Charge the player.
+        _flat.copy(_toPlayer).setY(0).normalize();
+        this.group.position.addScaledVector(_flat, this.runSpeed * dt);
+        this._setAnim("run");
+      } else {
+        // In range — stand and shoot.
+        this._setAnim("idle");
+        this.fireTimer -= dt;
+        if (this.fireTimer <= 0) {
+          this.fireTimer = this.fireCooldown;
+          this._shoot(ctx);
+        }
       }
     } else if (this.patrol && this.patrol.length > 1) {
       this._doPatrol(dt, ctx);
+      this._setAnim("walk");
+    } else {
+      this._setAnim("idle");
     }
   }
 

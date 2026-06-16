@@ -161,6 +161,55 @@ export class Audio {
     this._tone(520, 0.02, 0.08, "square");
   }
 
+  /** Magazine reload — two mechanical clicks (mag out, mag in). */
+  reload() {
+    if (!this._ok()) return;
+    this._click(0);
+    this._click(0.18);
+  }
+
+  /** Empty-chamber dry-fire click. */
+  dryFire() {
+    this._click(0, 0.5);
+  }
+
+  _click(delay = 0, gain = 0.35) {
+    if (!this._ok()) return;
+    const n = this._noise(0.03);
+    const hp = this.ctx.createBiquadFilter();
+    hp.type = "highpass";
+    hp.frequency.value = 1800;
+    n.connect(hp);
+    const t = this._now() + delay;
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(gain, t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.04);
+    hp.connect(g);
+    g.connect(this.master);
+    n.start(t);
+    n.stop(t + 0.05);
+    setTimeout(() => { try { g.disconnect(); } catch (_) {} }, (delay + 0.1) * 1000 + 60);
+  }
+
+  /** Barrel explosion — low boom + noise blast. */
+  explosion(pos, listenerPos) {
+    if (!this._ok()) return;
+    let vol = 0.9;
+    if (pos && listenerPos) vol = Math.max(0.2, Math.min(0.95, 14 / (pos.distanceTo(listenerPos) + 6)));
+    // Low boom sweep
+    this._tone(120, vol, 0.6, "sine", 38);
+    // Noise blast
+    const n = this._noise(0.5);
+    const lp = this.ctx.createBiquadFilter();
+    lp.type = "lowpass";
+    lp.frequency.setValueAtTime(2200, this._now());
+    lp.frequency.exponentialRampToValueAtTime(200, this._now() + 0.5);
+    n.connect(lp);
+    this._env(lp, vol * 0.8, 0.002, 0.5);
+    n.start();
+    n.stop(this._now() + 0.55);
+  }
+
   /** Steady downward synth note as a generic tone. */
   _tone(freq, gain, decay, type = "sine", endFreq = null) {
     if (!this._ok()) return;

@@ -290,6 +290,24 @@ html, body {
   text-shadow: 0 2px 6px rgba(0, 0, 0, 0.65);
 }
 
+#hud-ammo {
+  font-size: 40px;
+  font-weight: 900;
+  line-height: 1;
+  letter-spacing: 0.02em;
+  color: var(--white);
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.7);
+  margin-bottom: 4px;
+}
+#hud-ammo.low {
+  color: #f85149;
+}
+#hud-ammo.reloading {
+  font-size: 22px;
+  color: var(--accent);
+  letter-spacing: 0.12em;
+}
+
 /* -- Full-screen overlay (menu / pause / result) ----------- */
 #overlay {
   position: fixed;

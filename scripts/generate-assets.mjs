@@ -62,6 +62,11 @@ const SUFFIX = {
 // model3d: true  -> image + hunyuan 3D
 // model3d: false -> image only
 const ASSETS = [
+  // ---- First-person arms viewmodel (3D) — gripping pose, reused across guns ----
+  { slug: "fp_arms_grip", cat: "model", model3d: true, size: "square_hd",
+    prompt: "First-person viewmodel of a pair of rugged forearms and hands wearing black tactical gloves with a green armband, both hands together extended forward in a two-handed weapon grip (as if holding a rifle), seen from the player's own point of view from behind the wrists, fists closed" },
+  { slug: "fp_arms_pistol", cat: "model", model3d: true, size: "square_hd",
+    prompt: "First-person viewmodel of two hands in black tactical gloves with a green armband gripping a small pistol with both hands, arms extending forward away from the viewer, seen from the player's point of view" },
   // ---- Weapons (3D) ----
   { slug: "weapon_ak", cat: "model", model3d: true, size: "square_hd",
     prompt: "Low-poly AK-47 style assault rifle with green tape wraps on the stock, red wooden handguard, modern iron sights, side profile view" },

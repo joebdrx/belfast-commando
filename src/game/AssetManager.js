@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { RGBELoader } from "three/examples/jsm/loaders/RGBELoader.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { MeshoptDecoder } from "three/examples/jsm/libs/meshopt_decoder.module.js";
+import { clone as cloneSkeleton } from "three/examples/jsm/utils/SkeletonUtils.js";
 
 const BASE = import.meta.env.BASE_URL || "/";
 
@@ -40,11 +41,13 @@ const MODEL_DEFS = {
   // characters / enemies — stand on the ground, face +Z toward the player
   enemy_soldier:    { size: 1.85, fit: "height", anchor: "bottom", rotY: Math.PI },
   enemy_variant:    { size: 1.85, fit: "height", anchor: "bottom", rotY: Math.PI },
+  invader:          { size: 1.85, fit: "height", anchor: "bottom", rotY: Math.PI },
   player_fighter:   { size: 1.85, fit: "height", anchor: "bottom", rotY: Math.PI },
   // first-person viewmodels — centred, scaled by their longest axis
   weapon_ak:        { size: 0.62, fit: "max", anchor: "center", rotY: 0 },
   weapon_pistol:    { size: 0.34, fit: "max", anchor: "center", rotY: 0 },
   viewmodel_hands:  { size: 0.45, fit: "max", anchor: "center", rotY: 0 },
+  fp_arms_grip:     { size: 0.55, fit: "max", anchor: "center", rotY: 0 },
   kick_boot:        { size: 0.40, fit: "max", anchor: "center", rotY: 0 },
   // props — stand on the ground
   door_kickable:    { size: 2.55, fit: "height", anchor: "bottom", rotY: 0 },
@@ -77,6 +80,7 @@ export class AssetManager {
     this.materials = {};
     this.models = {}; // slug -> normalised template Object3D (cloned per use)
     this.sprites = {}; // name -> THREE.Texture
+    this._riggedEnemy = null; // { scene, clips:{walk,run,idle} }
     this.loaded = 0;
     this.total = Object.keys(DEFS).length;
 
@@ -139,9 +143,74 @@ export class AssetManager {
       onProgress && onProgress(this.loaded, this.total);
     });
 
-    // Environment map, 3D models, and 2D sprites run alongside the textures.
+    // Environment map, 3D models, 2D sprites, and the rigged enemy run alongside.
     const envJob = scene ? this._loadEnvironment(scene) : Promise.resolve();
-    await Promise.all([...jobs, envJob, this.loadModels(), this.loadSprites()]);
+    await Promise.all([...jobs, envJob, this.loadModels(), this.loadSprites(), this._loadRiggedEnemy()]);
+  }
+
+  /** Load the skinned, animated enemy (mesh + walk/run/idle clips). */
+  async _loadRiggedEnemy() {
+    try {
+      const base = await this.gltfLoader.loadAsync(`${BASE}models/enemy_rigged.glb`);
+      const clips = {};
+      if (base.animations[0]) clips.walk = base.animations[0];
+      const run = await this.gltfLoader.loadAsync(`${BASE}models/anim_run.glb`).catch(() => null);
+      if (run && run.animations[0]) clips.run = run.animations[0];
+      const idle = await this.gltfLoader.loadAsync(`${BASE}models/anim_idle.glb`).catch(() => null);
+      if (idle && idle.animations[0]) clips.idle = idle.animations[0];
+      // Normalise materials (kill hunyuan-style full metalness if present).
+      base.scene.traverse((o) => {
+        if (o.isMesh) o.frustumCulled = false; // skinned bounds animate; avoid pop-out
+        const mats = o.material ? (Array.isArray(o.material) ? o.material : [o.material]) : [];
+        for (const m of mats) if (m && m.metalness !== undefined) { m.metalness = 0; m.needsUpdate = true; }
+      });
+      // Measure the TRUE animated height. This rig's geometry bounding box is
+      // tiny (~0.017m); the SKELETON poses it to ~1.7m, so we must measure with
+      // a clip applied — otherwise the normalisation scale explodes the mesh.
+      let height = 1.7;
+      if (clips.walk) {
+        const tmp = new THREE.AnimationMixer(base.scene);
+        tmp.clipAction(clips.walk).play();
+        tmp.update(0.2);
+        base.scene.updateMatrixWorld(true);
+        height = new THREE.Box3().setFromObject(base.scene).getSize(new THREE.Vector3()).y || 1.7;
+        tmp.stopAllAction();
+      }
+      this._riggedEnemy = { scene: base.scene, clips, height };
+    } catch {
+      this._riggedEnemy = null;
+    }
+  }
+
+  hasRiggedEnemy() {
+    return !!this._riggedEnemy;
+  }
+
+  /** A fresh clone of the rigged character for use as first-person arms,
+   *  with its bones exposed by name for posing. */
+  getFpArms() {
+    if (!this._riggedEnemy) return null;
+    const object3D = cloneSkeleton(this._riggedEnemy.scene);
+    const bones = {};
+    object3D.traverse((o) => {
+      if (o.isBone) bones[o.name] = o;
+    });
+    return { object3D, bones, height: this._riggedEnemy.height || 1.7 };
+  }
+
+  /** A fresh animated enemy instance: normalised Object3D + its animation clips. */
+  getRiggedEnemy() {
+    if (!this._riggedEnemy) return null;
+    const inner = cloneSkeleton(this._riggedEnemy.scene);
+    // The rig's natural front is +Z, which is what Enemy's facing math
+    // (group.rotation.y = atan2(toPlayer)) expects — so NO 180° flip.
+    inner.rotation.y = 0;
+    const wrap = new THREE.Group();
+    wrap.add(inner);
+    // Scale by the measured animated height (NOT the misleading geometry bbox).
+    // The model is already feet-at-origin and centred at natural scale.
+    wrap.scale.setScalar(1.85 / (this._riggedEnemy.height || 1.7));
+    return { object3D: wrap, clips: this._riggedEnemy.clips };
   }
 
   /** Load the 2D VFX/decal sprite textures. */

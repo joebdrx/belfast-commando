@@ -86,9 +86,18 @@ export class Player {
       const lim = Math.PI / 2 - 0.02;
       this.pitch = Math.max(-lim, Math.min(lim, this.pitch));
     };
+    // Clear all held keys when focus/pointer-lock is lost, so movement keys
+    // never get "stuck" (and never block look) after tabbing away.
+    this._onBlur = () => {
+      this.keys = Object.create(null);
+    };
     window.addEventListener("keydown", this._onKeyDown);
     window.addEventListener("keyup", this._onKeyUp);
     window.addEventListener("mousemove", this._onMouseMove);
+    window.addEventListener("blur", this._onBlur);
+    document.addEventListener("pointerlockchange", () => {
+      if (document.pointerLockElement !== this.dom) this._onBlur();
+    });
     // Note: firing input is owned by Weapon (mousedown/up).
   }
 
@@ -329,6 +338,20 @@ export class Player {
       }
     }
 
+    // Barrels — a boot to a barrel detonates it.
+    for (const bl of this.ctx.level.barrels) {
+      if (bl.exploded) continue;
+      _tmp.copy(bl.pos).sub(eye);
+      _tmp.y = 0;
+      const dist = _tmp.length();
+      if (dist > KICK_RANGE + 0.4) continue;
+      _tmp.normalize();
+      if (_tmp.dot(_forward) > KICK_CONE) {
+        this.ctx.level.explodeBarrel(bl, this.ctx);
+        connected = true;
+      }
+    }
+
     if (!connected) this.ctx.audio.kickWhiff();
   }
 
@@ -354,5 +377,6 @@ export class Player {
     window.removeEventListener("keydown", this._onKeyDown);
     window.removeEventListener("keyup", this._onKeyUp);
     window.removeEventListener("mousemove", this._onMouseMove);
+    window.removeEventListener("blur", this._onBlur);
   }
 }

@@ -34,7 +34,11 @@ class Door {
     this.pivot.add(slab);
 
     // Collider/LOS proxy is ALWAYS the thin slab (model-independent). Compute
-    // it from the slab only, before adding the GLB.
+    // it from the slab only, before adding the GLB. The pivot's world matrix
+    // MUST be updated first — Box3.expandByObject doesn't update parents, so
+    // without this the box lands at the slab's LOCAL position (~0.75,1.3,0)
+    // instead of the real doorway, making doors un-kickable.
+    this.pivot.updateMatrixWorld(true);
     this._closedBox = new THREE.Box3().setFromObject(slab).expandByScalar(0.02);
     this.center = this._closedBox.getCenter(new THREE.Vector3());
 
@@ -97,6 +101,8 @@ export class Level {
     this.doors = [];
     /** @type {Enemy[]} */
     this.enemies = [];
+    /** @type {Array<{root:THREE.Object3D, hitbox:THREE.Box3, collider:THREE.Box3, pos:THREE.Vector3, exploded:boolean}>} */
+    this.barrels = [];
 
     this.spawn = new THREE.Vector3(0, 1.7, 4);
     this.exit = null;
@@ -193,11 +199,7 @@ export class Level {
           this.group.add(m);
         });
       } else {
-        this._prop("barrel_explosive", x, z, 0.9, 1.2, 0.9, () => {
-          const b = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.45, 1.2, 12), this._materials.barrel);
-          b.position.set(x, 0.6, z);
-          this.group.add(b);
-        });
+        this._addBarrel(x, z);
       }
     }
 
@@ -335,13 +337,84 @@ export class Level {
     }
   }
 
+  /** A shootable/kickable explosive barrel (tracked for the explosion system). */
+  _addBarrel(x, z) {
+    const w = 0.9, h = 1.2, d = 0.9;
+    let root;
+    const model = this.assets && this.assets.getModel("barrel_explosive");
+    if (model) {
+      model.position.set(x, 0, z);
+      this.group.add(model);
+      root = model;
+    } else {
+      root = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.45, h, 12), this._materials.barrel);
+      root.position.set(x, h / 2, z);
+      this.group.add(root);
+    }
+    const collider = new THREE.Box3(
+      new THREE.Vector3(x - w / 2, 0, z - d / 2),
+      new THREE.Vector3(x + w / 2, h, z + d / 2),
+    );
+    this.colliders.push(collider);
+    const hitbox = new THREE.Box3(
+      new THREE.Vector3(x - 0.5, 0, z - 0.5),
+      new THREE.Vector3(x + 0.5, 1.35, z + 0.5),
+    );
+    this.barrels.push({ root, hitbox, collider, pos: new THREE.Vector3(x, 0.6, z), exploded: false });
+  }
+
+  /** Detonate a barrel: VFX + sound, radial damage to enemies/player, chain. */
+  explodeBarrel(barrel, ctx) {
+    if (this._disposed || !barrel || barrel.exploded) return;
+    barrel.exploded = true;
+
+    // Remove visual + movement collider.
+    this.group.remove(barrel.root);
+    const ci = this.colliders.indexOf(barrel.collider);
+    if (ci >= 0) this.colliders.splice(ci, 1);
+    this._activeColliders = null; // invalidate getColliders() cache
+
+    ctx.weapon.explosionFx(barrel.pos);
+    ctx.audio.explosion(barrel.pos, ctx.camera.position);
+    ctx.score.add(40, "BOOM!");
+
+    const R = 5.0;
+    const _v = new THREE.Vector3();
+    for (const e of this.enemies) {
+      if (e.dead) continue;
+      const dist = e.position.distanceTo(barrel.pos);
+      if (dist < R) {
+        _v.copy(e.position).sub(barrel.pos).setY(0).normalize();
+        const falloff = 1 - dist / R;
+        e.takeDamage(200 * falloff, _v, 12 * falloff);
+      }
+    }
+    // Splash the player if too close.
+    const pd = ctx.player.position.distanceTo(barrel.pos);
+    if (pd < R * 0.7) {
+      ctx.player.damage(Math.round(35 * (1 - pd / (R * 0.7))));
+      ctx.hud.flashDamage();
+    }
+    // Chain nearby barrels with a small delay.
+    for (const other of this.barrels) {
+      if (!other.exploded && other.pos.distanceTo(barrel.pos) < R * 0.8) {
+        setTimeout(() => this.explodeBarrel(other, ctx), 90);
+      }
+    }
+  }
+
   _addEnemy(pos, opts = {}) {
-    // Alternate the two AI-generated soldier variants; fall back to placeholder.
+    // ALL enemies use the rigged + animated invader; fall back to the static
+    // invader GLB, then placeholder geometry.
     if (this.assets) {
-      const slug = this.enemies.length % 2 ? "enemy_variant" : "enemy_soldier";
-      const model = this.assets.getModel(slug);
       opts = { ...opts, flashTex: this.assets.getSprite("muzzle_flash") };
-      if (model) opts.model = model;
+      const rigged = this.assets.getRiggedEnemy();
+      if (rigged) {
+        opts.rigged = rigged;
+      } else {
+        const model = this.assets.getModel("invader");
+        if (model) opts.model = model;
+      }
     }
     const e = new Enemy(pos, opts);
     this.group.add(e.group);
@@ -423,6 +496,7 @@ export class Level {
   }
 
   dispose() {
+    this._disposed = true;
     this.scene.remove(this.group);
     // `_materials` may be owned by the AssetManager and reused across levels —
     // only dispose them if THIS level created its own flat-colour fallbacks.
