@@ -46,10 +46,21 @@ class Game {
     // gesture. Weapon takes `assets` so its viewmodel can use the gun GLBs.
     this.assets = new AssetManager(this.engine.renderer);
     this.weapon = new Weapon(this.engine.camera, this.engine.scene, this.assets);
+    // The city map is large, so the level can only build once assets are in.
+    // Gate the menu's "deploy" on this so we never start on the fallback grid.
+    this._assetsReady = false;
     this.assets
       .load(this.engine.scene)
-      .then(() => this.weapon._buildViewmodel()) // refresh once gun GLBs are in
-      .catch((e) => console.warn("[assets]", e));
+      .then(() => {
+        this.weapon._buildViewmodel(); // refresh once gun GLBs are in
+        this._assetsReady = true;
+        if (this.state === "menu") this._showMenu(); // enable the deploy prompt
+      })
+      .catch((e) => {
+        console.warn("[assets]", e);
+        this._assetsReady = true; // let the player in on the fallback grid
+        if (this.state === "menu") this._showMenu();
+      });
 
     this.state = "menu"; // menu | playing | paused | dead | complete | victory
     this.levelIndex = 0;
@@ -93,7 +104,7 @@ class Game {
     this.hud.showOverlay(
       "BELFAST COMMANDO",
       `Kick down the doors. Boot the invaders out of Belfast.<br/>Keep moving — chain kicks and shots for a bigger multiplier.${CONTROLS_HTML}`,
-      "Click to deploy",
+      this._assetsReady ? "Click to deploy" : "Loading Belfast…",
     );
   }
 
@@ -111,7 +122,7 @@ class Game {
     this.ctx.level = this.level;
     this.levelIndex = index;
 
-    this.player.reset(this.level.spawn, 0);
+    this.player.reset(this.level.spawn, this.level.spawnYaw || 0);
     this.score.reset();
 
     this.hud.setLevel(index + 1);
@@ -212,6 +223,7 @@ class Game {
   _handlePrimaryClick() {
     switch (this.state) {
       case "menu":
+        if (!this._assetsReady) return; // still streaming the map; ignore the click
         this._startGame();
         break;
       case "paused":

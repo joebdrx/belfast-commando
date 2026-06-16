@@ -78,6 +78,13 @@ const SPRITES = {
 // Belfast sectarian wall murals, applied to building walls.
 const MURALS = ["murals/republican.png", "murals/loyalist.png"];
 
+// Pre-built city model (public/models/city_map.glb, produced by
+// scripts/optimize-map.sh). We do NOT use it as level geometry — its buildings
+// interlock, so axis-aligned colliders merge into one solid block that seals
+// the streets. Instead we render each building to an orthographic "facade"
+// texture at load time and clad the procedural buildings with those fronts.
+const MAP_SLUG = "city_map";
+
 export class AssetManager {
   /** @param {THREE.WebGLRenderer} renderer */
   constructor(renderer) {
@@ -88,6 +95,7 @@ export class AssetManager {
     this.models = {}; // slug -> normalised template Object3D (cloned per use)
     this.sprites = {}; // name -> THREE.Texture
     this.murals = []; // THREE.Texture[]
+    this.facades = []; // [{ texture, aspect }] building fronts baked from the city model
     this._riggedEnemy = null; // { scene, clips:{walk,run,idle} }
     this.loaded = 0;
     this.total = Object.keys(DEFS).length;
@@ -155,7 +163,142 @@ export class AssetManager {
     // Environment map, 3D models, 2D sprites, and the rigged enemy run alongside.
     const envJob = scene ? this._loadEnvironment(scene) : Promise.resolve();
     const skyJob = scene ? this._loadSky(scene) : Promise.resolve();
-    await Promise.all([...jobs, envJob, skyJob, this.loadModels(), this.loadSprites(), this.loadMurals(), this._loadRiggedEnemy()]);
+    await Promise.all([...jobs, envJob, skyJob, this.loadModels(), this.loadSprites(), this.loadMurals(), this._loadRiggedEnemy(), this.captureFacades()]);
+  }
+
+  /**
+   * Load + normalise the optional pre-built city map. Scaled so its tallest
+   * point is MAP_TARGET_HEIGHT metres, recentred on X/Z, and dropped so its
+   * lowest point (the street) sits at y=0. Missing file → `this.map` stays
+   * null and the Level falls back to the procedural grid.
+   */
+  /**
+   * Render each building in the city model to an orthographic front-elevation
+   * texture (transparent background). Buildings are grouped by their `bat{N}`
+   * name prefix; we hide every other building while capturing one, so the
+   * model's interlocking geometry never bleeds into a facade. The model is
+   * disposed afterwards — only the facade canvases are kept.
+   */
+  async captureFacades() {
+    let gltf;
+    try {
+      gltf = await this.gltfLoader.loadAsync(`${BASE}models/${MAP_SLUG}.glb`);
+    } catch {
+      this.facades = [];
+      return;
+    }
+    const root = gltf.scene;
+    root.updateWorldMatrix(true, true);
+
+    // Group meshes by building prefix (bat1, bat2, …) and accumulate world bbox.
+    const groups = new Map();
+    root.traverse((o) => {
+      if (!o.isMesh) return;
+      const m = (o.name || "").match(/^(bat\d+)/i);
+      if (!m) return;
+      const key = m[1].toLowerCase();
+      let g = groups.get(key);
+      if (!g) { g = { meshes: [], box: new THREE.Box3() }; groups.set(key, g); }
+      g.meshes.push(o);
+      o.geometry.computeBoundingBox();
+      g.box.union(o.geometry.boundingBox.clone().applyMatrix4(o.matrixWorld));
+      const mats = Array.isArray(o.material) ? o.material : [o.material];
+      for (const mat of mats) { if (mat) { mat.transparent = false; mat.depthWrite = true; mat.alphaTest = 0.4; } }
+      o.visible = false; // hidden by default; shown one building at a time
+    });
+
+    // Even, bright capture lighting so facades read as clean diffuse textures.
+    const scene = new THREE.Scene();
+    scene.add(new THREE.HemisphereLight(0xffffff, 0xbfc4c8, 1.3));
+    const sun = new THREE.DirectionalLight(0xffffff, 1.1);
+    sun.position.set(0.4, 1, 0.7);
+    scene.add(sun);
+    scene.add(root);
+
+    // Save renderer state — capture must not perturb the live game render.
+    const prevTarget = this.renderer.getRenderTarget();
+    const prevTone = this.renderer.toneMapping;
+    const prevClear = this.renderer.getClearColor(new THREE.Color());
+    const prevAlpha = this.renderer.getClearAlpha();
+    this.renderer.toneMapping = THREE.NoToneMapping;
+    this.renderer.setClearColor(0x000000, 0); // transparent background
+
+    const cam = new THREE.OrthographicCamera();
+    cam.up.set(0, 1, 0);
+    this.facades = [];
+
+    for (const g of groups.values()) {
+      const size = g.box.getSize(new THREE.Vector3());
+      const center = g.box.getCenter(new THREE.Vector3());
+      if (size.y < 1e-3) continue;
+      // Facade runs along the longer horizontal axis; capture perpendicular to it.
+      const alongX = size.x >= size.z;
+      const width = alongX ? size.x : size.z;
+      const height = size.y;
+      const depth = (alongX ? size.z : size.x) || 1;
+      const normal = alongX ? new THREE.Vector3(0, 0, 1) : new THREE.Vector3(1, 0, 0);
+
+      cam.left = -width / 2; cam.right = width / 2;
+      cam.top = height / 2; cam.bottom = -height / 2;
+      cam.near = 0.01; cam.far = depth * 2 + 20;
+      cam.position.copy(center).add(normal.clone().multiplyScalar(depth / 2 + 4));
+      cam.lookAt(center);
+      cam.updateProjectionMatrix();
+
+      const texH = 512;
+      const texW = Math.min(1024, Math.max(64, Math.round(texH * (width / height))));
+      const rt = new THREE.WebGLRenderTarget(texW, texH, { colorSpace: THREE.SRGBColorSpace });
+
+      g.meshes.forEach((me) => (me.visible = true));
+      this.renderer.setRenderTarget(rt);
+      this.renderer.clear();
+      this.renderer.render(scene, cam);
+      g.meshes.forEach((me) => (me.visible = false));
+
+      const buf = new Uint8Array(texW * texH * 4);
+      this.renderer.readRenderTargetPixels(rt, 0, 0, texW, texH, buf);
+      rt.dispose();
+
+      // Copy into a canvas, flipping vertically (GL origin is bottom-left).
+      const canvas = document.createElement("canvas");
+      canvas.width = texW; canvas.height = texH;
+      const cctx = canvas.getContext("2d");
+      const img = cctx.createImageData(texW, texH);
+      for (let y = 0; y < texH; y++) {
+        const sy = texH - 1 - y;
+        for (let x = 0; x < texW; x++) {
+          const si = (sy * texW + x) * 4, di = (y * texW + x) * 4;
+          img.data[di] = buf[si]; img.data[di + 1] = buf[si + 1];
+          img.data[di + 2] = buf[si + 2]; img.data[di + 3] = buf[si + 3];
+        }
+      }
+      cctx.putImageData(img, 0, 0);
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.colorSpace = THREE.SRGBColorSpace;
+      tex.anisotropy = Math.min(8, this.renderer.capabilities.getMaxAnisotropy());
+      this.facades.push({ texture: tex, aspect: width / height });
+    }
+
+    // Restore renderer; free the model (geometry + materials + textures).
+    this.renderer.setRenderTarget(prevTarget);
+    this.renderer.toneMapping = prevTone;
+    this.renderer.setClearColor(prevClear, prevAlpha);
+    root.traverse((o) => {
+      if (o.geometry) o.geometry.dispose();
+      if (o.material) {
+        const ms = Array.isArray(o.material) ? o.material : [o.material];
+        for (const m of ms) { if (m) { if (m.map) m.map.dispose(); m.dispose(); } }
+      }
+    });
+  }
+
+  hasFacades() {
+    return this.facades.length > 0;
+  }
+
+  /** Baked building-front textures: [{ texture, aspect }]. */
+  getFacades() {
+    return this.facades;
   }
 
   /** Load wall-mural textures. */

@@ -108,6 +108,7 @@ export class Level {
     this.barrels = [];
 
     this.spawn = new THREE.Vector3(-12, 1.7, 38);
+    this.spawnYaw = 0; // procedural grid faces -Z into the street
     this.exit = null; // no exit gate — clearing the sector completes the level
 
     // Pull shared, textured materials from the AssetManager when present;
@@ -131,12 +132,19 @@ export class Level {
       ceiling: new THREE.MeshStandardMaterial({ color: 0x4a4d4f, roughness: 0.95 }),
     };
 
-    // Grid geometry shared across builders.
-    this.PITCH = 24; // block centre spacing (block + street)
-    this.BLOCK = 14; // building footprint (square)
-    this.WALL_H = 5;
-    this.COORDS = [-this.PITCH, 0, this.PITCH]; // block centres: -24, 0, +24
-    this.GRID_HALF = this.PITCH + this.BLOCK / 2; // outer extent: 31
+    // Grid geometry shared across builders. Buildings are tall, long terraces:
+    // narrow frontage (X) and a long run (Z), so they line the north–south
+    // streets the player walks down.
+    this.WALL_H = 15; // 3× the original 5m
+    this.BLOCK_W = 14; // frontage width (X)
+    this.BLOCK_L = 56; // 4× the original 14m run (Z)
+    this.STREET = 10; // lane width between blocks
+    this.PITCH_X = this.BLOCK_W + this.STREET; // 24
+    this.PITCH_Z = this.BLOCK_L + this.STREET; // 66
+    this.COORDS_X = [-this.PITCH_X, 0, this.PITCH_X]; // -24, 0, +24
+    this.COORDS_Z = [-this.PITCH_Z, 0, this.PITCH_Z]; // -66, 0, +66
+    this.GRID_HALF_X = this.PITCH_X + this.BLOCK_W / 2; // 31
+    this.GRID_HALF_Z = this.PITCH_Z + this.BLOCK_L / 2; // 94
 
     this._build();
   }
@@ -162,10 +170,19 @@ export class Level {
   }
 
   _build() {
-    const { COORDS, PITCH, BLOCK, WALL_H, GRID_HALF } = this;
+    // Building fronts captured from the city model (empty array → plain brick).
+    this._facades = this.assets && this.assets.hasFacades && this.assets.hasFacades()
+      ? this.assets.getFacades()
+      : [];
+    this._facadeN = 0;
+    this._buildProcedural();
+  }
+
+  _buildProcedural() {
+    const { COORDS_X, COORDS_Z, PITCH_X, PITCH_Z, GRID_HALF_X, GRID_HALF_Z } = this;
 
     // --- Ground: wet tarmac covering the whole quarter + the spawn approach.
-    const groundSize = (GRID_HALF + 30) * 2;
+    const groundSize = (Math.max(GRID_HALF_X, GRID_HALF_Z) + 30) * 2;
     const floor = new THREE.Mesh(
       new THREE.PlaneGeometry(groundSize, groundSize),
       this._materials.tarmac,
@@ -174,16 +191,16 @@ export class Level {
     floor.position.set(0, 0, 0);
     this.group.add(floor);
 
-    // Player deploys on the southern street, facing north into the grid.
-    this.spawn = new THREE.Vector3(-PITCH / 2, 1.7, GRID_HALF + 7);
+    // Player deploys on the southern street, facing north down the terraces.
+    this.spawn = new THREE.Vector3(-PITCH_X / 2, 1.7, GRID_HALF_Z + 7);
 
     const rng = mulberry32(2024 + this.index * 131);
 
-    // --- 3×3 city blocks: enclosed rooms with kickable doors. -------------
+    // --- 3×3 terraced blocks: enclosed rooms with kickable doors. ---------
     // Roughly half the blocks hide an invader; the rest are empty rooms to
     // breach. Street enemies (added below) guarantee a fight regardless.
-    for (const cz of COORDS) {
-      for (const cx of COORDS) {
+    for (const cz of COORDS_Z) {
+      for (const cx of COORDS_X) {
         const withEnemy = rng() < 0.55;
         this._buildBlock(cx, cz, withEnemy);
       }
@@ -197,8 +214,8 @@ export class Level {
     const coverCount = 6 + this.index * 2;
     let placed = 0;
     for (let guard = 0; placed < coverCount && guard < coverCount * 20; guard++) {
-      const x = (rng() - 0.5) * GRID_HALF * 2;
-      const z = (rng() - 0.5) * GRID_HALF * 2;
+      const x = (rng() - 0.5) * GRID_HALF_X * 2;
+      const z = (rng() - 0.5) * GRID_HALF_Z * 2;
       if (!this._inStreet(x, z)) continue;
       if (rng() < 0.5) {
         this._prop("crate_supply", x, z, 1.1, 1.1, 1.1, () => {
@@ -213,14 +230,14 @@ export class Level {
     }
 
     // Burnt-out car roadblock at a street intersection (cover + LOS blocker).
-    this._buildCar(PITCH / 2, -PITCH / 2);
+    this._buildCar(PITCH_X / 2, -PITCH_Z / 2);
 
     // --- Street enemies patrolling the open grid. -------------------------
     const streetEnemies = 5 + this.index * 2;
     let spawned = 0;
     for (let guard = 0; spawned < streetEnemies && guard < streetEnemies * 30; guard++) {
-      const x = (rng() - 0.5) * GRID_HALF * 2;
-      const z = (rng() - 0.5) * GRID_HALF * 2;
+      const x = (rng() - 0.5) * GRID_HALF_X * 2;
+      const z = (rng() - 0.5) * GRID_HALF_Z * 2;
       if (!this._inStreet(x, z)) continue;
       if (Math.hypot(x - this.spawn.x, z - this.spawn.z) < 9) continue; // not on top of spawn
       const patrol = [
@@ -242,7 +259,8 @@ export class Level {
    * the south (+Z) face. Optionally garrisons one invader inside.
    */
   _buildBlock(cx, cz, withEnemy) {
-    const half = this.BLOCK / 2;
+    const halfW = this.BLOCK_W / 2; // X half (frontage)
+    const halfL = this.BLOCK_L / 2; // Z half (run)
     const t = 0.6;
     const wallH = this.WALL_H;
     const doorW = 1.7;
@@ -251,7 +269,7 @@ export class Level {
 
     // Pavement apron the building sits on (walk-over slab, no collider).
     const pave = new THREE.Mesh(
-      new THREE.BoxGeometry(this.BLOCK + 3, 0.12, this.BLOCK + 3),
+      new THREE.BoxGeometry(this.BLOCK_W + 3, 0.12, this.BLOCK_L + 3),
       this._materials.pavement,
     );
     pave.position.set(cx, 0.06, cz);
@@ -259,34 +277,34 @@ export class Level {
 
     // Interior floor.
     const f = new THREE.Mesh(
-      new THREE.PlaneGeometry(this.BLOCK - 0.4, this.BLOCK - 0.4),
+      new THREE.PlaneGeometry(this.BLOCK_W - 0.4, this.BLOCK_L - 0.4),
       this._materials.concrete,
     );
     f.rotation.x = -Math.PI / 2;
     f.position.set(cx, 0.13, cz);
     this.group.add(f);
 
-    // Walls: N solid, E/W solid, S split around the doorway.
-    this._box(this.BLOCK, wallH, t, brick, cx, wallH / 2, cz - half, { los: true }); // north
-    this._box(t, wallH, this.BLOCK, brickDark, cx - half, wallH / 2, cz, { los: true }); // west
-    this._box(t, wallH, this.BLOCK, brickDark, cx + half, wallH / 2, cz, { los: true }); // east
+    // Walls: N solid, long E/W solid, S (frontage) split around the doorway.
+    this._box(this.BLOCK_W, wallH, t, brick, cx, wallH / 2, cz - halfL, { los: true }); // north
+    this._box(t, wallH, this.BLOCK_L, brickDark, cx - halfW, wallH / 2, cz, { los: true }); // west
+    this._box(t, wallH, this.BLOCK_L, brickDark, cx + halfW, wallH / 2, cz, { los: true }); // east
 
-    const stub = (this.BLOCK - doorW) / 2;
-    this._box(stub, wallH, t, brick, cx - (doorW / 2 + stub / 2), wallH / 2, cz + half, { los: true });
-    this._box(stub, wallH, t, brick, cx + (doorW / 2 + stub / 2), wallH / 2, cz + half, { los: true });
+    const stub = (this.BLOCK_W - doorW) / 2;
+    this._box(stub, wallH, t, brick, cx - (doorW / 2 + stub / 2), wallH / 2, cz + halfL, { los: true });
+    this._box(stub, wallH, t, brick, cx + (doorW / 2 + stub / 2), wallH / 2, cz + halfL, { los: true });
     // Lintel above the door (no collider — it's overhead).
-    this._box(doorW, wallH - 2.7, t, brickDark, cx, 2.7 + (wallH - 2.7) / 2, cz + half, { collider: false });
+    this._box(doorW, wallH - 2.7, t, brickDark, cx, 2.7 + (wallH - 2.7) / 2, cz + halfL, { collider: false });
 
-    // Ceiling — interior rooms are now enclosed overhead.
+    // Ceiling — interior rooms are enclosed overhead.
     const ceil = new THREE.Mesh(
-      new THREE.BoxGeometry(this.BLOCK, t, this.BLOCK),
+      new THREE.BoxGeometry(this.BLOCK_W, t, this.BLOCK_L),
       this._materials.ceiling,
     );
     ceil.position.set(cx, wallH + t / 2 - 0.05, cz);
     this.group.add(ceil);
 
-    // Kickable door on the south face, hinged at the left jamb, swinging inward.
-    const hinge = new THREE.Vector3(cx - doorW / 2, 0, cz + half);
+    // Kickable door on the south (frontage) face, hinged at the left jamb.
+    const hinge = new THREE.Vector3(cx - doorW / 2, 0, cz + halfL);
     const doorModel = this.assets ? this.assets.getModel("door_kickable") : null;
     const door = new Door(hinge, doorW, 1, 0, this._materials.door, doorModel);
     this.group.add(door.pivot);
@@ -294,53 +312,72 @@ export class Level {
     this.colliders.push(door._closedBox);
     this.losBlockers.push(door._closedBox);
 
-    // Pitched roof + chimney + windows.
+    // Pitched roof + chimneys.
     this._buildRoof(cx, cz);
     this._buildChimney(cx, cz);
-    this._addWindow(cx - 2.6, 3.3, cz + half, 0, 1); // south, left of door
-    this._addWindow(cx + 2.6, 3.3, cz + half, 0, 1); // south, right of door
-    this._addWindow(cx + half, 3.3, cz - 2.4, 1, 0); // east
-    this._addWindow(cx - half, 3.3, cz + 2.4, -1, 0); // west
 
-    if (withEnemy) this._addEnemy(new THREE.Vector3(cx, 0, cz), {});
+    // South windows flank the (functional) door, stacked up the tall frontage.
+    for (const wy of [2.6, 6.4, 10.2, 13.4]) {
+      this._addWindow(cx - 2.6, wy, cz + halfL, 0, 1);
+      this._addWindow(cx + 2.6, wy, cz + halfL, 0, 1);
+    }
+
+    if (this._facades.length) {
+      // Clad the three non-door faces with building fronts from the city model;
+      // the facade textures already include their own windows.
+      this._addFacade(cx, wallH / 2, cz - halfL - 0.32, Math.PI, this.BLOCK_W);    // north (-Z)
+      this._addFacade(cx + halfW + 0.32, wallH / 2, cz, Math.PI / 2, this.BLOCK_L); // east (+X, long)
+      this._addFacade(cx - halfW - 0.32, wallH / 2, cz, -Math.PI / 2, this.BLOCK_L); // west (-X, long)
+    } else {
+      for (const wy of [2.6, 6.4, 10.2, 13.4]) {
+        for (const oz of [-halfL * 0.5, 0, halfL * 0.5]) {
+          this._addWindow(cx + halfW, wy, cz + oz, 1, 0); // east
+          this._addWindow(cx - halfW, wy, cz + oz, -1, 0); // west
+        }
+      }
+    }
+
+    if (withEnemy) this._addEnemy(new THREE.Vector3(cx, 0, cz + halfL - 5), {});
   }
 
-  /** Shallow pitched (gable) roof, ridge running along X over the block. */
+  /** Pitched gable roof, ridge running along Z (the long axis) over the terrace. */
   _buildRoof(cx, cz) {
-    const half = this.BLOCK / 2;
+    const halfW = this.BLOCK_W / 2;
     const wallH = this.WALL_H;
-    const rise = 1.8;
-    const slopeLen = Math.hypot(rise, half);
-    const angle = Math.atan2(rise, half);
+    const rise = 2.6;
+    const slopeLen = Math.hypot(rise, halfW);
+    const angle = Math.atan2(rise, halfW);
     for (const sgn of [-1, 1]) {
       const panel = new THREE.Mesh(
-        new THREE.BoxGeometry(this.BLOCK + 0.8, 0.18, slopeLen + 0.3),
+        new THREE.BoxGeometry(slopeLen, 0.18, this.BLOCK_L + 0.8),
         this._materials.roof,
       );
-      panel.position.set(cx, wallH + rise / 2, cz + (sgn * half) / 2);
-      panel.rotation.x = sgn * angle; // outer eave dips, ridge lifts to centre
+      panel.position.set(cx + (sgn * halfW) / 2, wallH + rise / 2, cz);
+      panel.rotation.z = -sgn * angle; // outer eave dips, ridge lifts to centre
       this.group.add(panel);
     }
     // Ridge cap along the apex.
     const ridge = new THREE.Mesh(
-      new THREE.BoxGeometry(this.BLOCK + 0.9, 0.22, 0.3),
+      new THREE.BoxGeometry(0.3, 0.22, this.BLOCK_L + 0.9),
       this._materials.kerb,
     );
     ridge.position.set(cx, wallH + rise, cz);
     this.group.add(ridge);
   }
 
-  /** A brick chimney stack with pots, set near a corner of the ridge. */
+  /** Brick chimney stacks with pots, spaced along the long ridge. */
   _buildChimney(cx, cz) {
-    const ridgeY = this.WALL_H + 1.8;
-    const sx = cx + (this.BLOCK / 2 - 2.5);
-    const stack = new THREE.Mesh(new THREE.BoxGeometry(0.8, 1.4, 0.7), this._materials.brick);
-    stack.position.set(sx, ridgeY + 0.5, cz);
-    this.group.add(stack);
-    for (const ox of [-0.2, 0.2]) {
-      const pot = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.12, 0.35, 8), this._materials.kerb);
-      pot.position.set(sx + ox, ridgeY + 1.35, cz);
-      this.group.add(pot);
+    const ridgeY = this.WALL_H + 2.6;
+    const halfL = this.BLOCK_L / 2;
+    for (const oz of [-halfL * 0.6, -halfL * 0.1, halfL * 0.45]) {
+      const stack = new THREE.Mesh(new THREE.BoxGeometry(0.8, 1.5, 0.8), this._materials.brick);
+      stack.position.set(cx, ridgeY + 0.55, cz + oz);
+      this.group.add(stack);
+      for (const ox of [-0.2, 0.2]) {
+        const pot = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.12, 0.35, 8), this._materials.kerb);
+        pot.position.set(cx + ox, ridgeY + 1.45, cz + oz);
+        this.group.add(pot);
+      }
     }
   }
 
@@ -371,20 +408,51 @@ export class Level {
     this.group.add(sill);
   }
 
+  /**
+   * Clad a wall face with the next building-front texture captured from the city
+   * model. The facade tiles horizontally at its own aspect so windows stay
+   * correctly proportioned, and alpha-cuts its border so the brick wall shows
+   * through the silhouette gaps (e.g. above a pitched roofline).
+   */
+  _addFacade(x, y, z, rotY, w) {
+    const facade = this._facades[this._facadeN++ % this._facades.length];
+    if (!facade) return;
+    const h = this.WALL_H;
+    const tex = facade.texture.clone();
+    tex.needsUpdate = true;
+    tex.wrapS = THREE.RepeatWrapping;
+    // Sample at the wall's aspect so windows never stretch horizontally: wide
+    // terraces (<1) show a centred crop of a few bays; narrow fronts (>1) tile
+    // across the long wall. Vertically the front fills the tall storey height.
+    const rep = Math.min(4, Math.max(0.2, (w / h) / (facade.aspect || 1)));
+    tex.repeat.x = rep;
+    tex.offset.x = (1 - rep) / 2;
+    const mat = new THREE.MeshStandardMaterial({
+      map: tex,
+      roughness: 0.92,
+      metalness: 0,
+      alphaTest: 0.5,
+      depthWrite: true,
+    });
+    const plane = new THREE.Mesh(new THREE.PlaneGeometry(w, h), mat);
+    plane.position.set(x, y, z);
+    plane.rotation.y = rotY;
+    this.group.add(plane);
+  }
+
   /** Dashed centre lines down every street lane in the grid. */
   _buildRoadPaint() {
-    const { PITCH, GRID_HALF } = this;
-    const lanes = [-PITCH / 2, PITCH / 2]; // street centres at ±12
-    for (const sx of lanes) {
-      for (let z = -GRID_HALF; z <= GRID_HALF; z += 3.2) {
+    const { PITCH_X, PITCH_Z, GRID_HALF_X, GRID_HALF_Z } = this;
+    for (const sx of [-PITCH_X / 2, PITCH_X / 2]) { // north–south lanes at ±12
+      for (let z = -GRID_HALF_Z; z <= GRID_HALF_Z; z += 3.2) {
         const dash = new THREE.Mesh(new THREE.PlaneGeometry(0.16, 1.6), this._materials.paint);
         dash.rotation.x = -Math.PI / 2;
         dash.position.set(sx, 0.03, z);
         this.group.add(dash);
       }
     }
-    for (const sz of lanes) {
-      for (let x = -GRID_HALF; x <= GRID_HALF; x += 3.2) {
+    for (const sz of [-PITCH_Z / 2, PITCH_Z / 2]) { // east–west cross-streets at ±33
+      for (let x = -GRID_HALF_X; x <= GRID_HALF_X; x += 3.2) {
         const dash = new THREE.Mesh(new THREE.PlaneGeometry(1.6, 0.16), this._materials.paint);
         dash.rotation.x = -Math.PI / 2;
         dash.position.set(x, 0.03, sz);
@@ -395,7 +463,7 @@ export class Level {
 
   /** Distant hazy hills ringing the quarter, far off on the horizon. */
   _buildBackdrop() {
-    const baseR = this.GRID_HALF + 62; // ~93m out — well beyond the buildings
+    const baseR = Math.max(this.GRID_HALF_X, this.GRID_HALF_Z) + 62; // beyond the buildings
     const n = 22;
     for (let i = 0; i < n; i++) {
       const a = (i / n) * Math.PI * 2;
@@ -409,10 +477,11 @@ export class Level {
 
   /** True when (x,z) is in a street lane, not inside a building footprint. */
   _inStreet(x, z) {
-    const m = this.BLOCK / 2 + 0.8;
-    for (const cz of this.COORDS) {
-      for (const cx of this.COORDS) {
-        if (Math.abs(x - cx) < m && Math.abs(z - cz) < m) return false;
+    const mx = this.BLOCK_W / 2 + 0.8;
+    const mz = this.BLOCK_L / 2 + 0.8;
+    for (const cz of this.COORDS_Z) {
+      for (const cx of this.COORDS_X) {
+        if (Math.abs(x - cx) < mx && Math.abs(z - cz) < mz) return false;
       }
     }
     return true;
@@ -443,14 +512,15 @@ export class Level {
   _addMurals(rng) {
     const murals = this.assets ? this.assets.getMurals() : [];
     if (!murals.length) return;
-    const half = this.BLOCK / 2;
+    const halfW = this.BLOCK_W / 2;
+    const halfL = this.BLOCK_L / 2;
     let count = 0;
     const maxMurals = 4 + this.index;
-    for (const cz of this.COORDS) {
-      for (const cx of this.COORDS) {
+    for (const cz of this.COORDS_Z) {
+      for (const cx of this.COORDS_X) {
         if (count >= maxMurals || rng() > 0.5) continue;
         const tex = murals[(rng() * murals.length) | 0];
-        const size = 2.6 + rng() * 1.2;
+        const size = 3.0 + rng() * 1.6;
         const mesh = new THREE.Mesh(
           new THREE.PlaneGeometry(size, size),
           new THREE.MeshStandardMaterial({
@@ -461,8 +531,9 @@ export class Level {
             polygonOffsetFactor: -2,
           }),
         );
-        // Just proud of the east wall's outer face, facing the street.
-        mesh.position.set(cx + half + 0.33, 0.2 + size / 2, cz);
+        // Just proud of the long east wall's outer face, facing the street.
+        const oz = (rng() - 0.5) * halfL; // anywhere along the long terrace
+        mesh.position.set(cx + halfW + 0.33, 0.2 + size / 2, cz + oz);
         mesh.rotation.y = -Math.PI / 2;
         this.group.add(mesh);
         count++;
@@ -473,7 +544,7 @@ export class Level {
   /** Scatter purely-visual AI props through the streets (big ones get colliders). */
   _setDressing(rng) {
     if (!this.assets) return;
-    const { GRID_HALF } = this;
+    const { GRID_HALF_X, GRID_HALF_Z } = this;
     const place = (slug, x, z, ry, footprint) => {
       const m = this.assets.getModel(slug);
       if (!m) return;
@@ -492,14 +563,14 @@ export class Level {
     };
 
     // Phone booth on a corner pavement.
-    place("prop_phone_booth", -this.PITCH / 2 + 1.2, 4, 0, [0.5, 0.5, 2.4]);
+    place("prop_phone_booth", -this.PITCH_X / 2 + 1.2, this.GRID_HALF_Z - 6, 0, [0.5, 0.5, 2.4]);
 
     // Sandbag barricades as occasional street cover.
     for (let i = 0; i < 2 + this.index; i++) {
       let x, z, guard = 0;
       do {
-        x = (rng() - 0.5) * GRID_HALF * 2;
-        z = (rng() - 0.5) * GRID_HALF * 2;
+        x = (rng() - 0.5) * GRID_HALF_X * 2;
+        z = (rng() - 0.5) * GRID_HALF_Z * 2;
       } while (!this._inStreet(x, z) && guard++ < 30);
       place("sandbag_barricade", x, z, rng() * Math.PI, [0.9, 0.55, 1.0]);
     }
@@ -509,8 +580,8 @@ export class Level {
     for (let i = 0; i < 8 + this.index * 2; i++) {
       let x, z, guard = 0;
       do {
-        x = (rng() - 0.5) * GRID_HALF * 2;
-        z = (rng() - 0.5) * GRID_HALF * 2;
+        x = (rng() - 0.5) * GRID_HALF_X * 2;
+        z = (rng() - 0.5) * GRID_HALF_Z * 2;
       } while (!this._inStreet(x, z) && guard++ < 30);
       const slug = clutter[(rng() * clutter.length) | 0];
       place(slug, x, z, rng() * Math.PI * 2, null);
