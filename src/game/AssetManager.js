@@ -24,11 +24,13 @@ const DEFS = {
   // slug          fallback   tiling      roughness  metalness   source (Poly Haven)
   brick:      { color: 0x8a4b3a, repeat: [2, 1.6], roughness: 0.95, metalness: 0.0 }, // brick_wall_006
   brick_dark: { color: 0x6e3b2e, repeat: [2, 1.6], roughness: 0.95, metalness: 0.0 }, // brick_wall_02
-  tarmac:     { color: 0x33373b, repeat: [10, 34], roughness: 1.0, metalness: 0.0 }, // asphalt_02
+  tarmac:     { color: 0x2a2e31, repeat: [10, 34], roughness: 0.5, metalness: 0.05, envMapIntensity: 1.7 }, // asphalt_02 (rain-wet)
   concrete:   { color: 0x6b6f72, repeat: [2, 1.6], roughness: 0.9, metalness: 0.0 }, // concrete_wall_004
   crate:      { color: 0x7a5a30, repeat: [1, 1], roughness: 0.8, metalness: 0.0 }, // brown_planks_05
   barrel:     { color: 0x4a6a4a, repeat: [1, 1.4], roughness: 0.6, metalness: 0.4 }, // green_metal_rust
   door:       { color: 0x5a3a22, repeat: [1, 1], roughness: 0.85, metalness: 0.0 }, // green_rough_planks
+  roof:       { color: 0x474a4f, repeat: [6, 2], roughness: 0.85, metalness: 0.0 }, // grey_roof_tiles
+  pavement:   { color: 0x6e706d, repeat: [2, 16], roughness: 0.92, metalness: 0.0 }, // concrete_pavement
 };
 
 /**
@@ -71,6 +73,9 @@ const SPRITES = {
   bullet_hole: "vfx/bullet_hole.png",
 };
 
+// Belfast sectarian wall murals, applied to building walls.
+const MURALS = ["murals/republican.png", "murals/loyalist.png"];
+
 export class AssetManager {
   /** @param {THREE.WebGLRenderer} renderer */
   constructor(renderer) {
@@ -80,6 +85,7 @@ export class AssetManager {
     this.materials = {};
     this.models = {}; // slug -> normalised template Object3D (cloned per use)
     this.sprites = {}; // name -> THREE.Texture
+    this.murals = []; // THREE.Texture[]
     this._riggedEnemy = null; // { scene, clips:{walk,run,idle} }
     this.loaded = 0;
     this.total = Object.keys(DEFS).length;
@@ -90,6 +96,7 @@ export class AssetManager {
         color: def.color,
         roughness: def.roughness,
         metalness: def.metalness,
+        envMapIntensity: def.envMapIntensity ?? 1,
       });
     }
   }
@@ -145,7 +152,22 @@ export class AssetManager {
 
     // Environment map, 3D models, 2D sprites, and the rigged enemy run alongside.
     const envJob = scene ? this._loadEnvironment(scene) : Promise.resolve();
-    await Promise.all([...jobs, envJob, this.loadModels(), this.loadSprites(), this._loadRiggedEnemy()]);
+    const skyJob = scene ? this._loadSky(scene) : Promise.resolve();
+    await Promise.all([...jobs, envJob, skyJob, this.loadModels(), this.loadSprites(), this.loadMurals(), this._loadRiggedEnemy()]);
+  }
+
+  /** Load wall-mural textures. */
+  async loadMurals() {
+    const jobs = MURALS.map(async (rel, i) => {
+      const tex = await this._loadTexture(`${BASE}${rel}`, { srgb: true });
+      if (tex) this.murals[i] = tex;
+    });
+    await Promise.all(jobs);
+  }
+
+  /** Loaded mural textures (skips any that failed). */
+  getMurals() {
+    return this.murals.filter(Boolean);
   }
 
   /** Load the skinned, animated enemy (mesh + walk/run/idle clips). */
@@ -306,6 +328,27 @@ export class AssetManager {
         },
         undefined,
         () => resolve(), // no HDRI → lights-only, still fine
+      );
+    });
+  }
+
+  /** Overcast-cloud HDRI as the visible sky background (replaces gradient dome). */
+  async _loadSky(scene) {
+    return new Promise((resolve) => {
+      new RGBELoader().load(
+        `${BASE}hdri/sky.hdr`,
+        (hdr) => {
+          hdr.mapping = THREE.EquirectangularReflectionMapping;
+          scene.background = hdr;
+          if ("backgroundIntensity" in scene) scene.backgroundIntensity = 0.85;
+          if ("backgroundBlurriness" in scene) scene.backgroundBlurriness = 0.04;
+          // Hide the placeholder gradient dome now that real clouds are up.
+          const dome = scene.getObjectByName("skyDome");
+          if (dome) dome.visible = false;
+          resolve();
+        },
+        undefined,
+        () => resolve(), // no sky HDRI → keep the gradient dome
       );
     });
   }

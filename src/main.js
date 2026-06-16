@@ -247,6 +247,7 @@ class Game {
       this._update(dt);
     }
     this.hud.update(dt);
+    this.engine.update(dt);
     this.engine.render();
   }
 

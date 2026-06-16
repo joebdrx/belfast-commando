@@ -56,12 +56,18 @@ const SUFFIX = {
   ui: ", flat vector game UI element, plain dark background, crisp, no photographic detail",
   env: ", environment concept art, wide establishing shot, stylised low-poly, atmospheric",
   sky: ", wide panoramic sky, overcast, atmospheric, no foreground objects, no text",
+  mural: ", flat front-on view of a painted wall mural filling the entire frame, weathered spray paint on a flat surface, no perspective, no people in front, no watermark",
 };
 
 // --- Asset manifest (smart split: 3D for real objects, image-only for 2D) ----
 // model3d: true  -> image + hunyuan 3D
 // model3d: false -> image only
 const ASSETS = [
+  // ---- Wall murals (image only) — Belfast sectarian street art ----
+  { slug: "mural_loyalist", cat: "mural", model3d: false, size: "square_hd",
+    prompt: "Belfast Ulster loyalist street mural painted on a brick wall, large Union Jack flag and the Ulster Banner red-hand flag, red white and blue colours, a crown emblem, bold painted lettering reading ULSTER, decorative border, weathered paint" },
+  { slug: "mural_republican", cat: "mural", model3d: false, size: "square_hd",
+    prompt: "Belfast Irish republican wall mural, Irish tricolour flag green white and orange, Celtic knotwork border, a masked IRA volunteer silhouette, weathered painted brick" },
   // ---- First-person arms viewmodel (3D) — gripping pose, reused across guns ----
   { slug: "fp_arms_grip", cat: "model", model3d: true, size: "square_hd",
     prompt: "First-person viewmodel of a pair of rugged forearms and hands wearing black tactical gloves with a green armband, both hands together extended forward in a two-handed weapon grip (as if holding a rifle), seen from the player's own point of view from behind the wrists, fists closed" },

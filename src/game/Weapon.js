@@ -23,8 +23,8 @@ const VM = { pos: [0.13, -0.2, -0.5] };
 // so the grip/gun points forward (-Z); `pos`/`scale` seat it in the lower view.
 const SHOW_FP_ARMS = true;
 const ARMS = {
-  scale: 0.72,
-  pos: [0.15, -0.17, -0.3],
+  scale: 0.75,
+  pos: [0.15, -0.17, -0.28],
   rot: [-Math.PI / 2 + 0.55, 0, 0],
 };
 

@@ -117,6 +117,14 @@ export class Level {
       crate: this._mat("crate", 0x7a5a30, 0.8),
       barrel: this._mat("barrel", 0x355e3b, 0.6, 0.3),
       door: this._mat("door", 0x5a3a22, 0.85),
+      roof: this._mat("roof", 0x474a4f, 0.85),
+      pavement: this._mat("pavement", 0x6e706d, 0.92),
+      // Flat architectural materials (windows, kerbs, paint, hills).
+      glass: new THREE.MeshStandardMaterial({ color: 0x121a1f, roughness: 0.16, metalness: 0.2, envMapIntensity: 1.6 }),
+      frame: new THREE.MeshStandardMaterial({ color: 0xb6bbbd, roughness: 0.7 }),
+      kerb: new THREE.MeshStandardMaterial({ color: 0x8b8e8b, roughness: 0.92 }),
+      paint: new THREE.MeshStandardMaterial({ color: 0xeae6da, roughness: 0.55 }),
+      hill: new THREE.MeshStandardMaterial({ color: 0x3a4138, roughness: 1.0 }),
     };
 
     this._build();
@@ -186,6 +194,14 @@ export class Level {
     // End walls (start cap + far cap with exit gap handled below)
     this._box(halfW * 2 + 0.6, wallH, 0.6, this._materials.brickDark, 0, wallH / 2, 5.5, { los: true });
 
+    // --- Building architecture (terraced-house look) ----------------------
+    this._buildSidewalks(length, halfW);
+    this._buildRoofs(length, halfW, wallH);
+    this._buildChimneys(length, halfW, wallH);
+    this._buildWindows(length, halfW, wallH);
+    this._buildRoadPaint(length, halfW);
+    this._buildBackdrop(length, halfW);
+
     // --- Street cover -----------------------------------------------------
     const rng = mulberry32(1234 + this.index * 97);
     const coverCount = 5 + this.index * 2;
@@ -221,6 +237,9 @@ export class Level {
 
     // --- Set-dressing props (AI GLBs) ------------------------------------
     this._setDressing(length, halfW, rng);
+
+    // --- Sectarian wall murals -------------------------------------------
+    this._addMurals(length, halfW, rng);
 
     // --- Exit gate at the far end ----------------------------------------
     const exitZ = -length + 6;
@@ -296,6 +315,146 @@ export class Level {
         new THREE.Vector3(x + w / 2, h, z + d / 2),
       ),
     );
+  }
+
+  /** Paint sectarian murals onto the inner faces of the building walls. */
+  _addMurals(length, halfW, rng) {
+    const murals = this.assets ? this.assets.getMurals() : [];
+    if (!murals.length) return;
+    const count = 3 + this.index;
+    for (let i = 0; i < count; i++) {
+      const tex = murals[(rng() * murals.length) | 0];
+      const side = rng() < 0.5 ? -1 : 1;
+      const z = -7 - rng() * (length - 16);
+      const size = 2.6 + rng() * 1.3;
+      const mesh = new THREE.Mesh(
+        new THREE.PlaneGeometry(size, size),
+        new THREE.MeshStandardMaterial({
+          map: tex,
+          roughness: 0.95,
+          metalness: 0,
+          polygonOffset: true,
+          polygonOffsetFactor: -2,
+        }),
+      );
+      // Sit just in front of the wall's inner face (walls are 0.6 thick, so the
+      // inner face is at halfW-0.3), facing the street centre.
+      mesh.position.set(side * (halfW - 0.34), 0.2 + size / 2, z);
+      mesh.rotation.y = side === -1 ? Math.PI / 2 : -Math.PI / 2;
+      this.group.add(mesh);
+    }
+  }
+
+  /** Raised, kerbed concrete pavements down both sides of the street. */
+  _buildSidewalks(length, halfW) {
+    const zc = -length / 2 + 4;
+    const face = halfW - 0.3; // wall inner face
+    const pw = 1.5; // pavement width
+    for (let side = -1; side <= 1; side += 2) {
+      const pave = new THREE.Mesh(new THREE.BoxGeometry(pw, 0.12, length + 8), this._materials.pavement);
+      pave.position.set(side * (face - pw / 2), 0.06, zc);
+      this.group.add(pave);
+      const kerb = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.2, length + 8), this._materials.kerb);
+      kerb.position.set(side * (face - pw), 0.1, zc);
+      this.group.add(kerb);
+    }
+  }
+
+  /** Pitched grey-slate roofs sloping back over each terrace. */
+  _buildRoofs(length, halfW, wallH) {
+    const zc = -length / 2 + 4;
+    const rise = 2.2, run = 2.6;
+    const slope = Math.hypot(rise, run);
+    const angle = Math.atan2(rise, run);
+    for (let side = -1; side <= 1; side += 2) {
+      const eaveX = side * (halfW - 0.1);
+      const ridgeX = side * (halfW + run);
+      const roof = new THREE.Mesh(new THREE.BoxGeometry(slope, 0.2, length + 8), this._materials.roof);
+      roof.position.set((eaveX + ridgeX) / 2, wallH + rise / 2, zc);
+      roof.rotation.z = side * angle; // outer edge lifts to the ridge
+      this.group.add(roof);
+      // eave fascia + ridge cap
+      const fascia = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.4, length + 8), this._materials.frame);
+      fascia.position.set(side * (halfW - 0.05), wallH + 0.05, zc);
+      this.group.add(fascia);
+      const ridge = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.28, length + 8), this._materials.kerb);
+      ridge.position.set(ridgeX, wallH + rise, zc);
+      this.group.add(ridge);
+    }
+  }
+
+  /** Brick chimney stacks with pots along the ridges. */
+  _buildChimneys(length, halfW, wallH) {
+    const ridgeY = wallH + 2.2;
+    for (let side = -1; side <= 1; side += 2) {
+      const cx = side * (halfW + 2.3);
+      for (let z = -3; z > -length; z -= 9) {
+        const stack = new THREE.Mesh(new THREE.BoxGeometry(0.8, 1.4, 0.7), this._materials.brick);
+        stack.position.set(cx, ridgeY + 0.5, z);
+        this.group.add(stack);
+        for (const ox of [-0.2, 0.2]) {
+          const pot = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.12, 0.35, 8), this._materials.kerb);
+          pot.position.set(cx + ox, ridgeY + 1.35, z);
+          this.group.add(pot);
+        }
+      }
+    }
+  }
+
+  /** Surface-mounted sash windows in a grid on the brick facades. */
+  _buildWindows(length, halfW, wallH) {
+    const face = halfW - 0.3;
+    const rows = [1.45, 3.4];
+    for (let side = -1; side <= 1; side += 2) {
+      const ry = side === -1 ? Math.PI / 2 : -Math.PI / 2;
+      for (let z = -2; z > -length + 3; z -= 3.2) {
+        let nearDoor = false;
+        for (const d of this.doors) {
+          if (Math.sign(d.center.x) === side && Math.abs(d.center.z - z) < 1.7) { nearDoor = true; break; }
+        }
+        if (nearDoor) continue;
+        for (const y of rows) {
+          const frame = new THREE.Mesh(new THREE.BoxGeometry(0.06, 1.4, 1.15), this._materials.frame);
+          frame.position.set(side * (face + 0.02), y, z);
+          this.group.add(frame);
+          const glass = new THREE.Mesh(new THREE.PlaneGeometry(0.92, 1.15), this._materials.glass);
+          glass.position.set(side * (face + 0.06), y, z);
+          glass.rotation.y = ry;
+          this.group.add(glass);
+          const sill = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.1, 1.3), this._materials.kerb);
+          sill.position.set(side * (face + 0.07), y - 0.72, z);
+          this.group.add(sill);
+        }
+      }
+    }
+  }
+
+  /** Dashed white centre line + solid edge lines on the wet road. */
+  _buildRoadPaint(length, halfW) {
+    const zc = -length / 2 + 4;
+    for (let z = 2; z > -length; z -= 3.2) {
+      const dash = new THREE.Mesh(new THREE.PlaneGeometry(0.16, 1.6), this._materials.paint);
+      dash.rotation.x = -Math.PI / 2;
+      dash.position.set(0, 0.03, z);
+      this.group.add(dash);
+    }
+    for (let side = -1; side <= 1; side += 2) {
+      const edge = new THREE.Mesh(new THREE.PlaneGeometry(0.12, length + 8), this._materials.paint);
+      edge.rotation.x = -Math.PI / 2;
+      edge.position.set(side * (halfW - 1.65), 0.03, zc);
+      this.group.add(edge);
+    }
+  }
+
+  /** Distant hazy hills beyond the far end (Belfast hills through the rain). */
+  _buildBackdrop(length, halfW) {
+    const farZ = -length - 12;
+    for (let i = -3; i <= 3; i++) {
+      const hill = new THREE.Mesh(new THREE.SphereGeometry(34, 14, 9), this._materials.hill);
+      hill.scale.set(1.8, 0.75, 1);
+      hill.position.set(i * 32, -16, farZ - Math.abs(i) * 5);
+      this.group.add(hill);
+    }
   }
 
   /** Scatter purely-visual AI props along the street (big ones get colliders). */
