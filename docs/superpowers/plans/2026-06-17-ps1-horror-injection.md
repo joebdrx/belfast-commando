@@ -490,7 +490,15 @@ In `src/game/Enemy.js`, immediately after the existing defaults block — insert
     this.sightRange = arch.sightRange;
     this.meleeRange = arch.meleeRange;
     this.damage = arch.meleeDamage;
+    this.speed = arch.speed || 1.8;
+    this.runSpeed = arch.runSpeed || 5.4;
 ```
+IMPORTANT: this archetype block runs BEFORE the existing `// Patrol / chase` block,
+which currently also assigns `this.speed = 1.8;` and `this.runSpeed = 5.4;` (orig
+lines 37-38). Those later assignments would clobber the archetype values — DELETE
+those two lines from the Patrol/chase block so `speed`/`runSpeed` come only from the
+archetype. `EnemyBehavior` reads `enemy.speed`/`enemy.runSpeed`, so this is required
+for the enforcer (slow) and breacher (fast) to behave as designed.
 Then, at the END of the constructor (just before its closing `}`, after line 125 `this.height = 1.9;`), add the enforcer up-scale:
 ```js
     if (arch.scale && arch.scale !== 1) {
