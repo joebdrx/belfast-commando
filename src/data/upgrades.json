@@ -8,19 +8,27 @@
     "effect": { "type": "kickPower", "perLevel": 0.15 }
   },
   {
-    "id": "steady_aim",
-    "name": "Steady Aim",
-    "desc": "Tighter spread — fewer wild rounds peppering the murals.",
-    "maxLevel": 3,
-    "cost": [40, 100, 220],
-    "effect": { "type": "spread", "perLevel": -0.12 }
-  },
-  {
     "id": "thick_skin",
     "name": "Thick Skin",
     "desc": "More health. Belfast hardens what it does not kill.",
     "maxLevel": 3,
     "cost": [60, 140, 300],
     "effect": { "type": "maxHealth", "perLevel": 0.25 }
+  },
+  {
+    "id": "adrenaline_leak",
+    "name": "Adrenaline Leak",
+    "desc": "Below 30% health: a surge of speed and your boot clears a full 360°. The world swims at the edges.",
+    "maxLevel": 1,
+    "cost": [180],
+    "effect": { "type": "adrenaline", "perLevel": 1 }
+  },
+  {
+    "id": "scavenger_refund",
+    "name": "Scavenger's Refund",
+    "desc": "A point-blank boot kill jams 15% of a magazine straight back into your gun.",
+    "maxLevel": 1,
+    "cost": [160],
+    "effect": { "type": "kick_ammo_refund", "perLevel": 0.15 }
   }
 ]
