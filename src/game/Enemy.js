@@ -48,12 +48,12 @@ export class Enemy {
     this.sightRange = arch.sightRange;
     this.meleeRange = arch.meleeRange;
     this.damage = arch.meleeDamage;
+    this.speed = arch.speed || 1.8;
+    this.runSpeed = arch.runSpeed || 5.4;
 
     // Patrol / chase
     this.patrol = opts.patrol || null;
     this.patrolIndex = 0;
-    this.speed = 1.8;
-    this.runSpeed = 5.4; // fast enough to run a walking player down
     this._strafeDir = Math.random() < 0.5 ? -1 : 1; // circles the player in melee
     this._lunge = 0; // forward jab offset, eases back to rest
     this._rigRoot = null; // the visual model, lunged on each strike
