@@ -19,7 +19,6 @@ import BOOTS from "../data/boots.json";
  *
  * Upgrade effect.type → consumer (read `getUpgradeEffectValue(id)`):
  *   - "kickPower"  (kick_master) → Player kick radius/knockback bonus
- *   - "spread"     (steady_aim)  → Weapon spread modifier (perLevel is negative)
  *   - "maxHealth"  (thick_skin)  → Player.maxHealth bonus (flat per level)
  */
 
