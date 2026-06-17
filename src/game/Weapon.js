@@ -354,6 +354,11 @@ export class Weapon {
     } else {
       this._spawnImpact(wPoint, 0xffcc66, false);
       this._tracer(_origin, wPoint);
+      // Persistent bullet-hole decal (normal ≈ toward the shooter).
+      this.ctx.state && this.ctx.state.emit("surfaceHit", {
+        position: wPoint.clone(),
+        normal: _dir.clone().multiplyScalar(-1),
+      });
     }
   }
 

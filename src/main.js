@@ -20,6 +20,7 @@ import { PauseMenu } from "./game/PauseMenu.js";
 import { Modifiers } from "./game/Modifiers.js";
 import { Achievements } from "./game/Achievements.js";
 import { Abilities } from "./game/Abilities.js";
+import { Decals } from "./game/Decals.js";
 
 const MAX_DT = 0.05;
 
@@ -84,6 +85,7 @@ class Game {
     this.pauseMenu = new PauseMenu();
     this.modifiers = new Modifiers(this.state);
     this.abilities = new Abilities(this.state);
+    this.decals = new Decals(this.engine.scene, 100);
     this.achievements = new Achievements(this.state);
 
     this._assetsReady = false;
@@ -122,6 +124,8 @@ class Game {
     this.juice.setContext(this.ctx);
     this.abilities.setContext(this.ctx);
     this.abilities.attach();
+    this.decals.setContext(this.ctx);
+    this.decals.attach();
     // Drive the HUD distortion from the adrenaline event.
     this.state.on("adrenaline", ({ active }) => this.hud.setAdrenaline(active));
     // Honor the persisted FX toggle (default on).
@@ -181,6 +185,9 @@ class Game {
       });
 
     this._bindUI();
+    window.addEventListener("resize", () => {
+      this.assets.retro && this.assets.retro.setViewport(window.innerWidth, window.innerHeight);
+    });
     this._enterHub();
 
     this._last = performance.now();
@@ -226,6 +233,7 @@ class Game {
     this.pauseMenu.hide();
     this.modifiers.clear(); // drop any previous sector's modifier
     this.abilities.refresh();
+    this.decals.clear();
 
     const { entry } = this.levelManager.loadLevel(index);
     this.level = this.levelManager.level;
