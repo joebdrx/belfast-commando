@@ -27,9 +27,10 @@ export function serpentineOffset(time, amplitude, frequency) {
 /** Tick a rigged enemy's mixer at its clamped FPS (visual only — never position). */
 export function tickAnim(enemy, dt) {
   if (!enemy.mixer || enemy.dead) return;
-  const r = animStep(enemy._animAccum || 0, dt, enemy.animFps || 11);
-  enemy._animAccum = r.accum;
-  if (r.advance > 0) enemy.mixer.update(r.advance);
+  const step = 1 / Math.max(1, enemy.animFps || 11);
+  let accum = (enemy._animAccum || 0) + dt;
+  if (accum >= step) { enemy.mixer.update(step); accum -= step; }
+  enemy._animAccum = accum;
 }
 
 /** Gunner: hold standoff range, strafe erratically, telegraph + hitscan. */
@@ -118,7 +119,7 @@ export function stepBreacher(enemy, dt, ctx) {
   pos.addScaledVector(_flat, enemy.runSpeed * dt).add(_tan);
   enemy._setAnim("run");
   // Contact detonation.
-  if (dist <= enemy.meleeRange) enemy.takeDamage(enemy.health + 50, _flat, 0);
+  if (Math.hypot(_toPlayer.x, _toPlayer.z) <= enemy.meleeRange) enemy.takeDamage(enemy.health + 50, _flat, 0);
 }
 
 /** Breacher death blast: VFX + audio + point-blank AoE to the player. */

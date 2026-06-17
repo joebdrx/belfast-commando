@@ -209,6 +209,7 @@ class Game {
     this.modifiers.clear();
     this.hud.setCrosshairActive(false);
     this.hud.hideOverlay();
+    this.hud.setAdrenaline(false);
     this._setHudVisible(false);
     this.hub.show();
     this.menu.refresh();
@@ -233,6 +234,7 @@ class Game {
     this.pauseMenu.hide();
     this.modifiers.clear(); // drop any previous sector's modifier
     this.abilities.refresh();
+    this.hud.setAdrenaline(false);
     this.decals.clear();
 
     const { entry } = this.levelManager.loadLevel(index);
@@ -315,6 +317,7 @@ class Game {
     this.state.setPhase("RESULTS");
     this.pauseMenu.hide();
     this.hud.setCrosshairActive(false);
+    this.hud.setAdrenaline(false);
     if (document.pointerLockElement) document.exitPointerLock();
 
     const run = this.state.getState().run;
