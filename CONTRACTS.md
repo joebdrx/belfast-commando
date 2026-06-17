@@ -32,6 +32,9 @@ work after every change.
 | `src/game/PauseMenu.js` | **Agent P1** | pause + settings overlay |
 | `src/game/Modifiers.js`, `src/data/modifiers.json` is F1's | **Agent P2** | run-modifier engine (reads modifiers.json) |
 | `src/game/Achievements.js`, `src/data/achievements.json` is F1's | **Agent P3** | achievement engine (reads achievements.json) |
+| `src/game/EnemyDirector.js`, `src/game/EnemyBehavior.js`, `src/data/enemies.json` | **Alpha** | archetype composition + behavior + data |
+| `src/game/Abilities.js` | **Beta** | boot + horror-upgrade engine (ctx.abilities) |
+| `src/game/RetroMaterial.js`, `src/game/Decals.js` | **Gamma** | PS1 material pipeline + persistent decals |
 
 Agents may **read** any file. Agents may **append data entries** to a JSON file they don't
 own only if explicitly told to; otherwise report the need. No agent edits another's `.js`.
@@ -230,6 +233,11 @@ through GameState methods.
 | `extractReady` | `{}` | LevelManager (C) |
 | `extracted` | `{}` | LevelManager (C) |
 | `modifier` | `{id, name, desc}` | Modifiers (P2) — fired when a run modifier is rolled |
+| `enemyShot` | `{position, dir}` | gunner (Alpha) |
+| `breacherAggro` | `{position}` | breacher detection (Alpha) |
+| `breacherDetonate` | `{position}` | breacher death (Alpha) |
+| `adrenaline` | `{active}` | Abilities (Beta) |
+| `surfaceHit` | `{position, normal}` | Weapon wall hit → Decals (Gamma) |
 
 F1 OWNS emitting only the GameState-internal events above (phaseChange, runStart/End, score,
 kill, combo, currency, stat). The combat-bridge emits (`kill`/`hit`/`breach`/`explosion`/
