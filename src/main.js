@@ -19,6 +19,7 @@ import { Juice } from "./game/Juice.js";
 import { PauseMenu } from "./game/PauseMenu.js";
 import { Modifiers } from "./game/Modifiers.js";
 import { Achievements } from "./game/Achievements.js";
+import { Abilities } from "./game/Abilities.js";
 
 const MAX_DT = 0.05;
 
@@ -82,6 +83,7 @@ class Game {
     this.levelManager = new LevelManager(this.engine.scene, this.assets, this.state);
     this.pauseMenu = new PauseMenu();
     this.modifiers = new Modifiers(this.state);
+    this.abilities = new Abilities(this.state);
     this.achievements = new Achievements(this.state);
 
     this._assetsReady = false;
@@ -111,12 +113,20 @@ class Game {
       juice: this.juice,
       progression: this.progression,
       modifiers: this.modifiers,
+      abilities: this.abilities,
       onPlayerDeath: () => this._onDeath(),
       steamFirstKick: () => Steam.unlock("ACH_FIRST_KICK"),
     };
     this.player.setContext(this.ctx);
     this.weapon.setContext(this.ctx);
     this.juice.setContext(this.ctx);
+    this.abilities.setContext(this.ctx);
+    this.abilities.attach();
+    // Drive the HUD distortion from the adrenaline event.
+    this.state.on("adrenaline", ({ active }) => this.hud.setAdrenaline(active));
+    // Honor the persisted FX toggle (default on).
+    const adrFx = this.state.getProgression().settings;
+    if (adrFx && adrFx.adrenalineFx === false) this.hud.setAdrenalineFxEnabled(false);
     this.combo.setContext(this.ctx);
     this.floating.setContext(this.ctx);
     this.floating.attach();
@@ -215,6 +225,7 @@ class Game {
     this.juice.reset();
     this.pauseMenu.hide();
     this.modifiers.clear(); // drop any previous sector's modifier
+    this.abilities.refresh();
 
     const { entry } = this.levelManager.loadLevel(index);
     this.level = this.levelManager.level;
