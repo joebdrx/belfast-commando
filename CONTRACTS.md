@@ -229,6 +229,7 @@ through GameState methods.
 | `levelClear` | `{stats}` | LevelManager (C) |
 | `extractReady` | `{}` | LevelManager (C) |
 | `extracted` | `{}` | LevelManager (C) |
+| `modifier` | `{id, name, desc}` | Modifiers (P2) — fired when a run modifier is rolled |
 
 F1 OWNS emitting only the GameState-internal events above (phaseChange, runStart/End, score,
 kill, combo, currency, stat). The combat-bridge emits (`kill`/`hit`/`breach`/`explosion`/

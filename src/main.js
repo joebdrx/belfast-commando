@@ -314,7 +314,8 @@ class Game {
     run.score = this.score.total;
 
     // Resistance Points reward (CONTRACTS §4), boosted by any run modifier.
-    const base = Math.floor(this.score.total / 100) + run.kills * 2 + this.score.bestCombo * 2;
+    // Uses the per-sector best combo (run.bestCombo), not the cross-run total.
+    const base = Math.floor(this.score.total / 100) + run.kills * 2 + run.bestCombo * 2;
     const scoreMul = this.modifiers.getScoreMul();
     const rp = Math.round((died ? base * 0.4 : base) * scoreMul);
     this.state.addCurrency(rp);

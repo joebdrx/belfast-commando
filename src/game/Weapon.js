@@ -331,6 +331,7 @@ export class Weapon {
       this._spawnImpact(ePoint, 0xb01818, true);
       this._tracer(_origin, ePoint);
       this.ctx.score.add(30, "HIT");
+      this.ctx.state && this.ctx.state.emit("hit", { position: ePoint.clone(), amount: w.damage });
       if (this.ctx.juice) this.ctx.juice.spawnImpact(ePoint, "blood");
       if (wasAlive && bestEnemy.dead) {
         this.ctx.score.add(120, "KILL");

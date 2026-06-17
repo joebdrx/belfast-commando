@@ -38,6 +38,7 @@
     "seed": 3,
     "intro": "Operation: Storm the Docks. They came off boats — send them back the same way.",
     "outro": "The Docks are sealed. Nothing foreign sailing into Belfast tonight.",
+    "extraction": { "x": -12, "z": 0, "r": 4.5 },
     "modifierChance": 0.4,
     "par": 65
   },

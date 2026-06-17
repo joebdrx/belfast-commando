@@ -21,6 +21,6 @@
     "desc": "More health. Belfast hardens what it does not kill.",
     "maxLevel": 3,
     "cost": [60, 140, 300],
-    "effect": { "type": "maxHealth", "perLevel": 25 }
+    "effect": { "type": "maxHealth", "perLevel": 0.25 }
   }
 ]
