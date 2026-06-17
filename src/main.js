@@ -16,6 +16,9 @@ import { Menu } from "./game/Menu.js";
 import ComboSystem from "./game/ComboSystem.js";
 import FloatingText from "./game/FloatingText.js";
 import { Juice } from "./game/Juice.js";
+import { PauseMenu } from "./game/PauseMenu.js";
+import { Modifiers } from "./game/Modifiers.js";
+import { Achievements } from "./game/Achievements.js";
 
 const MAX_DT = 0.05;
 
@@ -77,6 +80,9 @@ class Game {
     this.hub = new Hub(this.engine.camera, this.assets);
     this.menu = new Menu();
     this.levelManager = new LevelManager(this.engine.scene, this.assets, this.state);
+    this.pauseMenu = new PauseMenu();
+    this.modifiers = new Modifiers(this.state);
+    this.achievements = new Achievements(this.state);
 
     this._assetsReady = false;
     this.phase = "HUB"; // HUB | LEVEL | RESULTS
@@ -104,6 +110,7 @@ class Game {
       bus: this.state,
       juice: this.juice,
       progression: this.progression,
+      modifiers: this.modifiers,
       onPlayerDeath: () => this._onDeath(),
       steamFirstKick: () => Steam.unlock("ACH_FIRST_KICK"),
     };
@@ -114,11 +121,29 @@ class Game {
     this.floating.setContext(this.ctx);
     this.floating.attach();
 
-    // Apply persisted settings (sensitivity + mute).
+    // Apply persisted settings (sensitivity + mute + graphics quality).
     const settings = this.state.getProgression().settings || {};
     if (settings.sensitivity) this.player.sensitivity = settings.sensitivity;
     this._muted = !!settings.muted;
     this.audio.setMuted(this._muted);
+    this._applyQuality(settings.quality || "high");
+
+    // Pause menu (replaces the bare PAUSED card) — settings persist live.
+    this.pauseMenu.setProviders({ progression: this.progression });
+    this.pauseMenu.setOnSettingsChange((s) => {
+      this.player.sensitivity = s.sensitivity;
+      this._applyQuality(s.quality);
+    });
+    this.pauseMenu.setHandlers({
+      onResume: () => this._requestLock(),
+      onRestart: () => this._loadLevel(this.levelManager.currentIndex),
+      onQuit: () => this._enterHub(),
+    });
+
+    // Achievements: data-driven, bus-subscribing; persist unlocks via progression.
+    this.achievements.setContext(this.ctx);
+    this.achievements.setProviders({ progression: this.progression });
+    this.achievements.attach();
 
     // Wire the safehouse menu. Upgrades/Story Logs are self-rendered sub-panels
     // inside Menu; we only need the launch + (optional) exit hooks.
@@ -163,6 +188,8 @@ class Game {
     this.ctx.active = false;
     this.state.setPhase("HUB");
     if (document.pointerLockElement) document.exitPointerLock();
+    this.pauseMenu.hide();
+    this.modifiers.clear();
     this.hud.setCrosshairActive(false);
     this.hud.hideOverlay();
     this._setHudVisible(false);
@@ -186,6 +213,8 @@ class Game {
   _loadLevel(index) {
     this.weapon.reset();
     this.juice.reset();
+    this.pauseMenu.hide();
+    this.modifiers.clear(); // drop any previous sector's modifier
 
     const { entry } = this.levelManager.loadLevel(index);
     this.level = this.levelManager.level;
@@ -214,6 +243,12 @@ class Game {
     this.player.reset(this.levelManager.spawn, this.levelManager.spawnYaw || 0);
     this.score.reset();
 
+    // Roll + apply a per-run modifier (e.g. "Rainy Night") AFTER spawn/reset, so
+    // it scales the fresh enemies + player knobs.
+    this.modifiers.maybeRoll(entry);
+    this.modifiers.applyToLevel(this.level, this.player);
+    const mod = this.modifiers.getActive();
+
     // Unlock story content as the campaign progresses.
     const prog = this.state.getProgression();
     prog.unlockedLevels = Math.max(prog.unlockedLevels, index + 1);
@@ -222,7 +257,9 @@ class Game {
     this.hud.setLevel(index + 1);
     this.hud.setWeapon(this.weapon.current.name);
     this.hud.setAmmo(this.weapon.ammo[this.weapon.index], this.weapon.current.mag, false);
-    this.hud.setObjective(entry.intro || "Eliminate all invaders");
+    this.hud.setObjective(
+      mod ? `${entry.intro || "Eliminate all invaders"}  ·  ⚠ ${mod.name}` : entry.intro || "Eliminate all invaders",
+    );
     this.hud.setHealth(this.player.health, this.player.maxHealth);
     this.hud.hideOverlay();
     this.hud.setCrosshairActive(true);
@@ -257,6 +294,7 @@ class Game {
     this.paused = false;
     this.ctx.active = false;
     this.state.setPhase("RESULTS");
+    this.pauseMenu.hide();
     this.hud.setCrosshairActive(false);
     if (document.pointerLockElement) document.exitPointerLock();
 
@@ -275,9 +313,10 @@ class Game {
     }
     run.score = this.score.total;
 
-    // Resistance Points reward (CONTRACTS §4).
+    // Resistance Points reward (CONTRACTS §4), boosted by any run modifier.
     const base = Math.floor(this.score.total / 100) + run.kills * 2 + this.score.bestCombo * 2;
-    const rp = died ? Math.round(base * 0.4) : base;
+    const scoreMul = this.modifiers.getScoreMul();
+    const rp = Math.round((died ? base * 0.4 : base) * scoreMul);
     this.state.addCurrency(rp);
     this.progression.save();
     this.state.endRun({ died });
@@ -334,6 +373,12 @@ class Game {
     if (hud) hud.style.display = visible ? "" : "none";
   }
 
+  /** Apply the graphics-quality setting to the renderer pixel ratio. */
+  _applyQuality(quality) {
+    const { pixelRatio } = this.pauseMenu.qualityToRenderer(quality);
+    this.engine.renderer.setPixelRatio(Math.min(window.devicePixelRatio, pixelRatio));
+  }
+
   _bindUI() {
     // The #overlay card is used only for PAUSED + RESULTS (HUB uses Menu).
     document.getElementById("overlay").addEventListener("click", () => this._handlePrimaryClick());
@@ -347,14 +392,14 @@ class Game {
       const locked = document.pointerLockElement === this.dom;
       if (this.phase === "LEVEL") {
         if (!locked && !this.paused) {
-          // Soft pause when the player tabs out / hits Esc.
+          // Soft pause when the player tabs out / hits Esc → the pause menu.
           this.paused = true;
           this.state.setPhase("PAUSED");
-          this.hud.showOverlay("PAUSED", "Take a breather.", "Click to resume");
+          this.pauseMenu.show();
         } else if (locked && this.paused) {
           this.paused = false;
           this.state.setPhase("LEVEL");
-          this.hud.hideOverlay();
+          this.pauseMenu.hide();
         }
       }
       this.ctx.active = this.phase === "LEVEL" && !this.paused && locked;

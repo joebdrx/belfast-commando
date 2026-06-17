@@ -58,6 +58,11 @@ export class Player {
     this.health = 100;
     this.alive = true;
 
+    // Per-run modifier knobs (1 = unmodified). Run modifiers (e.g. "Rainy
+    // Night") scale these; reset to 1 each level, re-applied after spawn.
+    this.speedMul = 1;
+    this.frictionMul = 1;
+
     this.bobPhase = 0;
 
     /** @type {object} game context, set by main */
@@ -137,6 +142,8 @@ export class Player {
     this.alive = true;
     this.sliding = false;
     this.eyeHeight = EYE_HEIGHT;
+    this.speedMul = 1;
+    this.frictionMul = 1;
   }
 
   _basisFromYaw() {
@@ -173,7 +180,7 @@ export class Player {
     }
 
     // --- Horizontal acceleration / friction -------------------------------
-    let targetSpeed = sprinting ? SPRINT_SPEED : WALK_SPEED;
+    let targetSpeed = (sprinting ? SPRINT_SPEED : WALK_SPEED) * this.speedMul;
     if (this.sliding) targetSpeed = SLIDE_SPEED * (this.slideTimer / 0.7);
 
     const accel = this.onGround ? ACCEL : AIR_ACCEL;
@@ -183,7 +190,7 @@ export class Player {
       // Ground friction
       const speed = horiz.length();
       if (speed > 0) {
-        const drop = speed * FRICTION * dt;
+        const drop = speed * FRICTION * this.frictionMul * dt;
         const ns = Math.max(0, speed - drop) / speed;
         this.vel.x *= ns;
         this.vel.z *= ns;
