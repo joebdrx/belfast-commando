@@ -2,6 +2,7 @@ import * as THREE from "three";
 
 const _toPlayer = new THREE.Vector3();
 const _flat = new THREE.Vector3();
+const _tangent = new THREE.Vector3();
 
 /**
  * Enemy
@@ -23,17 +24,21 @@ export class Enemy {
     this.dead = false;
     this.scored = false; // consumed by the game loop for scoring
 
-    this.fireCooldown = 1.4 + Math.random() * 0.8;
-    this.fireTimer = this.fireCooldown * (0.5 + Math.random());
-    this.sightRange = 32;
-    this.damage = 6; // weak — they chip you, momentum is king
+    // Melee attacker: no ranged fire — they charge in and swing on a cooldown.
+    this.meleeRange = 1.7;
+    this.meleeCooldown = 1.0;
+    this.meleeTimer = 0.5 + Math.random() * 0.8;
+    this.sightRange = 42;
+    this.damage = 9; // a swing hurts — keep moving or get swarmed
 
     // Patrol / chase
     this.patrol = opts.patrol || null;
     this.patrolIndex = 0;
-    this.speed = 1.6;
-    this.runSpeed = 3.6;
-    this.chaseRange = 7; // run at the player until this close, then stop & shoot
+    this.speed = 1.8;
+    this.runSpeed = 5.4; // fast enough to run a walking player down
+    this._strafeDir = Math.random() < 0.5 ? -1 : 1; // circles the player in melee
+    this._lunge = 0; // forward jab offset, eases back to rest
+    this._rigRoot = null; // the visual model, lunged on each strike
 
     // Skeletal animation (rigged enemies)
     this.mixer = null;
@@ -54,6 +59,7 @@ export class Enemy {
     this._bodyMat = null;
     if (opts.rigged) {
       this.group.add(opts.rigged.object3D);
+      this._rigRoot = opts.rigged.object3D;
       this.mixer = new THREE.AnimationMixer(opts.rigged.object3D);
       this.actions = {};
       for (const [name, clip] of Object.entries(opts.rigged.clips)) {
@@ -62,6 +68,7 @@ export class Enemy {
       this._setAnim("idle");
     } else if (opts.model) {
       this.group.add(opts.model);
+      this._rigRoot = opts.model;
     } else {
       const bodyMat = new THREE.MeshStandardMaterial({
         color: 0xc0392b,
@@ -224,20 +231,24 @@ export class Enemy {
     const canSee = dist < this.sightRange && ctx.level.lineOfSight(this.eyePosition(), playerPos);
 
     if (canSee) {
-      // Face the player (yaw only).
+      // Always face + close on the player.
       this.group.rotation.y = Math.atan2(_toPlayer.x, _toPlayer.z);
-      if (dist > this.chaseRange) {
-        // Charge the player.
-        _flat.copy(_toPlayer).setY(0).normalize();
+      _flat.copy(_toPlayer).setY(0);
+      const hdist = _flat.length();
+      _flat.normalize();
+      if (hdist > this.meleeRange) {
+        // Charge.
         this.group.position.addScaledVector(_flat, this.runSpeed * dt);
         this._setAnim("run");
       } else {
-        // In range — stand and shoot.
-        this._setAnim("idle");
-        this.fireTimer -= dt;
-        if (this.fireTimer <= 0) {
-          this.fireTimer = this.fireCooldown;
-          this._shoot(ctx);
+        // In range — circle the player and swing on a cooldown.
+        _tangent.set(-_flat.z, 0, _flat.x).multiplyScalar(this._strafeDir);
+        this.group.position.addScaledVector(_tangent, this.speed * dt);
+        this._setAnim("run");
+        this.meleeTimer -= dt;
+        if (this.meleeTimer <= 0) {
+          this.meleeTimer = this.meleeCooldown;
+          this._meleeAttack(ctx);
         }
       }
     } else if (this.patrol && this.patrol.length > 1) {
@@ -245,6 +256,12 @@ export class Enemy {
       this._setAnim("walk");
     } else {
       this._setAnim("idle");
+    }
+
+    // Ease the melee lunge back to rest (offsets the visual model only).
+    if (this._rigRoot) {
+      this._lunge = this._lunge > 0.001 ? this._lunge * Math.max(0, 1 - dt * 9) : 0;
+      this._rigRoot.position.z = this._lunge;
     }
   }
 
@@ -265,12 +282,12 @@ export class Enemy {
     this.group.position.addScaledVector(_flat, this.speed * dt);
   }
 
-  _shoot(ctx) {
-    this._flashTime = 0.06;
-    this.flash.material.opacity = 1;
-    ctx.audio.enemyShot(this.group.position, ctx.camera.position);
-    // Inaccurate by design — they're cannon fodder.
-    if (Math.random() < 0.55) {
+  _meleeAttack(ctx) {
+    // Quick forward jab (visual), then connect if still in reach.
+    this._lunge = 0.5;
+    ctx.audio.enemyMelee(this.group.position, ctx.camera.position);
+    _flat.copy(ctx.player.position).sub(this.group.position).setY(0);
+    if (_flat.length() <= this.meleeRange + 0.5) {
       ctx.player.damage(this.damage);
       ctx.hud.flashDamage();
     }

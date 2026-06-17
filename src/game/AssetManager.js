@@ -50,6 +50,7 @@ const MODEL_DEFS = {
   // first-person viewmodels — centred, scaled by their longest axis
   weapon_ak:        { size: 0.62, fit: "max", anchor: "center", rotY: 0 },
   weapon_pistol:    { size: 0.34, fit: "max", anchor: "center", rotY: 0 },
+  weapon_shotgun:   { size: 0.58, fit: "max", anchor: "center", rotY: 0 }, // sawed-off boomstick
   viewmodel_hands:  { size: 0.45, fit: "max", anchor: "center", rotY: 0 },
   fp_arms_grip:     { size: 0.55, fit: "max", anchor: "center", rotY: 0 },
   kick_boot:        { size: 0.40, fit: "max", anchor: "center", rotY: 0 },
@@ -96,6 +97,8 @@ export class AssetManager {
     this.sprites = {}; // name -> THREE.Texture
     this.murals = []; // THREE.Texture[]
     this.facades = []; // [{ texture, aspect }] building fronts baked from the city model
+    this.faceTexture = null; // photo face slapped onto enemy heads (non-1.png)
+    this.houseSideTexture = null; // grimy tenement facade for building side walls (4h.png)
     this._riggedEnemy = null; // { scene, clips:{walk,run,idle} }
     this.loaded = 0;
     this.total = Object.keys(DEFS).length;
@@ -163,7 +166,29 @@ export class AssetManager {
     // Environment map, 3D models, 2D sprites, and the rigged enemy run alongside.
     const envJob = scene ? this._loadEnvironment(scene) : Promise.resolve();
     const skyJob = scene ? this._loadSky(scene) : Promise.resolve();
-    await Promise.all([...jobs, envJob, skyJob, this.loadModels(), this.loadSprites(), this.loadMurals(), this._loadRiggedEnemy(), this.captureFacades()]);
+    await Promise.all([...jobs, envJob, skyJob, this.loadModels(), this.loadSprites(), this.loadMurals(), this._loadRiggedEnemy(), this.captureFacades(), this.loadFace(), this.loadHouseSide()]);
+  }
+
+  /** Load the photo face that gets billboarded onto each enemy's head. */
+  async loadFace() {
+    const tex = await this._loadTexture(`${BASE}non-1.png`, { srgb: true });
+    if (tex) {
+      tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
+      this.faceTexture = tex;
+    }
+  }
+
+  /** Load the grimy tenement facade used to clad the long building side walls. */
+  async loadHouseSide() {
+    const tex = await this._loadTexture(`${BASE}house_side.png`, { srgb: true });
+    if (tex) {
+      tex.wrapS = tex.wrapT = THREE.RepeatWrapping; // tiled along the terrace
+      this.houseSideTexture = tex;
+    }
+  }
+
+  getHouseSideTexture() {
+    return this.houseSideTexture;
   }
 
   /**
@@ -384,7 +409,76 @@ export class AssetManager {
     // Scale by the measured animated height (NOT the misleading geometry bbox).
     // The model is already feet-at-origin and centred at natural scale.
     wrap.scale.setScalar(1.85 / (this._riggedEnemy.height || 1.7));
+    this._attachFace(wrap);
     return { object3D: wrap, clips: this._riggedEnemy.clips };
+  }
+
+  /**
+   * Parent a photo-face quad to the head bone so it tracks the animation. The
+   * desired transform is built in the wrap's (metre-scale) world frame — at the
+   * head, nudged forward, facing the rig's +Z front — then expressed in the
+   * bone's local space so it rides along as the skeleton poses/animates.
+   */
+  _attachFace(wrap) {
+    if (!this.faceTexture) return;
+    let head = null, fallback = null;
+    wrap.traverse((o) => {
+      if (!o.isBone) return;
+      if (o.name === "headfront") head = o;
+      else if (o.name === "Head") fallback = o;
+    });
+    head = head || fallback;
+    if (!head) return;
+
+    wrap.updateMatrixWorld(true);
+    const headPos = new THREE.Vector3().setFromMatrixPosition(head.matrixWorld);
+    const SIZE = 0.44;
+    const desired = new THREE.Matrix4().compose(
+      headPos.add(new THREE.Vector3(0, 0.09, 0.05)), // up + onto the face
+      new THREE.Quaternion(), // face +Z (the enemy's forward, toward the player)
+      new THREE.Vector3(SIZE, SIZE, SIZE),
+    );
+    const local = new THREE.Matrix4().copy(head.matrixWorld).invert().multiply(desired);
+
+    const face = new THREE.Mesh(this._faceGeometry(), this._faceMaterial());
+    face.frustumCulled = false;
+    local.decompose(face.position, face.quaternion, face.scale);
+    head.add(face);
+  }
+
+  /**
+   * A curved (spherical-cap) sheet, shared across enemies. The photo keeps its
+   * flat 0..1 UVs but the surface bulges forward at the centre and wraps back at
+   * the edges, so it conforms to the head's shape instead of standing off as a
+   * flat card. The transparent corners of the cut-out simply wrap out of sight.
+   */
+  _faceGeometry() {
+    if (this._faceGeo) return this._faceGeo;
+    const geo = new THREE.PlaneGeometry(1, 1, 24, 24);
+    const p = geo.attributes.position;
+    const Rc = 0.7; // cap radius (unit space) — smaller = more wrap
+    for (let i = 0; i < p.count; i++) {
+      const x = p.getX(i), y = p.getY(i);
+      const r2 = Math.min(x * x + y * y, Rc * Rc * 0.998);
+      p.setZ(i, -(Rc - Math.sqrt(Rc * Rc - r2)));
+    }
+    p.needsUpdate = true;
+    geo.computeVertexNormals();
+    this._faceGeo = geo;
+    return geo;
+  }
+
+  _faceMaterial() {
+    if (!this._faceMat) {
+      this._faceMat = new THREE.MeshBasicMaterial({
+        map: this.faceTexture,
+        transparent: true,
+        alphaTest: 0.5,
+        side: THREE.DoubleSide,
+        depthWrite: true,
+      });
+    }
+    return this._faceMat;
   }
 
   /** Load the 2D VFX/decal sprite textures. */

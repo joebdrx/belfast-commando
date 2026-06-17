@@ -152,6 +152,23 @@ export class Audio {
     noise.stop(this._now() + 0.12);
   }
 
+  /** Enemy melee swing — a whoosh plus a low thud, distance-attenuated. */
+  enemyMelee(pos, listenerPos) {
+    if (!this._ok()) return;
+    const d = pos.distanceTo(listenerPos);
+    const vol = Math.max(0.06, Math.min(0.45, 9 / (d + 4)));
+    const n = this._noise(0.14);
+    const bp = this.ctx.createBiquadFilter();
+    bp.type = "bandpass";
+    bp.frequency.setValueAtTime(900, this._now());
+    bp.frequency.exponentialRampToValueAtTime(400, this._now() + 0.14);
+    n.connect(bp);
+    this._env(bp, vol, 0.004, 0.14);
+    n.start();
+    n.stop(this._now() + 0.16);
+    this._tone(130, vol * 0.8, 0.16, "sine", 70);
+  }
+
   switchWeapon() {
     this._tone(600, 0.03, 0.06, "square");
     this._tone(900, 0.03, 0.06, "square");

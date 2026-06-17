@@ -130,6 +130,10 @@ export class Level {
       paint: new THREE.MeshStandardMaterial({ color: 0xeae6da, roughness: 0.55 }),
       hill: new THREE.MeshStandardMaterial({ color: 0x3a4138, roughness: 1.0 }),
       ceiling: new THREE.MeshStandardMaterial({ color: 0x4a4d4f, roughness: 0.95 }),
+      // Grimy tenement photo clad onto the long side walls (null → plain brick).
+      sideHouse: assets && assets.getHouseSideTexture && assets.getHouseSideTexture()
+        ? new THREE.MeshStandardMaterial({ map: assets.getHouseSideTexture(), roughness: 0.92, metalness: 0 })
+        : null,
     };
 
     // Grid geometry shared across builders. Buildings are tall, long terraces:
@@ -141,10 +145,10 @@ export class Level {
     this.STREET = 10; // lane width between blocks
     this.PITCH_X = this.BLOCK_W + this.STREET; // 24
     this.PITCH_Z = this.BLOCK_L + this.STREET; // 66
-    this.COORDS_X = [-this.PITCH_X, 0, this.PITCH_X]; // -24, 0, +24
-    this.COORDS_Z = [-this.PITCH_Z, 0, this.PITCH_Z]; // -66, 0, +66
+    this.COORDS_X = [-this.PITCH_X, 0, this.PITCH_X]; // 3 columns: -24, 0, +24
+    this.COORDS_Z = [-this.PITCH_Z / 2, this.PITCH_Z / 2]; // 2 rows: -33, +33
     this.GRID_HALF_X = this.PITCH_X + this.BLOCK_W / 2; // 31
-    this.GRID_HALF_Z = this.PITCH_Z + this.BLOCK_L / 2; // 94
+    this.GRID_HALF_Z = this.PITCH_Z / 2 + this.BLOCK_L / 2; // 61
 
     this._build();
   }
@@ -201,8 +205,8 @@ export class Level {
     // breach. Street enemies (added below) guarantee a fight regardless.
     for (const cz of COORDS_Z) {
       for (const cx of COORDS_X) {
-        const withEnemy = rng() < 0.55;
-        this._buildBlock(cx, cz, withEnemy);
+        const enemyCount = 2 + (rng() < 0.5 ? 1 : 0); // 2–3 occupied rooms per building
+        this._buildBlock(cx, cz, enemyCount, rng);
       }
     }
 
@@ -229,11 +233,11 @@ export class Level {
       placed++;
     }
 
-    // Burnt-out car roadblock at a street intersection (cover + LOS blocker).
-    this._buildCar(PITCH_X / 2, -PITCH_Z / 2);
+    // Burnt-out car roadblock at the cross-street intersection (cover + LOS).
+    this._buildCar(PITCH_X / 2, 0);
 
     // --- Street enemies patrolling the open grid. -------------------------
-    const streetEnemies = 5 + this.index * 2;
+    const streetEnemies = 12 + this.index * 3;
     let spawned = 0;
     for (let guard = 0; spawned < streetEnemies && guard < streetEnemies * 30; guard++) {
       const x = (rng() - 0.5) * GRID_HALF_X * 2;
@@ -254,11 +258,12 @@ export class Level {
   }
 
   /**
-   * One city block: an enclosed brick room (4 walls + floor + ceiling), a
-   * pitched roof, a chimney, surface-mounted windows, and a kickable door on
-   * the south (+Z) face. Optionally garrisons one invader inside.
+   * One terraced building, subdivided along its long axis into a row of small
+   * enclosed rooms. Each room is its own sealed box (cross-walls between them)
+   * with a kickable door on the street-facing long side, and is clad outside
+   * with the grimy tenement photo. A few rooms garrison an invader.
    */
-  _buildBlock(cx, cz, withEnemy) {
+  _buildBlock(cx, cz, enemyCount, rng) {
     const halfW = this.BLOCK_W / 2; // X half (frontage)
     const halfL = this.BLOCK_L / 2; // Z half (run)
     const t = 0.6;
@@ -267,15 +272,21 @@ export class Level {
     const brick = this._materials.brick;
     const brickDark = this._materials.brickDark;
 
-    // Pavement apron the building sits on (walk-over slab, no collider).
+    // Subdivide the long run (Z) into N small rooms; doors face the inner street.
+    const N = 7;
+    const roomLen = this.BLOCK_L / N;
+    const doorSide = cx < 0 ? 1 : -1; // +1 = east wall, -1 = west wall
+    const doorWallX = cx + doorSide * halfW;
+    const backWallX = cx - doorSide * halfW;
+    const roomZ = (i) => cz - halfL + roomLen * (i + 0.5);
+
+    // Pavement apron (walk-over slab, no collider) + interior floor.
     const pave = new THREE.Mesh(
       new THREE.BoxGeometry(this.BLOCK_W + 3, 0.12, this.BLOCK_L + 3),
       this._materials.pavement,
     );
     pave.position.set(cx, 0.06, cz);
     this.group.add(pave);
-
-    // Interior floor.
     const f = new THREE.Mesh(
       new THREE.PlaneGeometry(this.BLOCK_W - 0.4, this.BLOCK_L - 0.4),
       this._materials.concrete,
@@ -284,60 +295,100 @@ export class Level {
     f.position.set(cx, 0.13, cz);
     this.group.add(f);
 
-    // Walls: N solid, long E/W solid, S (frontage) split around the doorway.
-    this._box(this.BLOCK_W, wallH, t, brick, cx, wallH / 2, cz - halfL, { los: true }); // north
-    this._box(t, wallH, this.BLOCK_L, brickDark, cx - halfW, wallH / 2, cz, { los: true }); // west
-    this._box(t, wallH, this.BLOCK_L, brickDark, cx + halfW, wallH / 2, cz, { los: true }); // east
+    // End walls (short, N & S) + solid back long wall + room-dividing cross walls.
+    this._box(this.BLOCK_W, wallH, t, brick, cx, wallH / 2, cz - halfL, { los: true });
+    this._box(this.BLOCK_W, wallH, t, brick, cx, wallH / 2, cz + halfL, { los: true });
+    this._box(t, wallH, this.BLOCK_L, brick, backWallX, wallH / 2, cz, { los: true });
+    for (let i = 1; i < N; i++) {
+      this._box(this.BLOCK_W, wallH, t, brickDark, cx, wallH / 2, cz - halfL + i * roomLen, { los: true });
+    }
 
-    const stub = (this.BLOCK_W - doorW) / 2;
-    this._box(stub, wallH, t, brick, cx - (doorW / 2 + stub / 2), wallH / 2, cz + halfL, { los: true });
-    this._box(stub, wallH, t, brick, cx + (doorW / 2 + stub / 2), wallH / 2, cz + halfL, { los: true });
-    // Lintel above the door (no collider — it's overhead).
-    this._box(doorW, wallH - 2.7, t, brickDark, cx, 2.7 + (wallH - 2.7) / 2, cz + halfL, { collider: false });
+    // Door long wall: solid segments between the per-room doorways, plus lintels.
+    let segStart = cz - halfL;
+    for (let i = 0; i <= N; i++) {
+      const segEnd = i < N ? roomZ(i) - doorW / 2 : cz + halfL;
+      const segLen = segEnd - segStart;
+      if (segLen > 0.02) {
+        this._box(t, wallH, segLen, brick, doorWallX, wallH / 2, (segStart + segEnd) / 2, { los: true });
+      }
+      if (i < N) {
+        this._box(t, wallH - 2.7, doorW, brickDark, doorWallX, 2.7 + (wallH - 2.7) / 2, roomZ(i), { collider: false });
+        segStart = roomZ(i) + doorW / 2;
+      }
+    }
 
-    // Ceiling — interior rooms are enclosed overhead.
+    // A kickable door per room, hinged in the long wall, swinging inward.
+    const facing = doorSide === 1 ? -Math.PI / 2 : Math.PI / 2;
+    for (let i = 0; i < N; i++) {
+      const dz = roomZ(i);
+      const hinge = doorSide === 1
+        ? new THREE.Vector3(doorWallX, 0, dz - doorW / 2)
+        : new THREE.Vector3(doorWallX, 0, dz + doorW / 2);
+      const door = new Door(hinge, doorW, -doorSide, facing, this._materials.door, null);
+      this.group.add(door.pivot);
+      this.doors.push(door);
+      this.colliders.push(door._closedBox);
+      this.losBlockers.push(door._closedBox);
+    }
+
+    // Ceiling, pitched roof + chimneys.
     const ceil = new THREE.Mesh(
       new THREE.BoxGeometry(this.BLOCK_W, t, this.BLOCK_L),
       this._materials.ceiling,
     );
     ceil.position.set(cx, wallH + t / 2 - 0.05, cz);
     this.group.add(ceil);
-
-    // Kickable door on the south (frontage) face, hinged at the left jamb.
-    const hinge = new THREE.Vector3(cx - doorW / 2, 0, cz + halfL);
-    const doorModel = this.assets ? this.assets.getModel("door_kickable") : null;
-    const door = new Door(hinge, doorW, 1, 0, this._materials.door, doorModel);
-    this.group.add(door.pivot);
-    this.doors.push(door);
-    this.colliders.push(door._closedBox);
-    this.losBlockers.push(door._closedBox);
-
-    // Pitched roof + chimneys.
     this._buildRoof(cx, cz);
     this._buildChimney(cx, cz);
 
-    // South windows flank the (functional) door, stacked up the tall frontage.
-    for (const wy of [2.6, 6.4, 10.2, 13.4]) {
-      this._addWindow(cx - 2.6, wy, cz + halfL, 0, 1);
-      this._addWindow(cx + 2.6, wy, cz + halfL, 0, 1);
-    }
-
-    if (this._facades.length) {
-      // Clad the three non-door faces with building fronts from the city model;
-      // the facade textures already include their own windows.
-      this._addFacade(cx, wallH / 2, cz - halfL - 0.32, Math.PI, this.BLOCK_W);    // north (-Z)
-      this._addFacade(cx + halfW + 0.32, wallH / 2, cz, Math.PI / 2, this.BLOCK_L); // east (+X, long)
-      this._addFacade(cx - halfW - 0.32, wallH / 2, cz, -Math.PI / 2, this.BLOCK_L); // west (-X, long)
-    } else {
-      for (const wy of [2.6, 6.4, 10.2, 13.4]) {
-        for (const oz of [-halfL * 0.5, 0, halfL * 0.5]) {
-          this._addWindow(cx + halfW, wy, cz + oz, 1, 0); // east
-          this._addWindow(cx - halfW, wy, cz + oz, -1, 0); // west
+    // --- Cladding: tenement photo on the long sides, model facades on the ends.
+    if (this._materials.sideHouse) {
+      const backRotY = doorSide === 1 ? -Math.PI / 2 : Math.PI / 2;
+      const doorRotY = doorSide === 1 ? Math.PI / 2 : -Math.PI / 2;
+      // Solid back wall — one panel.
+      this._sideWall(backWallX - doorSide * 0.31, wallH / 2, cz, backRotY, this.BLOCK_L, wallH);
+      // Door wall — a panel per solid segment (doorways stay open).
+      let s = cz - halfL;
+      for (let i = 0; i <= N; i++) {
+        const e = i < N ? roomZ(i) - doorW / 2 : cz + halfL;
+        if (e - s > 0.4) {
+          this._sideWall(doorWallX + doorSide * 0.31, wallH / 2, (s + e) / 2, doorRotY, e - s, wallH);
         }
+        if (i < N) s = roomZ(i) + doorW / 2;
       }
     }
+    if (this._facades.length) {
+      this._addFacade(cx, wallH / 2, cz - halfL - 0.32, Math.PI, this.BLOCK_W); // north end
+      this._addFacade(cx, wallH / 2, cz + halfL + 0.32, 0, this.BLOCK_W); // south end
+    }
 
-    if (withEnemy) this._addEnemy(new THREE.Vector3(cx, 0, cz + halfL - 5), {});
+    // Garrison `enemyCount` distinct random rooms (released when their door breaks).
+    const order = [];
+    for (let i = 0; i < N; i++) order.push(i);
+    for (let i = order.length - 1; i > 0; i--) {
+      const j = Math.floor(rng() * (i + 1));
+      [order[i], order[j]] = [order[j], order[i]];
+    }
+    for (let k = 0; k < Math.min(enemyCount, N); k++) {
+      this._addEnemy(new THREE.Vector3(cx, 0, roomZ(order[k])), {});
+    }
+  }
+
+  /**
+   * A photo-textured panel on a long side wall. UVs are scaled to real size so
+   * the tenement facade tiles at a steady ~11m width and fills the storey height
+   * once, regardless of the panel's length.
+   */
+  _sideWall(x, y, z, rotY, w, h) {
+    const geo = new THREE.PlaneGeometry(w, h);
+    const uv = geo.attributes.uv;
+    const rx = Math.max(1, w / 11);
+    for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * rx, uv.getY(i));
+    uv.needsUpdate = true;
+    const mesh = new THREE.Mesh(geo, this._materials.sideHouse);
+    mesh.position.set(x, y, z);
+    mesh.rotation.y = rotY;
+    this.group.add(mesh);
   }
 
   /** Pitched gable roof, ridge running along Z (the long axis) over the terrace. */
@@ -442,8 +493,10 @@ export class Level {
 
   /** Dashed centre lines down every street lane in the grid. */
   _buildRoadPaint() {
-    const { PITCH_X, PITCH_Z, GRID_HALF_X, GRID_HALF_Z } = this;
-    for (const sx of [-PITCH_X / 2, PITCH_X / 2]) { // north–south lanes at ±12
+    const { COORDS_X, COORDS_Z, GRID_HALF_X, GRID_HALF_Z } = this;
+    // Lane centres sit in the gaps between rows/columns.
+    const mids = (c) => c.slice(1).map((v, i) => (v + c[i]) / 2);
+    for (const sx of mids(COORDS_X)) { // north–south lanes
       for (let z = -GRID_HALF_Z; z <= GRID_HALF_Z; z += 3.2) {
         const dash = new THREE.Mesh(new THREE.PlaneGeometry(0.16, 1.6), this._materials.paint);
         dash.rotation.x = -Math.PI / 2;
@@ -451,7 +504,7 @@ export class Level {
         this.group.add(dash);
       }
     }
-    for (const sz of [-PITCH_Z / 2, PITCH_Z / 2]) { // east–west cross-streets at ±33
+    for (const sz of mids(COORDS_Z)) { // east–west cross-streets
       for (let x = -GRID_HALF_X; x <= GRID_HALF_X; x += 3.2) {
         const dash = new THREE.Mesh(new THREE.PlaneGeometry(1.6, 0.16), this._materials.paint);
         dash.rotation.x = -Math.PI / 2;
