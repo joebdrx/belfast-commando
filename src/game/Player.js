@@ -359,7 +359,7 @@ export class Player {
       if (_tmp.dot(_forward) > cone) {
         e.takeKick(_tmp);
         kickPoint = e.position.clone();
-        this.ctx.abilities && this.ctx.abilities.onKickKill({ distance: dist });
+        if (e.dead) this.ctx.abilities && this.ctx.abilities.onKickKill({ distance: dist });
         this.ctx.score.add(250, "BOOT KILL!");
         this.ctx.weapon.kickFx(e.position);
         this.ctx.audio.kick();
