@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { Enemy } from "./Enemy.js";
+import { EnemyDirector } from "./EnemyDirector.js";
 
 const _ray = new THREE.Ray();
 const _dir = new THREE.Vector3();
@@ -104,6 +105,9 @@ export class Level {
     this.doors = [];
     /** @type {Enemy[]} */
     this.enemies = [];
+    // Archetype mix scales with sector index. Deterministic enough; uses the
+    // global RNG so each run varies. Drives _addEnemy when no archetype is given.
+    this._director = new EnemyDirector(index || 0);
     /** @type {Array<{root:THREE.Object3D, hitbox:THREE.Box3, collider:THREE.Box3, pos:THREE.Vector3, exploded:boolean}>} */
     this.barrels = [];
 
@@ -716,6 +720,7 @@ export class Level {
   }
 
   _addEnemy(pos, opts = {}) {
+    if (!opts.archetype) opts.archetype = this._director.next();
     // ALL enemies use the rigged + animated invader; fall back to the static
     // invader GLB, then placeholder geometry.
     if (this.assets) {
