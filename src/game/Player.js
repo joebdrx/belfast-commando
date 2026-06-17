@@ -113,6 +113,14 @@ export class Player {
   damage(amount) {
     if (!this.alive) return;
     this.health = Math.max(0, this.health - amount);
+    // Bridge to the run state: track damage for the FLAWLESS bonus + emit a
+    // bus event for any juice/UI that reacts to taking hits. Guarded so the
+    // core combat keeps working even before Wave-3 systems are wired.
+    if (this.ctx && this.ctx.state) {
+      this.ctx.state.bumpStat("damageTaken", amount);
+      this.ctx.state.recordStat("noDamage", false);
+      this.ctx.state.emit("damage", { amount, health: this.health });
+    }
     if (this.health <= 0) {
       this.alive = false;
       this.ctx && this.ctx.onPlayerDeath();
@@ -316,6 +324,12 @@ export class Player {
         this.ctx.weapon.kickFx(door.center);
         this.ctx.audio.kick();
         this.ctx.steamFirstKick();
+        // Bus event (position-carrying) for floating text + door-breach stat.
+        this.ctx.state && this.ctx.state.emit("breach", { position: door.center.clone() });
+        if (this.ctx.juice) {
+          this.ctx.juice.shake(0.12, 120);
+          this.ctx.juice.spawnImpact(door.center, "spark");
+        }
         connected = true;
       }
     }
@@ -334,6 +348,14 @@ export class Player {
         this.ctx.weapon.kickFx(e.position);
         this.ctx.audio.kick();
         this.ctx.steamFirstKick();
+        // Bridge a boot-kill to the run state (kills/bootKills + "kill" event
+        // with isKick so achievements + floating text light up) and add juice.
+        this.ctx.state && this.ctx.state.addKill({ position: e.position.clone(), isKick: true });
+        if (this.ctx.juice) {
+          this.ctx.juice.hitStop(70);
+          this.ctx.juice.shake(0.2, 180);
+          this.ctx.juice.spawnImpact(e.position, "kick");
+        }
         connected = true;
       }
     }

@@ -1,0 +1,30 @@
+[
+  {
+    "id": "standard",
+    "name": "Standard Issue",
+    "desc": "Reliable steel toecaps. Owned by default.",
+    "cost": 0,
+    "ability": "none"
+  },
+  {
+    "id": "explosive_kick",
+    "name": "Semtex Soles",
+    "desc": "Every boot lands with a wee bang. Invaders go up like chip-pan fat.",
+    "cost": 350,
+    "ability": "explosive_kick"
+  },
+  {
+    "id": "long_slide",
+    "name": "Greased Brogues",
+    "desc": "Slide halfway down the Falls on a single shove.",
+    "cost": 220,
+    "ability": "long_slide"
+  },
+  {
+    "id": "fast_sprint",
+    "name": "Hare's Hoofs",
+    "desc": "Leg it like the peelers are after you. Faster than your last excuse.",
+    "cost": 200,
+    "ability": "fast_sprint"
+  }
+]

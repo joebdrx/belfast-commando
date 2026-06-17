@@ -172,8 +172,12 @@ export class Engine {
     this.renderer.setSize(w, h);
   }
 
-  render() {
-    this.renderer.render(this.scene, this.camera);
+  /**
+   * Render the world. Pass a `sceneOverride` (e.g. the Hub's own scene) to draw
+   * a different scene through the shared camera — used by the HUB game phase.
+   */
+  render(sceneOverride = null) {
+    this.renderer.render(sceneOverride || this.scene, this.camera);
   }
 
   dispose() {

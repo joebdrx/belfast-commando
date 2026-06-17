@@ -331,9 +331,17 @@ export class Weapon {
       this._spawnImpact(ePoint, 0xb01818, true);
       this._tracer(_origin, ePoint);
       this.ctx.score.add(30, "HIT");
+      if (this.ctx.juice) this.ctx.juice.spawnImpact(ePoint, "blood");
       if (wasAlive && bestEnemy.dead) {
         this.ctx.score.add(120, "KILL");
         this.ctx.audio.kill();
+        // Bridge a hitscan kill to the run state ("kill" event + kills stat)
+        // so achievements + floating text + RESULTS rewards see it.
+        this.ctx.state && this.ctx.state.addKill({ position: ePoint.clone(), weapon: w.name });
+        if (this.ctx.juice) {
+          this.ctx.juice.hitStop(45);
+          this.ctx.juice.shake(0.1, 110);
+        }
       }
     } else {
       this._spawnImpact(wPoint, 0xffcc66, false);

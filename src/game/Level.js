@@ -681,6 +681,9 @@ export class Level {
     ctx.weapon.explosionFx(barrel.pos);
     ctx.audio.explosion(barrel.pos, ctx.camera.position);
     ctx.score.add(40, "BOOM!");
+    // Bus event (position-carrying) + heavy juice for the detonation.
+    if (ctx.state) ctx.state.emit("explosion", { position: barrel.pos.clone() });
+    if (ctx.juice) ctx.juice.shake(0.4, 380);
 
     const R = 5.0;
     const _v = new THREE.Vector3();
@@ -690,7 +693,12 @@ export class Level {
       if (dist < R) {
         _v.copy(e.position).sub(barrel.pos).setY(0).normalize();
         const falloff = 1 - dist / R;
+        const wasAlive = !e.dead;
         e.takeDamage(200 * falloff, _v, 12 * falloff);
+        // Credit a demolition kill to the run (DEMOLITION bonus + kill count).
+        if (wasAlive && e.dead && ctx.state) {
+          ctx.state.addKill({ position: e.position.clone(), isBarrel: true });
+        }
       }
     }
     // Splash the player if too close.

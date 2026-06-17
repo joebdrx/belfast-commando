@@ -1,0 +1,26 @@
+[
+  {
+    "id": "kick_master",
+    "name": "Kick Master",
+    "desc": "Bigger boot radius and bone-cracking knockback.",
+    "maxLevel": 3,
+    "cost": [50, 120, 250],
+    "effect": { "type": "kickPower", "perLevel": 0.15 }
+  },
+  {
+    "id": "steady_aim",
+    "name": "Steady Aim",
+    "desc": "Tighter spread — fewer wild rounds peppering the murals.",
+    "maxLevel": 3,
+    "cost": [40, 100, 220],
+    "effect": { "type": "spread", "perLevel": -0.12 }
+  },
+  {
+    "id": "thick_skin",
+    "name": "Thick Skin",
+    "desc": "More health. Belfast hardens what it does not kill.",
+    "maxLevel": 3,
+    "cost": [60, 140, 300],
+    "effect": { "type": "maxHealth", "perLevel": 25 }
+  }
+]

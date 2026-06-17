@@ -1,0 +1,23 @@
+[
+  {
+    "id": "rainy_night",
+    "name": "Rainy Night",
+    "desc": "Slippery streets, but the invaders can't see you coming.",
+    "effects": { "playerSpeedMul": 1.0, "frictionMul": 0.5, "enemySightMul": 0.7 },
+    "scoreMul": 1.15
+  },
+  {
+    "id": "curfew",
+    "name": "Curfew",
+    "desc": "Fewer patrols on the streets — but the ones left are mean as cut snakes.",
+    "effects": { "enemyCountMul": 0.6, "enemySpeedMul": 1.25, "enemySightMul": 1.2 },
+    "scoreMul": 1.25
+  },
+  {
+    "id": "adrenaline",
+    "name": "Adrenaline",
+    "desc": "Everything goes faster. You, them, your heartbeat — the whole mad lot.",
+    "effects": { "playerSpeedMul": 1.3, "enemySpeedMul": 1.3, "frictionMul": 1.1 },
+    "scoreMul": 1.2
+  }
+]

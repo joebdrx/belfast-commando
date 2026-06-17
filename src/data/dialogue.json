@@ -1,0 +1,42 @@
+[
+  {
+    "id": "intro_alliance",
+    "speaker": "Ruairí",
+    "faction": "ira",
+    "requires": { "unlockedLevels": 1 },
+    "lines": [
+      "Never thought I'd fight beside an Orangeman.",
+      "Aye well, needs must. Their tanks don't check your chapel."
+    ]
+  },
+  {
+    "id": "davy_first_boot",
+    "speaker": "Davy",
+    "faction": "ulster",
+    "requires": { "unlockedLevels": 1 },
+    "lines": [
+      "Less prayin', more kickin', Fenian.",
+      "Door comes down the same whether God's a Prod or not."
+    ]
+  },
+  {
+    "id": "midpoint_respect",
+    "speaker": "Ruairí",
+    "faction": "ira",
+    "requires": { "unlockedLevels": 2 },
+    "lines": [
+      "You took a round meant for me back there, Davy.",
+      "Don't make it weird. Two streets left, then we never speak again."
+    ]
+  },
+  {
+    "id": "davy_endgame",
+    "speaker": "Davy",
+    "faction": "ulster",
+    "requires": { "unlockedLevels": 3 },
+    "lines": [
+      "When this is done, the peelers'll want the both of us.",
+      "Then we'll boot them out an' all. One door at a time."
+    ]
+  }
+]
