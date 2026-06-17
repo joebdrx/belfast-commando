@@ -1005,8 +1005,12 @@ with:
 (c) In the enemy branch, right after `e.takeKick(_tmp);` (line 353), add:
 ```js
         kickPoint = e.position.clone();
-        this.ctx.abilities && this.ctx.abilities.onKickKill({ distance: dist });
+        if (e.dead) this.ctx.abilities && this.ctx.abilities.onKickKill({ distance: dist });
 ```
+The `if (e.dead)` gate is REQUIRED: a kick one-shots normal enemies (so `e.dead` is
+true and the refund fires), but the knockback-immune enforcer SURVIVES a kick — without
+the gate, Scavenger's Refund would refund ammo on a non-lethal enforcer kick (an
+infinite-ammo exploit, and wrong per the upgrade's "boot KILL" wording).
 (d) In the door branch, after `door.kick();` (line 329), add:
 ```js
         if (!kickPoint) kickPoint = door.center.clone();
