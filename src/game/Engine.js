@@ -37,14 +37,14 @@ export class Engine {
     this.scene.background = skyBottom.clone();
     // Lighter haze than a tight street — the open grid needs the far blocks
     // and the horizon hills to read through the rain.
-    this.scene.fog = new THREE.FogExp2(0x868c90, 0.015);
+    this.scene.fog = new THREE.FogExp2(0x3c4042, 0.05); // claustrophobic PS1 mist (~18m)
 
     // --- Camera (the player's eyes) --------------------------------------
     this.camera = new THREE.PerspectiveCamera(
       78,
       window.innerWidth / window.innerHeight,
       0.05,
-      400,
+      160,
     );
     this.camera.position.set(0, 1.7, 0);
     this.scene.add(this.camera);
@@ -59,7 +59,7 @@ export class Engine {
 
   /** Gradient sky dome (cheap shader, no textures). */
   _buildSky(top, bottom) {
-    const geo = new THREE.SphereGeometry(300, 24, 12);
+    const geo = new THREE.SphereGeometry(150, 24, 12);
     const mat = new THREE.ShaderMaterial({
       side: THREE.BackSide,
       depthWrite: false,
