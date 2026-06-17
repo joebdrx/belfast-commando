@@ -1,6 +1,5 @@
 import { Engine } from "./game/Engine.js";
 import { AssetManager } from "./game/AssetManager.js";
-import { Level } from "./game/Level.js";
 import { Player } from "./game/Player.js";
 import { Weapon } from "./game/Weapon.js";
 import { Audio } from "./game/Audio.js";
@@ -8,7 +7,21 @@ import { HUD } from "./game/HUD.js";
 import { Score } from "./game/Score.js";
 import { Steam } from "./utils/steam.js";
 
-const NUM_LEVELS = 3;
+// --- Hybrid Gameplay Loop systems (Hub → Level → Results → Hub) -------------
+import gameState from "./game/GameState.js";
+import Progression from "./game/Progression.js";
+import { LevelManager } from "./game/LevelManager.js";
+import { Hub } from "./game/Hub.js";
+import { Menu } from "./game/Menu.js";
+import ComboSystem from "./game/ComboSystem.js";
+import FloatingText from "./game/FloatingText.js";
+import { Juice } from "./game/Juice.js";
+import { PauseMenu } from "./game/PauseMenu.js";
+import { Modifiers } from "./game/Modifiers.js";
+import { Achievements } from "./game/Achievements.js";
+import { Abilities } from "./game/Abilities.js";
+import { Decals } from "./game/Decals.js";
+
 const MAX_DT = 0.05;
 
 const CONTROLS_HTML = `
@@ -26,9 +39,21 @@ const CONTROLS_HTML = `
 /**
  * Game
  * ----
- * Top-level controller: owns the engine and all systems, runs the fixed-ish
- * game loop, manages pointer-lock + the menu/play/result state machine, and
- * drives level progression and Steam achievement / leaderboard hooks.
+ * Top-level controller for the Hybrid Gameplay Loop. Owns the engine + every
+ * system and runs the single rAF loop. The game flows through GamePhases:
+ *
+ *   HUB     — the safehouse (Hub scene + Menu). Spend Resistance Points, read
+ *             story logs, launch an operation. No pointer lock.
+ *   LEVEL   — an arcade campaign sector (the original FPS gameplay, unchanged).
+ *             Clear every invader to ARM the extraction beacon, then reach it.
+ *             Pointer-lock loss drops into a transient PAUSED overlay.
+ *   RESULTS — score + bonus breakdown + Resistance Points earned. On a clear,
+ *             continue to the next sector; on death, return to the Hub with a
+ *             partial reward (the marquee roguelite edge case).
+ *
+ * The original MVP (controls, kick, shooting, enemies, clear-the-sector) lives
+ * untouched inside LEVEL. Everything new hooks in via the GameState event bus
+ * and the per-frame Juice service.
  */
 class Game {
   constructor() {
@@ -40,34 +65,39 @@ class Game {
     this.score = new Score(this.hud);
     this.player = new Player(this.engine.camera, this.dom);
 
-    // Shared PBR materials build instantly (flat fallback); Poly Haven textures,
-    // the overcast environment, and the AI-generated GLBs stream in over the
-    // next moment. Fire-and-forget so nothing blocks the menu→pointer-lock
-    // gesture. Weapon takes `assets` so its viewmodel can use the gun GLBs.
+    // --- Persistent progression: load the save BEFORE anything reads RP. ----
+    this.state = gameState;
+    this.progression = new Progression(this.state);
+    this.progression.load(); // hydrates RP / upgrades / boots / settings (localStorage)
+
+    // Shared PBR materials build instantly (flat fallback); textures + GLBs
+    // stream in. Gate "deploy" on this so we never start on the fallback grid.
     this.assets = new AssetManager(this.engine.renderer);
     this.weapon = new Weapon(this.engine.camera, this.engine.scene, this.assets);
-    // The city map is large, so the level can only build once assets are in.
-    // Gate the menu's "deploy" on this so we never start on the fallback grid.
+
+    // --- New loop systems --------------------------------------------------
+    this.juice = new Juice();
+    this.combo = new ComboSystem(this.state);
+    this.floating = new FloatingText();
+    this.hub = new Hub(this.engine.camera, this.assets);
+    this.menu = new Menu();
+    this.levelManager = new LevelManager(this.engine.scene, this.assets, this.state);
+    this.pauseMenu = new PauseMenu();
+    this.modifiers = new Modifiers(this.state);
+    this.abilities = new Abilities(this.state);
+    this.decals = new Decals(this.engine.scene, 100);
+    this.achievements = new Achievements(this.state);
+
     this._assetsReady = false;
-    this.assets
-      .load(this.engine.scene)
-      .then(() => {
-        this.weapon._buildViewmodel(); // refresh once gun GLBs are in
-        this._assetsReady = true;
-        if (this.state === "menu") this._showMenu(); // enable the deploy prompt
-      })
-      .catch((e) => {
-        console.warn("[assets]", e);
-        this._assetsReady = true; // let the player in on the fallback grid
-        if (this.state === "menu") this._showMenu();
-      });
-
-    this.state = "menu"; // menu | playing | paused | dead | complete | victory
-    this.levelIndex = 0;
-    this.level = null;
+    this.phase = "HUB"; // HUB | LEVEL | RESULTS
+    this.paused = false; // transient pause within LEVEL
     this.time = 0;
+    this._lastCombo = 0;
+    this._resultsDied = false;
+    this._muted = false;
 
-    // Shared context passed to every system.
+    // Shared context passed to every system each frame. `state`/`bus`/`juice`/
+    // `progression` are the new fields the extended combat code reads (guarded).
     this.ctx = {
       dom: this.dom,
       active: false,
@@ -80,14 +110,85 @@ class Game {
       weapon: this.weapon,
       level: null,
       time: 0,
+      state: this.state,
+      bus: this.state,
+      juice: this.juice,
+      progression: this.progression,
+      modifiers: this.modifiers,
+      abilities: this.abilities,
       onPlayerDeath: () => this._onDeath(),
       steamFirstKick: () => Steam.unlock("ACH_FIRST_KICK"),
     };
     this.player.setContext(this.ctx);
     this.weapon.setContext(this.ctx);
+    this.juice.setContext(this.ctx);
+    this.abilities.setContext(this.ctx);
+    this.abilities.attach();
+    this.decals.setContext(this.ctx);
+    this.decals.attach();
+    // Drive the HUD distortion from the adrenaline event.
+    this.state.on("adrenaline", ({ active }) => this.hud.setAdrenaline(active));
+    // Honor the persisted FX toggle (default on).
+    const adrFx = this.state.getProgression().settings;
+    if (adrFx && adrFx.adrenalineFx === false) this.hud.setAdrenalineFxEnabled(false);
+    this.combo.setContext(this.ctx);
+    this.floating.setContext(this.ctx);
+    this.floating.attach();
+
+    // Apply persisted settings (sensitivity + mute + graphics quality).
+    const settings = this.state.getProgression().settings || {};
+    if (settings.sensitivity) this.player.sensitivity = settings.sensitivity;
+    this._muted = !!settings.muted;
+    this.audio.setMuted(this._muted);
+    this._applyQuality(settings.quality || "high");
+
+    // Pause menu (replaces the bare PAUSED card) — settings persist live.
+    this.pauseMenu.setProviders({ progression: this.progression });
+    this.pauseMenu.setOnSettingsChange((s) => {
+      this.player.sensitivity = s.sensitivity;
+      this._applyQuality(s.quality);
+    });
+    this.pauseMenu.setHandlers({
+      onResume: () => this._requestLock(),
+      onRestart: () => this._loadLevel(this.levelManager.currentIndex),
+      onQuit: () => this._enterHub(),
+    });
+
+    // Achievements: data-driven, bus-subscribing; persist unlocks via progression.
+    this.achievements.setContext(this.ctx);
+    this.achievements.setProviders({ progression: this.progression });
+    this.achievements.attach();
+
+    // Wire the safehouse menu. Upgrades/Story Logs are self-rendered sub-panels
+    // inside Menu; we only need the launch + (optional) exit hooks.
+    this.menu.setProviders({ progression: this.progression });
+    this.menu.setHandlers({
+      onStartOperation: () => this._startCampaign(),
+      onUpgrades: () => {},
+      onStoryLogs: () => {},
+      onExit: () => {},
+    });
+
+    // Extraction reached → finish the level.
+    this.levelManager.setOnExtract(() => this._completeLevel());
+
+    this.assets
+      .load(this.engine.scene)
+      .then(() => {
+        this.weapon._buildViewmodel(); // refresh once gun GLBs are in
+        this._assetsReady = true;
+        this.menu.refresh();
+      })
+      .catch((e) => {
+        console.warn("[assets]", e);
+        this._assetsReady = true; // let the player in on the fallback grid
+      });
 
     this._bindUI();
-    this._showMenu();
+    window.addEventListener("resize", () => {
+      this.assets.retro && this.assets.retro.setViewport(window.innerWidth, window.innerHeight);
+    });
+    this._enterHub();
 
     this._last = performance.now();
     requestAnimationFrame(this._loop.bind(this));
@@ -95,147 +196,255 @@ class Game {
     if (import.meta.env.DEV) window.__game = this; // dev-only debug handle
   }
 
-  // ---- state -------------------------------------------------------------
+  // ---- phase transitions -------------------------------------------------
 
-  _showMenu() {
-    this.state = "menu";
+  /** Enter the safehouse: show the Hub scene + Menu, drop pointer lock + HUD. */
+  _enterHub() {
+    this.phase = "HUB";
+    this.paused = false;
     this.ctx.active = false;
+    this.state.setPhase("HUB");
+    if (document.pointerLockElement) document.exitPointerLock();
+    this.pauseMenu.hide();
+    this.modifiers.clear();
     this.hud.setCrosshairActive(false);
-    this.hud.showOverlay(
-      "BELFAST COMMANDO",
-      `Kick down the doors. Boot the invaders out of Belfast.<br/>Keep moving — chain kicks and shots for a bigger multiplier.${CONTROLS_HTML}`,
-      this._assetsReady ? "Click to deploy" : "Loading Belfast…",
-    );
+    this.hud.hideOverlay();
+    this.hud.setAdrenaline(false);
+    this._setHudVisible(false);
+    this.hub.show();
+    this.menu.refresh();
+    this.menu.show();
   }
 
-  _startGame() {
+  /** Menu "Start Operation": begin a fresh campaign run at sector 1. */
+  _startCampaign() {
+    if (!this._assetsReady) return; // still streaming Belfast; ignore until ready
     this.audio.init();
+    this.menu.hide();
+    this.hub.hide();
     this.score.resetAll();
-    this.levelIndex = 0;
+    this.state.startRun({ levelIndex: 0 });
     this._loadLevel(0);
   }
 
+  /** Build + deploy into a campaign sector (LEVEL phase). */
   _loadLevel(index) {
-    if (this.level) this.level.dispose();
     this.weapon.reset();
-    this.level = new Level(this.engine.scene, index, this.assets);
-    this.ctx.level = this.level;
-    this.levelIndex = index;
+    this.juice.reset();
+    this.pauseMenu.hide();
+    this.modifiers.clear(); // drop any previous sector's modifier
+    this.abilities.refresh();
+    this.hud.setAdrenaline(false);
+    this.decals.clear();
 
-    this.player.reset(this.level.spawn, this.level.spawnYaw || 0);
+    const { entry } = this.levelManager.loadLevel(index);
+    this.level = this.levelManager.level;
+    this.ctx.level = this.level;
+
+    // Fresh per-level run stats so the bonus breakdown is per-sector (kills +
+    // cumulative score carry across the run; the stat flags do not).
+    const run = this.state.getState().run;
+    Object.assign(run.stats, {
+      damageTaken: 0,
+      doorsBreached: 0,
+      barrelKills: 0,
+      bootKills: 0,
+      shotsFired: 0,
+      noDamage: true,
+      levelTime: 0,
+    });
+    run.combo = 0;
+    run.bestCombo = 0;
+    this._lastCombo = 0;
+    this.combo.resetLevel();
+
+    // Apply the persisted "Thick Skin" upgrade to max health before reset.
+    const hpBonus = this.progression.getUpgradeEffectValue("thick_skin");
+    this.player.maxHealth = Math.round(100 * (1 + hpBonus));
+    this.player.reset(this.levelManager.spawn, this.levelManager.spawnYaw || 0);
     this.score.reset();
+
+    // Roll + apply a per-run modifier (e.g. "Rainy Night") AFTER spawn/reset, so
+    // it scales the fresh enemies + player knobs.
+    this.modifiers.maybeRoll(entry);
+    this.modifiers.applyToLevel(this.level, this.player);
+    const mod = this.modifiers.getActive();
+
+    // Unlock story content as the campaign progresses.
+    const prog = this.state.getProgression();
+    prog.unlockedLevels = Math.max(prog.unlockedLevels, index + 1);
+    this.progression.save();
 
     this.hud.setLevel(index + 1);
     this.hud.setWeapon(this.weapon.current.name);
-    this.hud.setObjective("Eliminate all invaders");
+    this.hud.setAmmo(this.weapon.ammo[this.weapon.index], this.weapon.current.mag, false);
+    this.hud.setObjective(
+      mod ? `${entry.intro || "Eliminate all invaders"}  ·  ⚠ ${mod.name}` : entry.intro || "Eliminate all invaders",
+    );
     this.hud.setHealth(this.player.health, this.player.maxHealth);
     this.hud.hideOverlay();
     this.hud.setCrosshairActive(true);
+    this._setHudVisible(true);
 
-    this.state = "playing";
+    this.phase = "LEVEL";
+    this.paused = false;
+    this.state.setPhase("LEVEL");
     this._requestLock();
     this.audio.voice(["Right lads, let's go!", "Forward, Belfast!", "Boots on, move!"]);
   }
 
+  /** Extraction reached — the sector is won. */
   _completeLevel() {
-    this.state = "complete";
-    this.ctx.active = false;
-    this.hud.setCrosshairActive(false);
-    document.exitPointerLock();
-    const { bonus, time } = this.score.finishLevel();
+    if (this.phase !== "LEVEL") return;
+    this._toResults(false);
+  }
 
-    if (this.levelIndex + 1 >= NUM_LEVELS) {
-      this._victory();
+  /** Player died mid-sector — run ends with a partial reward. */
+  _onDeath() {
+    if (this.phase !== "LEVEL") return;
+    this._toResults(true);
+  }
+
+  /**
+   * RESULTS: roll up the sector — apply end-of-level bonuses to the score,
+   * bank Resistance Points (full on a clear, 40% on death), persist, and show
+   * the breakdown overlay.
+   */
+  _toResults(died) {
+    this.phase = "RESULTS";
+    this.paused = false;
+    this.ctx.active = false;
+    this.state.setPhase("RESULTS");
+    this.pauseMenu.hide();
+    this.hud.setCrosshairActive(false);
+    this.hud.setAdrenaline(false);
+    if (document.pointerLockElement) document.exitPointerLock();
+
+    const run = this.state.getState().run;
+    this.state.recordStat("levelTime", this.score.levelTime);
+
+    const entry = this.levelManager.entry || {};
+    const par = Number.isFinite(entry.par) ? entry.par : 45;
+
+    // Bonuses only on a clear (you didn't earn them if you went down).
+    const bonuses = died ? [] : this.combo.computeBonuses(run, par);
+    const bonusSum = bonuses.reduce((a, b) => a + b.points, 0);
+    if (bonusSum) {
+      this.score.total += bonusSum;
+      this.hud.setScore(this.score.total, this.score.combo, this.score.multiplier);
+    }
+    run.score = this.score.total;
+
+    // Resistance Points reward (CONTRACTS §4), boosted by any run modifier.
+    // Uses the per-sector best combo (run.bestCombo), not the cross-run total.
+    const base = Math.floor(this.score.total / 100) + run.kills * 2 + run.bestCombo * 2;
+    const scoreMul = this.modifiers.getScoreMul();
+    const rp = Math.round((died ? base * 0.4 : base) * scoreMul);
+    this.state.addCurrency(rp);
+    this.progression.save();
+    this.state.endRun({ died });
+
+    const last = !this.levelManager.hasNext();
+    const bonusRows = bonuses.length
+      ? bonuses.map((b) => `${b.label} <b>+${b.points}</b>`).join(" &nbsp;·&nbsp; ") + "<br/>"
+      : "";
+
+    let title;
+    let hint;
+    if (died) {
+      title = "YOU WENT DOWN";
+      hint = "Click to fall back to the safehouse";
+    } else if (last) {
+      title = "BELFAST LIBERATED";
+      hint = "Click to return to the safehouse";
+      Steam.unlock("ACH_BELFAST_LIBERATED").catch(() => {});
+    } else {
+      title = `${this.levelManager.name.toUpperCase()} CLEARED`;
+      hint = "Click for the next sector";
+    }
+
+    const outro = died ? "Belfast still needs you." : this.levelManager.outro || "";
+    this.hud.showOverlay(
+      title,
+      `${outro}<br/>${bonusRows}Score <b>${this.score.total.toLocaleString()}</b> &nbsp;·&nbsp; Kills <b>${run.kills}</b><br/>Resistance Points earned <b>+${rp}</b>`,
+      hint,
+    );
+    Steam.submitScore(this.score.total).catch(() => {});
+
+    this._resultsDied = died;
+    this._resultsCampaignDone = last && !died;
+  }
+
+  /** Advance from RESULTS: next sector on a clear, else back to the safehouse. */
+  _handleResultsContinue() {
+    if (this._resultsDied || this._resultsCampaignDone) {
+      this._enterHub();
       return;
     }
-    const bestMult = Math.min(5, 1 + this.score.bestCombo * 0.25);
-    this.hud.showOverlay(
-      `SECTOR ${this.levelIndex + 1} CLEARED`,
-      `Time ${time.toFixed(1)}s &nbsp;·&nbsp; Time bonus <b>+${bonus}</b><br/>Score <b>${this.score.total.toLocaleString()}</b> &nbsp;·&nbsp; Best chain <b>×${bestMult.toFixed(
-        2,
-      )}</b>`,
-      "Click for the next sector",
-    );
-  }
-
-  _victory() {
-    this.state = "victory";
-    this.ctx.active = false;
-    // Show the result immediately; push to Steam in the background.
-    this.hud.showOverlay(
-      "BELFAST LIBERATED",
-      `The invaders are routed.<br/>Final score <b>${this.score.total.toLocaleString()}</b> &nbsp;·&nbsp; Kills <b>${this.score.kills}</b>`,
-      "Click to fight again",
-    );
-    Steam.unlock("ACH_BELFAST_LIBERATED").catch(() => {});
-    Steam.submitScore(this.score.total).catch(() => {});
-    this.audio.voice(["Belfast is free!", "We did it, so we did!"]);
-  }
-
-  _onDeath() {
-    if (this.state === "dead") return;
-    this.state = "dead";
-    this.ctx.active = false;
-    this.hud.setCrosshairActive(false);
-    document.exitPointerLock();
-    this.hud.showOverlay(
-      "YOU WENT DOWN",
-      `Score <b>${this.score.total.toLocaleString()}</b> &nbsp;·&nbsp; Kills <b>${this.score.kills}</b><br/>Belfast still needs you.`,
-      "Click to redeploy",
-    );
-    Steam.submitScore(this.score.total).catch(() => {});
+    if (this.levelManager.hasNext()) {
+      this._loadLevel(this.levelManager.nextIndex());
+    } else {
+      this._enterHub();
+    }
   }
 
   // ---- input / pointer lock ---------------------------------------------
 
+  /** Toggle the in-game HUD corners (hidden in HUB, shown in LEVEL/RESULTS). */
+  _setHudVisible(visible) {
+    const hud = document.getElementById("hud");
+    if (hud) hud.style.display = visible ? "" : "none";
+  }
+
+  /** Apply the graphics-quality setting to the renderer pixel ratio. */
+  _applyQuality(quality) {
+    const { pixelRatio } = this.pauseMenu.qualityToRenderer(quality);
+    this.engine.renderer.setPixelRatio(Math.min(window.devicePixelRatio, pixelRatio));
+  }
+
   _bindUI() {
-    // Click on the overlay or canvas advances state appropriately.
-    const onClick = () => this._handlePrimaryClick();
-    document.getElementById("overlay").addEventListener("click", onClick);
+    // The #overlay card is used only for PAUSED + RESULTS (HUB uses Menu).
+    document.getElementById("overlay").addEventListener("click", () => this._handlePrimaryClick());
     this.dom.addEventListener("click", () => {
-      if (this.state === "playing" && document.pointerLockElement !== this.dom) {
+      if (this.phase === "LEVEL" && !this.paused && document.pointerLockElement !== this.dom) {
         this._requestLock();
       }
     });
 
     document.addEventListener("pointerlockchange", () => {
       const locked = document.pointerLockElement === this.dom;
-      if (this.state === "playing" && !locked) {
-        // Soft pause when the player tabs out / hits Esc.
-        this.state = "paused";
-        this.hud.showOverlay("PAUSED", "Take a breather.", "Click to resume");
-      } else if (this.state === "paused" && locked) {
-        this.state = "playing";
-        this.hud.hideOverlay();
+      if (this.phase === "LEVEL") {
+        if (!locked && !this.paused) {
+          // Soft pause when the player tabs out / hits Esc → the pause menu.
+          this.paused = true;
+          this.state.setPhase("PAUSED");
+          this.pauseMenu.show();
+        } else if (locked && this.paused) {
+          this.paused = false;
+          this.state.setPhase("LEVEL");
+          this.pauseMenu.hide();
+        }
       }
-      this.ctx.active = this.state === "playing" && locked;
+      this.ctx.active = this.phase === "LEVEL" && !this.paused && locked;
     });
 
     window.addEventListener("keydown", (e) => {
       if (e.code === "KeyM") {
         this._muted = !this._muted;
         this.audio.setMuted(this._muted);
-        this.hud.setObjective(this._muted ? "Muted 🔇" : "Breach to the exit gate");
+        const s = this.state.getProgression().settings;
+        if (s) s.muted = this._muted;
+        this.progression.save();
+        this.hud.setObjective(this._muted ? "Muted 🔇" : "Eliminate all invaders");
       }
     });
   }
 
   _handlePrimaryClick() {
-    switch (this.state) {
-      case "menu":
-        if (!this._assetsReady) return; // still streaming the map; ignore the click
-        this._startGame();
-        break;
-      case "paused":
-        this._requestLock();
-        break;
-      case "complete":
-        this._loadLevel(this.levelIndex + 1);
-        break;
-      case "dead":
-      case "victory":
-        this._startGame();
-        break;
+    if (this.phase === "LEVEL" && this.paused) {
+      this._requestLock();
+    } else if (this.phase === "RESULTS") {
+      this._handleResultsContinue();
     }
   }
 
@@ -249,39 +458,58 @@ class Game {
 
   _loop(now) {
     requestAnimationFrame(this._loop.bind(this));
-    let dt = (now - this._last) / 1000;
+    let realDt = (now - this._last) / 1000;
     this._last = now;
-    if (dt > MAX_DT) dt = MAX_DT; // clamp after stalls
+    if (realDt > MAX_DT) realDt = MAX_DT; // clamp after stalls
+
+    // Juice drives time-scale (hitstop) + a camera shake offset. It advances the
+    // particle pool internally, so the loop never ticks particles separately.
+    const { timeScale, shake } = this.juice.update(realDt);
+    const dt = realDt * Math.max(0.05, timeScale);
     this.time += dt;
     this.ctx.time = this.time;
 
-    if (this.ctx.active) {
+    if (this.phase === "LEVEL" && this.ctx.active) {
       this._update(dt);
+      // Apply shake AFTER player.update (Player._applyCamera rewrites the camera
+      // every frame, so the offset must be layered on top here, post-update).
+      const cam = this.engine.camera;
+      cam.position.x += shake.x;
+      cam.position.y += shake.y;
+      cam.position.z += shake.z;
+      if (shake.roll) cam.rotateZ(shake.roll);
+      this.floating.update(realDt);
+    } else if (this.phase === "HUB") {
+      this.hub.update(realDt);
     }
+
     this.hud.update(dt);
     this.engine.update(dt);
-    this.engine.render();
+    this.engine.render(this.phase === "HUB" ? this.hub.scene : null);
   }
 
   _update(dt) {
     this.score.update(dt);
     this.player.update(dt);
     this.weapon.update(dt);
-    this.level.update(dt, this.ctx);
+    // LevelManager ticks the Level (doors + enemies) exactly once and runs the
+    // extraction beacon; on reaching the beacon it fires _completeLevel().
+    this.levelManager.update(dt, this.ctx);
+
+    // Bridge the live combo to the run state so the STYLE bonus, FloatingText,
+    // and combo-driven systems see it — without touching the existing Score code.
+    if (this.score.combo !== this._lastCombo) {
+      this.state.setCombo(this.score.combo);
+      this._lastCombo = this.score.combo;
+    }
 
     // HUD readouts
     this.hud.setHealth(this.player.health, this.player.maxHealth);
     this.hud.setTimer(this.score.levelTime);
+    const remaining = this.level.enemiesRemaining;
     this.hud.setObjective(
-      this.level.enemiesRemaining > 0
-        ? `Invaders remaining: ${this.level.enemiesRemaining}`
-        : "Sector clear!",
+      remaining > 0 ? `Invaders remaining: ${remaining}` : "Sector clear — reach the extraction beacon!",
     );
-
-    // Win condition: every invader in the sector is down.
-    if (this.level.enemiesRemaining === 0) {
-      this._completeLevel();
-    }
   }
 }
 

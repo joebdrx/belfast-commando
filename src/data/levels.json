@@ -1,0 +1,78 @@
+[
+  {
+    "id": "falls_road",
+    "index": 0,
+    "name": "Falls Road",
+    "seed": 0,
+    "intro": "Operation: Reclaim the Falls. Doors in, invaders out — same as always.",
+    "outro": "The Falls is ours again. On to the next street, lads.",
+    "extraction": { "x": -12, "z": 60, "r": 5 },
+    "par": 50
+  },
+  {
+    "id": "shankill",
+    "index": 1,
+    "name": "Shankill",
+    "seed": 1,
+    "intro": "Operation: Hold the Shankill. Davy's people are with us now — don't shoot the orange sashes.",
+    "outro": "Shankill's clear. Never thought I'd cheer for an Orangeman. Aye, needs must.",
+    "extraction": { "x": 12, "z": -58, "r": 5 },
+    "modifierChance": 0.35,
+    "par": 55
+  },
+  {
+    "id": "the_markets",
+    "index": 2,
+    "name": "The Markets",
+    "seed": 2,
+    "intro": "Operation: Take the Markets. Tight wee streets — keep your back to a wall.",
+    "outro": "The Markets are back in business. Belfast trade, not invader loot.",
+    "extraction": { "x": -12, "z": -58, "r": 4.5 },
+    "modifierChance": 0.5,
+    "par": 60
+  },
+  {
+    "id": "the_docks",
+    "index": 3,
+    "name": "The Docks",
+    "seed": 3,
+    "intro": "Operation: Storm the Docks. They came off boats — send them back the same way.",
+    "outro": "The Docks are sealed. Nothing foreign sailing into Belfast tonight.",
+    "extraction": { "x": -12, "z": 0, "r": 4.5 },
+    "modifierChance": 0.4,
+    "par": 65
+  },
+  {
+    "id": "ardoyne",
+    "index": 4,
+    "name": "Ardoyne",
+    "seed": 4,
+    "intro": "Operation: Break the Ardoyne line. They've dug in deep — kick harder.",
+    "outro": "Ardoyne stands. The line held, so it did.",
+    "extraction": { "x": 0, "z": -64, "r": 5 },
+    "modifierChance": 0.6,
+    "par": 70
+  },
+  {
+    "id": "short_strand",
+    "index": 5,
+    "name": "Short Strand",
+    "seed": 5,
+    "intro": "Operation: Relieve the Short Strand. Outnumbered, surrounded — perfect.",
+    "outro": "Short Strand holds out, like it always has. Both flags flying now.",
+    "extraction": { "x": 12, "z": 58, "r": 4.5 },
+    "modifierChance": 0.5,
+    "par": 75
+  },
+  {
+    "id": "divis_tower",
+    "index": 6,
+    "name": "Divis Tower",
+    "seed": 6,
+    "intro": "Operation: Crown the Divis. Last invader command post in the city is up top. Finish it.",
+    "outro": "Divis is ours. Belfast is liberated — green, orange and all. Now get to the chopper.",
+    "extraction": { "x": -12, "z": -62, "r": 6 },
+    "modifierChance": 0.75,
+    "par": 90
+  }
+]

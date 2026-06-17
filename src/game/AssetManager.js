@@ -3,6 +3,7 @@ import { RGBELoader } from "three/examples/jsm/loaders/RGBELoader.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { MeshoptDecoder } from "three/examples/jsm/libs/meshopt_decoder.module.js";
 import { clone as cloneSkeleton } from "three/examples/jsm/utils/SkeletonUtils.js";
+import { RetroMaterial } from "./RetroMaterial.js";
 
 const BASE = import.meta.env.BASE_URL || "/";
 
@@ -92,6 +93,8 @@ export class AssetManager {
     this.renderer = renderer;
     this.texLoader = new THREE.TextureLoader();
     this.gltfLoader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
+    this.retro = new RetroMaterial({ targetHeight: 240 });
+    this.retro.setViewport(window.innerWidth, window.innerHeight);
     this.materials = {};
     this.models = {}; // slug -> normalised template Object3D (cloned per use)
     this.sprites = {}; // name -> THREE.Texture
@@ -111,6 +114,7 @@ export class AssetManager {
         metalness: def.metalness,
         envMapIntensity: def.envMapIntensity ?? 1,
       });
+      this.retro.patchMaterial(this.materials[slug]);
     }
   }
 
@@ -128,6 +132,7 @@ export class AssetManager {
           tex.repeat.set(repeat[0], repeat[1]);
           tex.anisotropy = Math.min(8, this.renderer.capabilities.getMaxAnisotropy());
           if (srgb) tex.colorSpace = THREE.SRGBColorSpace;
+          this.retro.applyTextureFilter(tex);
           resolve(tex);
         },
         undefined,
@@ -550,7 +555,8 @@ export class AssetManager {
   /** A fresh clone of a normalised model, or null if it wasn't available. */
   getModel(slug) {
     const tpl = this.models[slug];
-    return tpl ? tpl.clone(true) : null;
+    if (!tpl) return null;
+    return this.retro.patchObject(tpl.clone(true));
   }
 
   hasModel(slug) {

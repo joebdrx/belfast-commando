@@ -1,4 +1,8 @@
 import * as THREE from "three";
+import * as EnemyBehavior from "./EnemyBehavior.js";
+import ENEMY_TYPES from "../data/enemies.json";
+
+const ENEMY_BY_ID = Object.fromEntries(ENEMY_TYPES.map((e) => [e.id, e]));
 
 const _toPlayer = new THREE.Vector3();
 const _flat = new THREE.Vector3();
@@ -31,11 +35,25 @@ export class Enemy {
     this.sightRange = 42;
     this.damage = 9; // a swing hurts — keep moving or get swarmed
 
+    // --- Archetype config (data-driven; defaults to "grunt" baseline) -------
+    const arch = ENEMY_BY_ID[opts.archetype] || ENEMY_BY_ID.grunt;
+    this.archetype = arch.id;
+    this.archetypeCfg = arch;
+    this.attack = arch.attack || "melee";
+    this.knockbackImmune = !!arch.knockbackImmune;
+    this.animFps = arch.animFps || 11;
+    this._animAccum = 0;
+    this._pendingDetonate = false;
+    this.health = arch.health;
+    this.sightRange = arch.sightRange;
+    this.meleeRange = arch.meleeRange;
+    this.damage = arch.meleeDamage;
+    this.speed = arch.speed || 1.8;
+    this.runSpeed = arch.runSpeed || 5.4;
+
     // Patrol / chase
     this.patrol = opts.patrol || null;
     this.patrolIndex = 0;
-    this.speed = 1.8;
-    this.runSpeed = 5.4; // fast enough to run a walking player down
     this._strafeDir = Math.random() < 0.5 ? -1 : 1; // circles the player in melee
     this._lunge = 0; // forward jab offset, eases back to rest
     this._rigRoot = null; // the visual model, lunged on each strike
@@ -123,6 +141,11 @@ export class Enemy {
     // Collider half-extents for the player's bullet raycasts & body block
     this.radius = 0.45;
     this.height = 1.9;
+    if (arch.scale && arch.scale !== 1) {
+      this.group.scale.setScalar(arch.scale);
+      this.radius *= arch.scale;
+      this.height *= arch.scale;
+    }
   }
 
   get position() {
@@ -155,11 +178,18 @@ export class Enemy {
   /** A boot to the chest: always lethal, huge knockback (Anger Foot style). */
   takeKick(dir) {
     if (this.dead) return;
+    if (this.knockbackImmune) {
+      // The "unstoppable" enforcer: a boot staggers it slightly but never
+      // one-shots or flings it. Players must shoot it down.
+      this.takeDamage(28, dir, 0);
+      return;
+    }
     this.knock.addScaledVector(dir, 16);
     this.takeDamage(this.health + 50, dir, 0); // guaranteed kill
   }
 
   _die(dir) {
+    if (this.archetype === "breacher") this._pendingDetonate = true;
     this.dead = true;
     this.alive = false;
     if (dir) {
@@ -190,7 +220,7 @@ export class Enemy {
    * @param {object} ctx { camera, player, level }
    */
   update(dt, ctx) {
-    if (this.mixer && !this.dead) this.mixer.update(dt);
+    EnemyBehavior.tickAnim(this, dt);
     // Apply + decay knockback (slides the corpse/enemy back).
     if (this.knock.lengthSq() > 0.0001) {
       this.group.position.addScaledVector(this.knock, dt);
@@ -215,6 +245,10 @@ export class Enemy {
     }
 
     if (this.dead) {
+      if (this._pendingDetonate) {
+        this._pendingDetonate = false;
+        EnemyBehavior.detonate(this, ctx);
+      }
       // Ragdoll-lite: topple to the ground over ~0.5s, then settle.
       if (this._toppleAmt < Math.PI / 2) {
         this._toppleAmt = Math.min(Math.PI / 2, this._toppleAmt + dt * 6);
@@ -222,6 +256,12 @@ export class Enemy {
       }
       return;
     }
+
+    // Non-grunt archetypes run their own steering/attack, then bail out before
+    // the baseline grunt melee AI below.
+    if (this.archetype === "gunner") { EnemyBehavior.stepGunner(this, dt, ctx); return; }
+    if (this.archetype === "enforcer") { EnemyBehavior.stepEnforcer(this, dt, ctx); return; }
+    if (this.archetype === "breacher") { EnemyBehavior.stepBreacher(this, dt, ctx); return; }
 
     const playerPos = ctx.player.position;
     _toPlayer.copy(playerPos).sub(this.group.position);

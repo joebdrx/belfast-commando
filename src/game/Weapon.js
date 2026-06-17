@@ -244,6 +244,13 @@ export class Weapon {
     this.ctx.hud.setAmmo(this.ammo[this.index], w.mag, true);
   }
 
+  /** Top up the current magazine (Scavenger's Refund). Clamped to mag size. */
+  addAmmo(n) {
+    const w = this.current;
+    this.ammo[this.index] = Math.min(w.mag, this.ammo[this.index] + n);
+    if (this.ctx) this.ctx.hud.setAmmo(this.ammo[this.index], w.mag, this.reloading);
+  }
+
   tryFire() {
     if (this.cooldown > 0 || this.reloading || !this._canAct()) return;
     const w = this.current;
@@ -331,13 +338,27 @@ export class Weapon {
       this._spawnImpact(ePoint, 0xb01818, true);
       this._tracer(_origin, ePoint);
       this.ctx.score.add(30, "HIT");
+      this.ctx.state && this.ctx.state.emit("hit", { position: ePoint.clone(), amount: w.damage });
+      if (this.ctx.juice) this.ctx.juice.spawnImpact(ePoint, "blood");
       if (wasAlive && bestEnemy.dead) {
         this.ctx.score.add(120, "KILL");
         this.ctx.audio.kill();
+        // Bridge a hitscan kill to the run state ("kill" event + kills stat)
+        // so achievements + floating text + RESULTS rewards see it.
+        this.ctx.state && this.ctx.state.addKill({ position: ePoint.clone(), weapon: w.name });
+        if (this.ctx.juice) {
+          this.ctx.juice.hitStop(45);
+          this.ctx.juice.shake(0.1, 110);
+        }
       }
     } else {
       this._spawnImpact(wPoint, 0xffcc66, false);
       this._tracer(_origin, wPoint);
+      // Persistent bullet-hole decal (normal ≈ toward the shooter).
+      this.ctx.state && this.ctx.state.emit("surfaceHit", {
+        position: wPoint.clone(),
+        normal: _dir.clone().multiplyScalar(-1),
+      });
     }
   }
 

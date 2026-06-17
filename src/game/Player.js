@@ -58,6 +58,11 @@ export class Player {
     this.health = 100;
     this.alive = true;
 
+    // Per-run modifier knobs (1 = unmodified). Run modifiers (e.g. "Rainy
+    // Night") scale these; reset to 1 each level, re-applied after spawn.
+    this.speedMul = 1;
+    this.frictionMul = 1;
+
     this.bobPhase = 0;
 
     /** @type {object} game context, set by main */
@@ -113,6 +118,14 @@ export class Player {
   damage(amount) {
     if (!this.alive) return;
     this.health = Math.max(0, this.health - amount);
+    // Bridge to the run state: track damage for the FLAWLESS bonus + emit a
+    // bus event for any juice/UI that reacts to taking hits. Guarded so the
+    // core combat keeps working even before Wave-3 systems are wired.
+    if (this.ctx && this.ctx.state) {
+      this.ctx.state.bumpStat("damageTaken", amount);
+      this.ctx.state.recordStat("noDamage", false);
+      this.ctx.state.emit("damage", { amount, health: this.health });
+    }
     if (this.health <= 0) {
       this.alive = false;
       this.ctx && this.ctx.onPlayerDeath();
@@ -129,6 +142,8 @@ export class Player {
     this.alive = true;
     this.sliding = false;
     this.eyeHeight = EYE_HEIGHT;
+    this.speedMul = 1;
+    this.frictionMul = 1;
   }
 
   _basisFromYaw() {
@@ -165,8 +180,10 @@ export class Player {
     }
 
     // --- Horizontal acceleration / friction -------------------------------
-    let targetSpeed = sprinting ? SPRINT_SPEED : WALK_SPEED;
-    if (this.sliding) targetSpeed = SLIDE_SPEED * (this.slideTimer / 0.7);
+    const ab = this.ctx && this.ctx.abilities;
+    const sprintMul = sprinting ? (ab ? ab.sprintSpeedMul : 1) : (ab ? ab.walkSpeedMul : 1);
+    let targetSpeed = (sprinting ? SPRINT_SPEED : WALK_SPEED) * this.speedMul * sprintMul;
+    if (this.sliding) targetSpeed = SLIDE_SPEED * (ab ? ab.slideSpeedMul : 1) * (this.slideTimer / 0.7);
 
     const accel = this.onGround ? ACCEL : AIR_ACCEL;
     const horiz = _tmp.set(this.vel.x, 0, this.vel.z);
@@ -175,7 +192,7 @@ export class Player {
       // Ground friction
       const speed = horiz.length();
       if (speed > 0) {
-        const drop = speed * FRICTION * dt;
+        const drop = speed * FRICTION * this.frictionMul * dt;
         const ns = Math.max(0, speed - drop) / speed;
         this.vel.x *= ns;
         this.vel.z *= ns;
@@ -275,11 +292,13 @@ export class Player {
 
   _startSlide() {
     this.sliding = true;
-    this.slideTimer = 0.7;
+    const ab = this.ctx && this.ctx.abilities;
+    this.slideTimer = 0.7 * (ab ? ab.slideDurationMul : 1);
     // Boost forward in current movement direction.
     const sp = Math.hypot(this.vel.x, this.vel.z) || 1;
-    this.vel.x = (this.vel.x / sp) * SLIDE_SPEED;
-    this.vel.z = (this.vel.z / sp) * SLIDE_SPEED;
+    const slideSpeed = SLIDE_SPEED * (ab ? ab.slideSpeedMul : 1);
+    this.vel.x = (this.vel.x / sp) * slideSpeed;
+    this.vel.z = (this.vel.z / sp) * slideSpeed;
     this.ctx && this.ctx.audio.slide();
   }
 
@@ -299,6 +318,8 @@ export class Player {
     this.kickAnim = 1;
     this.kicking = true;
     this._basisFromYaw();
+    const cone = this.ctx.abilities && this.ctx.abilities.kickFullRadius ? -1.1 : KICK_CONE;
+    let kickPoint = null;
     const eye = this.camera.position;
     let connected = false;
 
@@ -310,12 +331,19 @@ export class Player {
       const dist = _tmp.length();
       if (dist > KICK_RANGE) continue;
       _tmp.normalize();
-      if (_tmp.dot(_forward) > KICK_CONE) {
+      if (_tmp.dot(_forward) > cone) {
         door.kick();
+        if (!kickPoint) kickPoint = door.center.clone();
         this.ctx.score.add(150, "BREACH!");
         this.ctx.weapon.kickFx(door.center);
         this.ctx.audio.kick();
         this.ctx.steamFirstKick();
+        // Bus event (position-carrying) for floating text + door-breach stat.
+        this.ctx.state && this.ctx.state.emit("breach", { position: door.center.clone() });
+        if (this.ctx.juice) {
+          this.ctx.juice.shake(0.12, 120);
+          this.ctx.juice.spawnImpact(door.center, "spark");
+        }
         connected = true;
       }
     }
@@ -328,12 +356,22 @@ export class Player {
       const dist = _tmp.length();
       if (dist > KICK_RANGE) continue;
       _tmp.normalize();
-      if (_tmp.dot(_forward) > KICK_CONE) {
+      if (_tmp.dot(_forward) > cone) {
         e.takeKick(_tmp);
+        kickPoint = e.position.clone();
+        if (e.dead) this.ctx.abilities && this.ctx.abilities.onKickKill({ distance: dist });
         this.ctx.score.add(250, "BOOT KILL!");
         this.ctx.weapon.kickFx(e.position);
         this.ctx.audio.kick();
         this.ctx.steamFirstKick();
+        // Bridge a boot-kill to the run state (kills/bootKills + "kill" event
+        // with isKick so achievements + floating text light up) and add juice.
+        this.ctx.state && this.ctx.state.addKill({ position: e.position.clone(), isKick: true });
+        if (this.ctx.juice) {
+          this.ctx.juice.hitStop(70);
+          this.ctx.juice.shake(0.2, 180);
+          this.ctx.juice.spawnImpact(e.position, "kick");
+        }
         connected = true;
       }
     }
@@ -346,13 +384,18 @@ export class Player {
       const dist = _tmp.length();
       if (dist > KICK_RANGE + 0.4) continue;
       _tmp.normalize();
-      if (_tmp.dot(_forward) > KICK_CONE) {
+      if (_tmp.dot(_forward) > cone) {
         this.ctx.level.explodeBarrel(bl, this.ctx);
         connected = true;
       }
     }
 
-    if (!connected) this.ctx.audio.kickWhiff();
+    if (connected) {
+      const pt = kickPoint || this.camera.position.clone().addScaledVector(_forward, KICK_RANGE * 0.6);
+      this.ctx.abilities && this.ctx.abilities.onKick({ point: pt });
+    } else {
+      this.ctx.audio.kickWhiff();
+    }
   }
 
   _applyCamera(dt) {

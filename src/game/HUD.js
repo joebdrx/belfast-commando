@@ -25,6 +25,20 @@ export class HUD {
     this.overlayHint = this.$("overlay-hint");
     this.crosshair = this.$("crosshair");
     this._damageT = 0;
+    // Adrenaline distortion layer (built in JS so index.html stays untouched).
+    this._adrenaline = document.createElement("div");
+    this._adrenaline.id = "hud-adrenaline";
+    Object.assign(this._adrenaline.style, {
+      position: "fixed", inset: "0", pointerEvents: "none", opacity: "0",
+      transition: "opacity 0.25s ease", zIndex: "40",
+      boxShadow: "inset 0 0 220px 60px rgba(150,0,0,0.85)",
+      background: "radial-gradient(ellipse at center, rgba(0,0,0,0) 45%, rgba(40,0,0,0.35) 100%)",
+      mixBlendMode: "multiply",
+    });
+    document.body.appendChild(this._adrenaline);
+    this._adrenalinePulse = 0;
+    this._adrenalineOn = false;
+    this._adrenalineFx = true; // toggled via settings
   }
 
   setScore(total, combo, mult) {
@@ -105,6 +119,26 @@ export class HUD {
     if (this.crosshair) this.crosshair.style.opacity = active ? "1" : "0";
   }
 
+  /** Enable/disable the low-HP distortion FX (settings toggle; default on). */
+  setAdrenalineFxEnabled(enabled) {
+    this._adrenalineFx = enabled !== false;
+    if (!this._adrenalineFx) {
+      this._adrenalineOn = false;
+      this._adrenaline.style.opacity = "0";
+      document.getElementById("hud") && (document.getElementById("hud").style.filter = "");
+    }
+  }
+
+  /** Toggle the adrenaline state (desaturate HUD + pulsing red vignette). The
+   *  health readout stays legible — distort, don't blackout. */
+  setAdrenaline(active) {
+    if (!this._adrenalineFx) return;
+    this._adrenalineOn = !!active;
+    const hud = document.getElementById("hud");
+    if (hud) hud.style.filter = active ? "grayscale(0.85) contrast(1.1)" : "";
+    if (!active) this._adrenaline.style.opacity = "0";
+  }
+
   showOverlay(title, body, hint) {
     if (!this.overlay) return;
     this.overlayTitle.innerHTML = title;
@@ -121,6 +155,11 @@ export class HUD {
     if (this._damageT > 0) {
       this._damageT -= dt;
       if (this.vignette) this.vignette.style.opacity = Math.max(0, this._damageT / 0.35) * 0.8;
+    }
+    if (this._adrenalineOn) {
+      this._adrenalinePulse += dt * 5;
+      const o = 0.45 + Math.sin(this._adrenalinePulse) * 0.25;
+      this._adrenaline.style.opacity = String(o);
     }
   }
 }

@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { Enemy } from "./Enemy.js";
+import { EnemyDirector } from "./EnemyDirector.js";
 
 const _ray = new THREE.Ray();
 const _dir = new THREE.Vector3();
@@ -104,6 +105,9 @@ export class Level {
     this.doors = [];
     /** @type {Enemy[]} */
     this.enemies = [];
+    // Archetype mix scales with sector index. Deterministic enough; uses the
+    // global RNG so each run varies. Drives _addEnemy when no archetype is given.
+    this._director = new EnemyDirector(index || 0);
     /** @type {Array<{root:THREE.Object3D, hitbox:THREE.Box3, collider:THREE.Box3, pos:THREE.Vector3, exploded:boolean}>} */
     this.barrels = [];
 
@@ -681,6 +685,9 @@ export class Level {
     ctx.weapon.explosionFx(barrel.pos);
     ctx.audio.explosion(barrel.pos, ctx.camera.position);
     ctx.score.add(40, "BOOM!");
+    // Bus event (position-carrying) + heavy juice for the detonation.
+    if (ctx.state) ctx.state.emit("explosion", { position: barrel.pos.clone() });
+    if (ctx.juice) ctx.juice.shake(0.4, 380);
 
     const R = 5.0;
     const _v = new THREE.Vector3();
@@ -690,7 +697,12 @@ export class Level {
       if (dist < R) {
         _v.copy(e.position).sub(barrel.pos).setY(0).normalize();
         const falloff = 1 - dist / R;
+        const wasAlive = !e.dead;
         e.takeDamage(200 * falloff, _v, 12 * falloff);
+        // Credit a demolition kill to the run (DEMOLITION bonus + kill count).
+        if (wasAlive && e.dead && ctx.state) {
+          ctx.state.addKill({ position: e.position.clone(), isBarrel: true });
+        }
       }
     }
     // Splash the player if too close.
@@ -708,6 +720,7 @@ export class Level {
   }
 
   _addEnemy(pos, opts = {}) {
+    if (!opts.archetype) opts.archetype = this._director.next();
     // ALL enemies use the rigged + animated invader; fall back to the static
     // invader GLB, then placeholder geometry.
     if (this.assets) {

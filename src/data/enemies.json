@@ -1,0 +1,8 @@
+[
+  { "id": "grunt", "health": 100, "speed": 1.8, "runSpeed": 5.4, "sightRange": 42, "meleeRange": 1.7, "meleeDamage": 9, "knockbackImmune": false, "animFps": 11, "attack": "melee" },
+  { "id": "gunner", "health": 60, "speed": 2.4, "runSpeed": 3.2, "sightRange": 75, "meleeRange": 1.7, "meleeDamage": 6, "knockbackImmune": false, "animFps": 10, "attack": "ranged",
+    "ranged": { "damage": 7, "fireInterval": 1.9, "telegraph": 0.45, "standoff": 16, "strafeInterval": 0.65 } },
+  { "id": "enforcer", "health": 320, "speed": 1.5, "runSpeed": 1.7, "sightRange": 90, "meleeRange": 2.0, "meleeDamage": 24, "knockbackImmune": true, "animFps": 8, "attack": "melee", "scale": 1.55 },
+  { "id": "breacher", "health": 18, "speed": 7.8, "runSpeed": 8.6, "sightRange": 55, "meleeRange": 1.6, "meleeDamage": 0, "knockbackImmune": false, "animFps": 12, "attack": "detonate",
+    "detonate": { "radius": 3.5, "damage": 38 }, "zigzag": { "amplitude": 3.6, "frequency": 2.4 } }
+]

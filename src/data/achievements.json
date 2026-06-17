@@ -1,0 +1,23 @@
+[
+  {
+    "id": "first_kick",
+    "name": "First Kick",
+    "desc": "Boot your first invader clean off Belfast soil.",
+    "steamId": "ACH_FIRST_KICK",
+    "trigger": { "event": "kill", "match": { "isKick": true }, "count": 1 }
+  },
+  {
+    "id": "alliance_formed",
+    "name": "Strange Bedfellows",
+    "desc": "Deploy on your first operation as the uneasy alliance.",
+    "steamId": "ACH_ALLIANCE_FORMED",
+    "trigger": { "event": "runStart", "match": {}, "count": 1 }
+  },
+  {
+    "id": "shankill_clear",
+    "name": "Shankill Swept",
+    "desc": "Clear the Shankill sector top to bottom.",
+    "steamId": "ACH_SHANKILL_CLEAR",
+    "trigger": { "event": "levelClear", "match": { "levelId": "shankill" }, "count": 1 }
+  }
+]
