@@ -152,6 +152,31 @@ export class Audio {
     noise.stop(this._now() + 0.12);
   }
 
+  /** Breacher aggro shriek — noise burst with a falling, dissonant tone. */
+  enemyScream(pos, listenerPos) {
+    if (!this._ok()) return;
+    const d = pos.distanceTo(listenerPos);
+    const vol = Math.max(0.08, Math.min(0.5, 11 / (d + 4)));
+    const n = this._noise(0.4);
+    const bp = this.ctx.createBiquadFilter();
+    bp.type = "bandpass";
+    bp.frequency.setValueAtTime(1600, this._now());
+    bp.frequency.exponentialRampToValueAtTime(500, this._now() + 0.4);
+    n.connect(bp);
+    this._env(bp, vol, 0.01, 0.4);
+    n.start();
+    n.stop(this._now() + 0.45);
+    this._tone(740, vol * 0.7, 0.4, "sawtooth", 220);
+  }
+
+  /** Enforcer footfall — a heavy, distance-attenuated low thud. */
+  enforcerStep(pos, listenerPos) {
+    if (!this._ok()) return;
+    const d = pos.distanceTo(listenerPos);
+    const vol = Math.max(0.1, Math.min(0.6, 12 / (d + 5)));
+    this._tone(55, vol, 0.35, "sine", 30);
+  }
+
   /** Enemy melee swing — a whoosh plus a low thud, distance-attenuated. */
   enemyMelee(pos, listenerPos) {
     if (!this._ok()) return;
