@@ -244,6 +244,13 @@ export class Weapon {
     this.ctx.hud.setAmmo(this.ammo[this.index], w.mag, true);
   }
 
+  /** Top up the current magazine (Scavenger's Refund). Clamped to mag size. */
+  addAmmo(n) {
+    const w = this.current;
+    this.ammo[this.index] = Math.min(w.mag, this.ammo[this.index] + n);
+    if (this.ctx) this.ctx.hud.setAmmo(this.ammo[this.index], w.mag, this.reloading);
+  }
+
   tryFire() {
     if (this.cooldown > 0 || this.reloading || !this._canAct()) return;
     const w = this.current;
