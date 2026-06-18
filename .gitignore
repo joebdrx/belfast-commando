@@ -29,3 +29,6 @@ assets/
 # Playwright MCP output + scratch screenshots
 .playwright-mcp/
 /*.jpeg
+
+# Headless Blender furniture conversion scratch
+.furn-tmp/
