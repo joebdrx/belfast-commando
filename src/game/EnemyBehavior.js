@@ -6,6 +6,13 @@ const _tan = new THREE.Vector3();
 const _toVictim = new THREE.Vector3();
 
 /**
+ * Extra reach (metres) beyond a melee enemy's `meleeRange` at which it begins to
+ * telegraph/replay its attack swing as it closes in. Shared by the enforcer
+ * (stepEnforcer) and the grunt (Enemy.update) so the wind-up zone is consistent.
+ */
+export const MELEE_TELEGRAPH_PAD = 3.5;
+
+/**
  * Quantise animation advance to a fixed frame rate (PS1 stop-motion). Pure.
  * @returns {{advance:number, accum:number}} advance = dt to feed the mixer (0 or 1/fps)
  */
@@ -85,6 +92,9 @@ export function stepEnforcer(enemy, dt, ctx) {
   if (dist > enemy.meleeRange) {
     pos.addScaledVector(_flat, enemy.runSpeed * dt); // no LOS / no cover routing
     enemy._setAnim("walk");
+    // Wind-up: replay the one-shot swing (damage-free) as it closes in, while it
+    // keeps beelining. Rigged-only — _telegraphSwing no-ops on static enemies.
+    if (dist <= enemy.meleeRange + MELEE_TELEGRAPH_PAD) enemy._telegraphSwing(ctx, dt);
   } else {
     enemy._setAnim("walk");
     enemy.meleeTimer -= dt;
@@ -96,6 +106,13 @@ export function stepEnforcer(enemy, dt, ctx) {
         ctx.hud.flashDamage();
       }
     }
+  }
+
+  // Ease the telegraph lunge back to rest (visual model only). The enforcer
+  // returns early in Enemy.update, so its lunge must decay here.
+  if (enemy._rigRoot) {
+    enemy._lunge = enemy._lunge > 0.001 ? enemy._lunge * Math.max(0, 1 - dt * 9) : 0;
+    enemy._rigRoot.position.z = enemy._lunge;
   }
 }
 
@@ -125,8 +142,11 @@ export function stepBreacher(enemy, dt, ctx) {
 
 /**
  * Victim-menacing idle: the guard faces and "threatens" the held civilian.
- * Triggers a visual melee lunge jab every ~1.1 s — NO damage to the victim.
- * Allocation-free; uses module-scope _toVictim temp.
+ * Periodically plays the REAL one-shot attack swing (clip + lunge + audio) at the
+ * victim on a cooldown (~the clip duration). Purely visual — the victim is never
+ * in `level.enemies` and `_meleeAttack(ctx, true)` is damage-free, so neither the
+ * victim nor the player can be hurt here. Non-rigged guards fall back to the cheap
+ * positional jab. Allocation-free; uses module-scope _toVictim temp.
  * @param {import('./Enemy.js').Enemy} enemy
  * @param {number} dt
  * @param {object} ctx
@@ -140,9 +160,15 @@ export function menaceVictim(enemy, dt, ctx) {
   // Prefer run clip for a threatening jitter; else walk.
   enemy._setAnim(enemy.actions && enemy.actions.run ? "run" : "walk");
 
-  // Periodic lunge jab (visual only — does NOT damage the victim).
   enemy._menaceTimer = (enemy._menaceTimer || 0) - dt;
-  if (enemy._menaceTimer <= 0) {
+  if (enemy._attackAction) {
+    // Rigged: swing the full attack animation at the victim on a cooldown.
+    if (enemy._menaceTimer <= 0 && !enemy._attacking) {
+      enemy._menaceTimer = enemy._attackClipDuration() || 2.0;
+      enemy._meleeAttack(ctx, true); // swing + lunge + audio, never damages
+    }
+  } else if (enemy._menaceTimer <= 0) {
+    // Non-rigged fallback: the cheap positional jab (visual only).
     enemy._menaceTimer = 1.1;
     enemy._lunge = 0.5;
     if (ctx.audio && ctx.audio.enemyMelee) {

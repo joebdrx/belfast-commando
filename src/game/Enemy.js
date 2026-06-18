@@ -412,9 +412,14 @@ export class Enemy {
       const hdist = _flat.length();
       _flat.normalize();
       if (hdist > this.meleeRange) {
-        // Charge.
+        // Charge — and telegraph the swing once inside wind-up range so the
+        // grunt visibly cocks its weapon as it closes (damage-free; the real
+        // hit still happens below in the in-range/meleeTimer path).
         this.group.position.addScaledVector(_flat, this.runSpeed * dt);
         this._setAnim("run");
+        if (hdist <= this.meleeRange + EnemyBehavior.MELEE_TELEGRAPH_PAD) {
+          this._telegraphSwing(ctx, dt);
+        }
       } else {
         // In range — circle the player and swing on a cooldown.
         _tangent.set(-_flat.z, 0, _flat.x).multiplyScalar(this._strafeDir);
@@ -457,7 +462,17 @@ export class Enemy {
     this.group.position.addScaledVector(_flat, this.speed * dt);
   }
 
-  _meleeAttack(ctx) {
+  /**
+   * Play the one-shot melee swing (clip + forward jab + audio) and, unless this
+   * is a telegraph wind-up, connect for damage if still in reach.
+   *
+   * @param {object} ctx
+   * @param {boolean} [telegraph=false] when true the swing is purely visual — no
+   *   damage and no HUD flash. Used for the approach wind-up and for menacing the
+   *   victim NPC, so the wind-up can never double-damage the player (damage stays
+   *   in the dedicated melee-range / meleeTimer paths).
+   */
+  _meleeAttack(ctx, telegraph = false) {
     // Quick forward jab (visual), then connect if still in reach.
     this._lunge = 0.5;
     // Swing the arms (and the hand-anchored weapon) via the one-shot attack clip.
@@ -475,10 +490,41 @@ export class Enemy {
       }
     }
     ctx.audio.enemyMelee(this.group.position, ctx.camera.position);
+    if (telegraph) return; // wind-up swing only — never deals damage
     _flat.copy(ctx.player.position).sub(this.group.position).setY(0);
     if (_flat.length() <= this.meleeRange + 0.5) {
       ctx.player.damage(this.damage);
       ctx.hud.flashDamage();
+    }
+  }
+
+  /**
+   * Effective (time-scaled) duration of the one-shot attack clip, in seconds.
+   * Returns 0 for non-rigged enemies / when no attack clip was provided.
+   */
+  _attackClipDuration() {
+    if (!this._attackAction) return 0;
+    const clip = this._attackAction.getClip ? this._attackAction.getClip() : null;
+    const ts = Math.abs(this._attackAction.timeScale) || 1;
+    return clip ? clip.duration / ts : 0;
+  }
+
+  /**
+   * Telegraph wind-up: replay the one-shot swing on a cooldown while closing in
+   * on the player (BEFORE damage range), so the enemy visibly winds up as it
+   * advances. The cooldown is ~the attack clip's effective duration (plus the
+   * `_attacking` guard) so it never restarts mid-swing. Damage-free — the actual
+   * hit stays in the melee-range / meleeTimer paths. Rigged-only: static-fallback
+   * enemies have no attack action and simply skip the telegraph (no crash).
+   * @param {object} ctx
+   * @param {number} dt
+   */
+  _telegraphSwing(ctx, dt) {
+    if (!this._attackAction) return; // static / non-rigged → keep plain locomotion
+    this._telegraphT = (this._telegraphT || 0) - dt;
+    if (this._telegraphT <= 0 && !this._attacking) {
+      this._telegraphT = this._attackClipDuration() || 1.2;
+      this._meleeAttack(ctx, true); // swing + lunge + audio, no damage
     }
   }
 

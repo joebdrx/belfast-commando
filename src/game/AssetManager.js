@@ -72,6 +72,11 @@ const MODEL_DEFS = {
   prop_phone_booth: { size: 2.4, fit: "height", anchor: "bottom", rotY: 0 },
   prop_bicycle:     { size: 1.1, fit: "height", anchor: "bottom", rotY: 0 },
   prop_car:         { size: 1.5, fit: "height", anchor: "bottom", rotY: 0 },
+  // Wall-mounted landline phone for the safehouse (HUB). The source is modelled
+  // lying flat (thin Y axis), so scale by its longest axis to ~0.3m and let
+  // Hub._buildPhone stand it upright + face it into the room. Centre-anchored so
+  // it pivots about its own middle when Hub rotates it onto the wall.
+  landline_phone:   { size: 0.3, fit: "max", anchor: "center", rotY: 0 },
   // Belfast exterior building templates (optimized from asset-reference via
   // scripts/optimize-buildings.sh). Provisional; tuned from the in-game audit.
   bldg_terrace:     { size: 12, fit: "height", anchor: "bottom", rotY: 0 },
@@ -120,6 +125,7 @@ export class AssetManager {
     this.faceTexture = null; // photo face slapped onto enemy heads (non-1.png)
     this.houseSideTexture = null; // grimy tenement facade for building side walls (4h.png)
     this._riggedEnemy = null; // { scene, clips:{walk,run,idle} }
+    this._menuActor = null; // { scene, clips:{walk,idle}, height } — safehouse hero + ally NPCs
     this._attackClip = null; // shared melee attack AnimationClip (retargets onto every rig)
     this.loaded = 0;
     this.total = Object.keys(DEFS).length;
@@ -189,7 +195,7 @@ export class AssetManager {
     // Environment map, 3D models, 2D sprites, and the rigged enemy run alongside.
     const envJob = scene ? this._loadEnvironment(scene) : Promise.resolve();
     const skyJob = scene ? this._loadSky(scene) : Promise.resolve();
-    await Promise.all([...jobs, envJob, skyJob, this.loadModels(), this.loadSprites(), this.loadMurals(), this._loadRiggedEnemy(), this._loadArchetypeRigs(), this._loadAttackClip(), this.captureFacades(), this.loadFace(), this.loadHouseSide()]);
+    await Promise.all([...jobs, envJob, skyJob, this.loadModels(), this.loadSprites(), this.loadMurals(), this._loadRiggedEnemy(), this._loadArchetypeRigs(), this._loadAttackClip(), this._loadMenuActor(), this.captureFacades(), this.loadFace(), this.loadHouseSide()]);
   }
 
   /** Load the photo face that gets billboarded onto each enemy's head. */
@@ -526,6 +532,68 @@ export class AssetManager {
     // bones) without mutating the rig's shared clips object.
     const clips = this._attackClip ? { ...rig.clips, attack: this._attackClip } : rig.clips;
     return { object3D: wrap, clips };
+  }
+
+  /**
+   * Load the safehouse (HUB) menu actor: one skinned, animated humanoid used for
+   * BOTH the hero centrepiece and the ally NPCs. Mirrors _loadRig — a base GLB
+   * carrying the WALK clip (animations[0]) plus a small standing IDLE/fidget clip
+   * (Confused_Scratch) on the same skeleton, retargeted by bone name. Height is
+   * measured WITH the walk clip applied (the rig's bind-pose bbox is tiny — see
+   * _loadRiggedEnemy). Missing file → stays null and Hub uses its primitives.
+   */
+  async _loadMenuActor() {
+    try {
+      const base = await this.gltfLoader.loadAsync(`${BASE}models/menu_actor.glb`);
+      const clips = {};
+      if (base.animations[0]) clips.walk = base.animations[0];
+      const idle = await this.gltfLoader.loadAsync(`${BASE}models/anim_menu_idle.glb`).catch(() => null);
+      if (idle && idle.animations[0]) clips.idle = idle.animations[0];
+      base.scene.traverse((o) => {
+        if (o.isMesh) o.frustumCulled = false; // skinned bounds animate; avoid pop-out
+        const mats = o.material ? (Array.isArray(o.material) ? o.material : [o.material]) : [];
+        for (const m of mats) {
+          if (!m) continue;
+          if (m.metalness !== undefined) m.metalness = 0;
+          m.needsUpdate = true;
+        }
+      });
+      let height = 1.7;
+      if (clips.walk) {
+        const tmp = new THREE.AnimationMixer(base.scene);
+        tmp.clipAction(clips.walk).play();
+        tmp.update(0.2);
+        base.scene.updateMatrixWorld(true);
+        height = new THREE.Box3().setFromObject(base.scene).getSize(new THREE.Vector3()).y || 1.7;
+        tmp.stopAllAction();
+      }
+      this._menuActor = { scene: base.scene, clips, height };
+    } catch {
+      this._menuActor = null;
+    }
+  }
+
+  hasMenuActor() {
+    return !!this._menuActor;
+  }
+
+  /**
+   * A fresh animated menu actor for the safehouse: a SkeletonUtils clone wrapped
+   * in a group and scaled to a natural ~1.8m height, plus its shared clips. The
+   * rig's natural front is +Z (same as the enemy rigs), so callers face it by
+   * rotating the wrapping group. Each caller drives its OWN AnimationMixer on the
+   * returned object3D (clones share the AnimationClip data harmlessly). Returns
+   * null when the GLB is unavailable (headless / tests) → Hub uses primitives.
+   * @returns {{object3D:THREE.Group, clips:{walk?:THREE.AnimationClip, idle?:THREE.AnimationClip}}|null}
+   */
+  getMenuActor() {
+    if (!this._menuActor) return null;
+    const inner = cloneSkeleton(this._menuActor.scene);
+    inner.rotation.y = 0; // rig front is +Z; callers rotate the wrap to aim it
+    const wrap = new THREE.Group();
+    wrap.add(inner);
+    wrap.scale.setScalar(1.8 / (this._menuActor.height || 1.7));
+    return { object3D: wrap, clips: this._menuActor.clips };
   }
 
   /**

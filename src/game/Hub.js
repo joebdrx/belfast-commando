@@ -37,8 +37,15 @@ export class Hub {
     this._sharedMats = new Set();
 
     // Animated bits captured during build for update(dt).
-    /** @type {Array<{group:THREE.Group, baseY:number, phase:number}>} */
+    /**
+     * Ally NPCs. Animated entries carry their own AnimationMixer (and, for the
+     * patroller, a back-and-forth path); the primitive fallback uses a gentle bob.
+     * @type {Array<{group:THREE.Group, baseY:number, phase:number, mixer?:THREE.AnimationMixer, patrol?:{minX:number,maxX:number,z:number,speed:number,dir:number}}>}
+     */
     this.npcs = [];
+    /** @type {THREE.AnimationMixer[]} every menu-actor mixer, ticked in update(dt). */
+    this._mixers = [];
+    this._heroMixer = null;
     this._lamp = null;
     this._lampBase = 8; // base point-light intensity (flickers around this)
     this._bulbMat = null;
@@ -236,12 +243,15 @@ export class Hub {
   }
 
   /**
-   * Build the two ally NPCs as low-poly capsule+head figures with distinct
-   * faction colours and a readable silhouette (flat cap / beret + slung rifle).
-   * Stored for a gentle idle bob in update().
+   * Build the two ally NPCs. When the animated menu actor is available BOTH are
+   * the SAME rigged model (mirroring the hero): Ruairí (IRA, green armband) idles
+   * at the table, while Davy (Ulster-Scots, orange armband) slowly patrols a short
+   * back-and-forth path behind the table, turning to face his travel direction.
+   * If the actor is unavailable (headless / tests / not yet streamed) each falls
+   * back to the original low-poly capsule figure with a gentle idle bob.
    */
   _buildNpcs() {
-    // Ruairí — IRA fighter, olive-green coat, green armband, dark flat cap.
+    // Ruairí — IRA fighter, olive-green coat, green armband, dark flat cap. Idles.
     this._buildNpc({
       x: -2.4,
       z: -3.3,
@@ -252,6 +262,7 @@ export class Hub {
       hatColor: 0x1c2018,
     });
     // Davy — Ulster-Scots paramilitary, rust coat, orange armband, maroon beret.
+    // Patrols a short path behind the table (clear of the hero + camera).
     this._buildNpc({
       x: 2.4,
       z: -3.3,
@@ -260,11 +271,85 @@ export class Hub {
       band: 0xe07b1a,
       hat: "beret",
       hatColor: 0x5a1f24,
+      patrol: { minX: 1.2, maxX: 3.0, z: -3.7, speed: 0.55, dir: 1 },
     });
+    // True once the allies are the animated actor (vs. the capsule fallback).
+    this._npcsAnimated = !!(this.assets && typeof this.assets.hasMenuActor === "function" && this.assets.hasMenuActor());
   }
 
-  /** One ally figure. Materials are inline (per-NPC) so dispose() frees them. */
-  _buildNpc({ x, z, yaw, coat, band, hat, hatColor }) {
+  /**
+   * One ally figure. Prefers the shared animated menu actor (idle, or walk while
+   * patrolling); falls back to the inline capsule fighter so the hub still reads
+   * headless. A small emissive faction armband is added as a subtle accent.
+   */
+  _buildNpc(cfg) {
+    const actor = this.assets && typeof this.assets.getMenuActor === "function"
+      ? this.assets.getMenuActor()
+      : null;
+    if (actor) this._buildAnimatedNpc(cfg, actor);
+    else this._buildCapsuleNpc(cfg);
+  }
+
+  /** Animated ally: the shared rigged actor + a faction armband accent. */
+  _buildAnimatedNpc({ x, z, yaw, band, patrol }, actor) {
+    const group = new THREE.Group();
+    group.add(actor.object3D);
+
+    // Faction armband — a faintly emissive ring at chest height (subtle accent
+    // that rides with the body group; not bound to the animating arm bone).
+    const bandMat = new THREE.MeshStandardMaterial({
+      color: band,
+      roughness: 0.5,
+      emissive: band,
+      emissiveIntensity: 0.2,
+    });
+    const armband = new THREE.Mesh(new THREE.TorusGeometry(0.18, 0.035, 8, 16), bandMat);
+    armband.position.y = 1.3;
+    armband.rotation.x = Math.PI / 2;
+    group.add(armband);
+
+    // Patroller walks (and faces its travel direction); idler stands and fidgets.
+    const clip = patrol ? (actor.clips.walk || actor.clips.idle) : (actor.clips.idle || actor.clips.walk);
+    const mixer = this._playActorClip(actor.object3D, clip);
+
+    if (patrol) {
+      group.position.set(patrol.minX, 0, patrol.z);
+      group.rotation.y = Math.PI / 2; // rig front is +Z → face +X (start dir = +1)
+    } else {
+      group.position.set(x, 0, z);
+      group.rotation.y = yaw;
+    }
+    this.scene.add(group);
+
+    this.npcs.push({ group, baseY: 0, phase: this.npcs.length * 1.7, mixer, patrol: patrol || undefined });
+  }
+
+  /**
+   * Swap the primitive capsule allies for the animated menu actor once it has
+   * streamed in (the constructor usually runs before the GLB loads, so the
+   * allies start as capsules). Mirrors `_ensureHeroModel`. No-op once animated
+   * or while the actor is still unavailable.
+   */
+  _ensureNpcs() {
+    if (this._npcsAnimated) return;
+    if (!this.assets || typeof this.assets.hasMenuActor !== "function" || !this.assets.hasMenuActor()) return;
+    // Tear down the capsule allies (inline geometry + materials), then rebuild.
+    for (const n of this.npcs) {
+      this.scene.remove(n.group);
+      n.group.traverse((o) => {
+        if (o.geometry) o.geometry.dispose();
+        if (o.material) {
+          const mats = Array.isArray(o.material) ? o.material : [o.material];
+          for (const m of mats) if (m && m.dispose) m.dispose();
+        }
+      });
+    }
+    this.npcs.length = 0;
+    this._buildNpcs(); // actor now available → animated allies (mixers pushed to _mixers)
+  }
+
+  /** Primitive capsule ally (fallback). Materials are inline so dispose() frees them. */
+  _buildCapsuleNpc({ x, z, yaw, coat, band, hat, hatColor }) {
     const group = new THREE.Group();
 
     const coatMat = new THREE.MeshStandardMaterial({ color: coat, roughness: 0.85 });
@@ -322,32 +407,31 @@ export class Hub {
 
   /**
    * The hero: the player's own fighter, posed standing on the RIGHT of the frame
-   * (the lobby centrepiece). Uses the shared `player_fighter` GLB when available,
-   * falling back to a primitive commando silhouette so the hub still reads in
-   * headless/tests or before the asset streams in. A warm key + cool rim light
-   * make the figure pop against the gloom.
+   * (the lobby centrepiece). Uses the shared animated menu actor (a relaxed
+   * standing IDLE) when available, falling back to a primitive commando
+   * silhouette so the hub still reads in headless/tests or before the asset
+   * streams in. A warm key + cool rim light make the figure pop against the gloom.
    */
   _buildHero() {
     const group = new THREE.Group();
     group.position.set(1.8, 0, -0.6); // front-right, the lobby focal point
-    group.rotation.y = 2.78; // face the camera (front to viewer), slight angled stance
+    // Face the camera (at ~(-0.6,1.5,2.7)). Rig front is +Z, facing dir =
+    // (sin y, cos y); aiming at the camera gives y ≈ -0.5 (slight 3/4 stance).
+    group.rotation.y = -0.5;
 
-    let model = null;
-    if (this.assets && typeof this.assets.getModel === "function") {
-      model = this.assets.getModel("player_fighter"); // fresh clone or null
-    }
-    if (model) {
-      group.add(model);
-    } else {
-      this._buildHeroFallback(group);
-    }
+    const actor = this.assets && typeof this.assets.getMenuActor === "function"
+      ? this.assets.getMenuActor() // fresh animated clone or null
+      : null;
+    if (actor) this._attachHeroActor(group, actor);
+    else this._buildHeroFallback(group);
+
     this.scene.add(group);
     this._heroGroup = group;
-    // True once the real GLB is in place. The hub is usually constructed before
-    // the model stream finishes, so the constructor gets `null` and uses the
-    // primitive fallback; `_ensureHeroModel()` (called from show()) swaps the
-    // real fighter in as soon as it is available.
-    this._heroIsModel = !!model;
+    // True once the real animated actor is in place. The hub is usually built
+    // before the model stream finishes, so the constructor gets `null` and uses
+    // the primitive fallback; `_ensureHeroModel()` (called from show()/update())
+    // swaps the real actor in as soon as it is available.
+    this._heroIsModel = !!actor;
 
     // Warm key light raking the hero from front-right (cosy lobby spill).
     const key = new THREE.PointLight(0xffd9a0, 6.0, 7, 2);
@@ -387,6 +471,33 @@ export class Hub {
     rifle.position.set(-0.2, 1.05, 0.16);
     rifle.rotation.set(-0.4, -0.25, -0.25);
     group.add(rifle);
+  }
+
+  /**
+   * Parent the animated menu actor under the hero group and play a relaxed
+   * standing idle (falling back to walk if no idle clip loaded). The mixer is
+   * tracked in `_mixers` for per-frame ticking and `_heroMixer` for disposal.
+   */
+  _attachHeroActor(group, actor) {
+    group.add(actor.object3D);
+    const clip = (actor.clips && (actor.clips.idle || actor.clips.walk)) || null;
+    this._heroMixer = this._playActorClip(actor.object3D, clip);
+  }
+
+  /**
+   * Build + register a looping AnimationMixer for a menu actor and play `clip`
+   * with a small per-actor time offset (so multiple idlers don't fidget in
+   * lockstep). Tracks it in `_mixers` for per-frame ticking + disposal. Returns
+   * the mixer, or null when there is no clip to play.
+   */
+  _playActorClip(object3D, clip) {
+    if (!clip) return null;
+    const mixer = new THREE.AnimationMixer(object3D);
+    const action = mixer.clipAction(clip);
+    action.play();
+    action.time = (this._mixers.length * 2.3) % (clip.duration || 1); // desync
+    this._mixers.push(mixer);
+    return mixer;
   }
 
   /**
@@ -432,13 +543,60 @@ export class Hub {
 
   /**
    * A wall-mounted landline phone on the right wall — the clickable fixture that
-   * opens the level-code dial. Old cradle + handset + coiled cord.
+   * opens the level-code dial. Uses the optimized `landline_phone` GLB when
+   * available, with the old procedural cradle as a headless/test fallback. The
+   * "phone" interactable (group + anchor) is registered identically either way,
+   * so the existing click→dial wiring in main.js is unaffected.
    */
   _buildPhone() {
     const phone = new THREE.Group();
     phone.position.set(4.88, 1.4, -1.6); // right wall, front-of-room
-    phone.rotation.y = -Math.PI / 2; // face -x
+    phone.rotation.y = -Math.PI / 2; // face -x (into the room)
 
+    const model = this.assets && typeof this.assets.getModel === "function"
+      ? this.assets.getModel("landline_phone")
+      : null;
+    if (model) this._applyLandlineModel(phone, model);
+    else this._buildPhoneFallback(phone);
+
+    this.scene.add(phone);
+    this._phoneGroup = phone;
+    // Hub is usually built before the GLB streams in → starts as the procedural
+    // cradle; `_ensurePhone()` (show()/update()) swaps the real model in later.
+    this._phoneIsModel = !!model;
+    this._registerInteractable(phone, "phone", "Landline — Dial Code", 2.0);
+  }
+
+  /** Orient + parent the landline GLB inside the wall fixture group. */
+  _applyLandlineModel(phone, model) {
+    // Stand the wall phone upright and present its face into the room.
+    model.rotation.set(Math.PI / 2, 0, 0);
+    phone.add(model);
+  }
+
+  /** Swap the procedural cradle for the landline GLB once it has streamed in. */
+  _ensurePhone() {
+    if (this._phoneIsModel || !this._phoneGroup) return;
+    if (!this.assets || typeof this.assets.getModel !== "function") return;
+    const model = this.assets.getModel("landline_phone");
+    if (!model) return;
+    for (let i = this._phoneGroup.children.length - 1; i >= 0; i--) {
+      const c = this._phoneGroup.children[i];
+      this._phoneGroup.remove(c);
+      c.traverse((o) => {
+        if (o.geometry) o.geometry.dispose();
+        if (o.material) {
+          const mats = Array.isArray(o.material) ? o.material : [o.material];
+          for (const m of mats) if (m && m.dispose) m.dispose();
+        }
+      });
+    }
+    this._applyLandlineModel(this._phoneGroup, model);
+    this._phoneIsModel = true;
+  }
+
+  /** Procedural wall-phone fixture (fallback): cradle + keypad + handset + cord. */
+  _buildPhoneFallback(phone) {
     const bodyMat = new THREE.MeshStandardMaterial({ color: 0x141414, roughness: 0.6 });
     const cradle = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.46, 0.16), bodyMat);
     phone.add(cradle);
@@ -465,9 +623,6 @@ export class Hub {
     cord.position.set(0.1, -0.3, 0.05);
     cord.rotation.x = Math.PI / 2;
     phone.add(cord);
-
-    this.scene.add(phone);
-    this._registerInteractable(phone, "phone", "Landline — Dial Code", 2.0);
   }
 
   /**
@@ -502,18 +657,20 @@ export class Hub {
     this._visible = true;
     this._elapsed = 0;
     this._ensureHeroModel();
+    this._ensureNpcs();
+    this._ensurePhone();
     this._poseCamera();
   }
 
   /**
-   * Swap the primitive fallback hero for the real `player_fighter` GLB once it
-   * has streamed in. No-op if the real model is already shown or still missing.
+   * Swap the primitive fallback hero for the real animated menu actor once it has
+   * streamed in. No-op if the actor is already shown or still unavailable.
    */
   _ensureHeroModel() {
     if (this._heroIsModel || !this._heroGroup) return;
-    if (!this.assets || typeof this.assets.getModel !== "function") return;
-    const model = this.assets.getModel("player_fighter");
-    if (!model) return;
+    if (!this.assets || typeof this.assets.getMenuActor !== "function") return;
+    const actor = this.assets.getMenuActor();
+    if (!actor) return; // still streaming / unavailable → keep the fallback
     // Drop the fallback primitives, keep the group's transform.
     for (let i = this._heroGroup.children.length - 1; i >= 0; i--) {
       const c = this._heroGroup.children[i];
@@ -526,7 +683,7 @@ export class Hub {
         }
       });
     }
-    this._heroGroup.add(model);
+    this._attachHeroActor(this._heroGroup, actor);
     this._heroIsModel = true;
   }
 
@@ -556,6 +713,8 @@ export class Hub {
   update(dt) {
     if (!this._visible) return;
     if (!this._heroIsModel) this._ensureHeroModel(); // swap in real fighter once loaded
+    if (!this._npcsAnimated) this._ensureNpcs(); // swap allies to the animated actor
+    if (!this._phoneIsModel) this._ensurePhone(); // swap in the real landline once loaded
     this._elapsed += dt;
     const t = this._elapsed;
 
@@ -566,10 +725,25 @@ export class Hub {
       if (this._bulbMat) this._bulbMat.emissiveIntensity = f;
     }
 
-    // Gentle idle bob for the allies.
+    // Advance every menu-actor animation (hero idle + ally idle/walk clips).
+    for (let i = 0; i < this._mixers.length; i++) this._mixers[i].update(dt);
+
+    // Drive the allies: the patroller walks back and forth (turning to face its
+    // travel direction); primitive-fallback figures get a gentle idle bob.
+    // (Animated idlers move themselves via their idle clip.)
     for (let i = 0; i < this.npcs.length; i++) {
       const n = this.npcs[i];
-      n.group.position.y = n.baseY + Math.sin(t * 1.4 + n.phase) * 0.025;
+      if (n.patrol) {
+        const p = n.patrol;
+        n.group.position.x += p.dir * p.speed * dt;
+        if (n.group.position.x >= p.maxX) {
+          n.group.position.x = p.maxX; p.dir = -1; n.group.rotation.y = -Math.PI / 2; // face -X
+        } else if (n.group.position.x <= p.minX) {
+          n.group.position.x = p.minX; p.dir = 1; n.group.rotation.y = Math.PI / 2; // face +X
+        }
+      } else if (!n.mixer) {
+        n.group.position.y = n.baseY + Math.sin(t * 1.4 + n.phase) * 0.025;
+      }
     }
 
     // Very slight handheld-style camera sway around the fixed pose.
@@ -586,6 +760,15 @@ export class Hub {
    * the AssetManager are shared game-wide and are skipped.
    */
   dispose() {
+    // Stop + unbind every menu-actor mixer (hero + allies) before tearing down.
+    for (let i = 0; i < this._mixers.length; i++) {
+      const m = this._mixers[i];
+      m.stopAllAction();
+      if (m._root) m.uncacheRoot(m._root);
+    }
+    this._mixers.length = 0;
+    this._heroMixer = null;
+
     this.scene.traverse((o) => {
       if (o.geometry) o.geometry.dispose();
       if (o.material) {

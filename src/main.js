@@ -171,9 +171,17 @@ class Game {
       onExit: () => {},
       // Landline dial accepted a valid code → remember the skip target for the
       // next "Start Operation" (door or button). indexForCode already bypassed
-      // the unlock gate.
+      // the unlock gate. We ALSO pay out RP for that code — but only the first
+      // time it's entered (Progression.redeemCode guards against re-farming).
       onCodeAccepted: (index) => {
         this._pendingSkipIndex = index;
+        // Reward scales with sector index so later (harder) levels pay more.
+        // Upgrades cost 50–300 RP, so 150 + index*100 keeps each code worth a
+        // purchase. index 0→150, 1→250, 2→350 ... 6→750.
+        const code = this.levelManager.codeForIndex(index);
+        const reward = 150 + index * 100;
+        const { awarded } = this.progression.redeemCode(code, reward);
+        if (awarded > 0) this.menu.refresh(); // refresh the RP readout
       },
     });
 

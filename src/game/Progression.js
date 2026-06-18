@@ -360,6 +360,41 @@ class Progression {
       };
     });
   }
+
+  // ---- level-code RP redemption ------------------------------------------
+
+  /**
+   * Self-heal: guarantee `progression.redeemedCodes` is an array and return it.
+   * Legacy/partial saves (or a freshly-migrated default) might be missing it.
+   * @returns {string[]} the live redeemedCodes array.
+   */
+  _redeemedCodes() {
+    const prog = this.state.getProgression();
+    if (!Array.isArray(prog.redeemedCodes)) prog.redeemedCodes = [];
+    return prog.redeemedCodes;
+  }
+
+  /** @returns {boolean} whether `code` has already been cashed in for RP. */
+  hasRedeemedCode(code) {
+    return this._redeemedCodes().includes(code);
+  }
+
+  /**
+   * Redeem a level code for a one-time RP grant (no farming via re-entry).
+   * First time for `code`: records it, awards `amount` RP via GameState, and
+   * persists. Subsequent times: a no-op that grants nothing.
+   * @param {string} code the level code (e.g. "1234")
+   * @param {number} amount RP to award on first redemption
+   * @returns {{awarded:number, already:boolean}}
+   */
+  redeemCode(code, amount) {
+    const codes = this._redeemedCodes();
+    if (codes.includes(code)) return { awarded: 0, already: true };
+    codes.push(code);
+    this.state.addCurrency(amount);
+    this.save();
+    return { awarded: amount, already: false };
+  }
 }
 
 export default Progression;
