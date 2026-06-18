@@ -47,6 +47,7 @@ const MODEL_DEFS = {
   enemy_soldier:    { size: 1.85, fit: "height", anchor: "bottom", rotY: Math.PI, darken: 0.75 },
   enemy_variant:    { size: 1.85, fit: "height", anchor: "bottom", rotY: Math.PI, darken: 0.75 },
   invader:          { size: 1.85, fit: "height", anchor: "bottom", rotY: Math.PI, darken: 0.75 },
+  enemy_victim:     { size: 1.75, fit: "height", anchor: "bottom", rotY: Math.PI },
   player_fighter:   { size: 1.85, fit: "height", anchor: "bottom", rotY: Math.PI },
   // first-person viewmodels — centred, scaled by their longest axis
   weapon_ak:        { size: 0.62, fit: "max", anchor: "center", rotY: 0 },

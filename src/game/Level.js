@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { Enemy } from "./Enemy.js";
 import { EnemyDirector } from "./EnemyDirector.js";
 import { footprintCollider, blockPlan } from "./BuildingLayout.js";
+import { Victim } from "./Victim.js";
 
 const _ray = new THREE.Ray();
 const _dir = new THREE.Vector3();
@@ -106,6 +107,8 @@ export class Level {
     this.doors = [];
     /** @type {Enemy[]} */
     this.enemies = [];
+    /** @type {Victim[]} */
+    this.victims = [];
     // Archetype mix scales with sector index. Deterministic enough; uses the
     // global RNG so each run varies. Drives _addEnemy when no archetype is given.
     this._director = new EnemyDirector(index || 0);
@@ -265,6 +268,61 @@ export class Level {
     // --- Set-dressing props + sectarian wall murals. ----------------------
     this._setDressing(rng);
     this._addMurals(rng);
+
+    // --- Rescuable victims held by enemies. --------------------------------
+    this._spawnVictims(rng);
+  }
+
+  /**
+   * Spawn 2–3 rescuable civilians:
+   *   • At least one INSIDE an interior building (near block centre, a captor enemy beside them).
+   *   • At least one in a STREET (with 2 attacker enemies nearby).
+   * Victims are pushed to `this.victims`, NEVER to `this.enemies`.
+   * @param {()=>number} rng  Seeded RNG from _buildProcedural.
+   */
+  _spawnVictims(rng) {
+    const { PITCH_X, PITCH_Z } = this;
+
+    // Helper: add a victim at (vx, vz).
+    const addVictim = (vx, vz) => {
+      const model = this.assets && this.assets.getModel("enemy_victim");
+      const v = new Victim(new THREE.Vector3(vx, 0, vz), { model });
+      this.group.add(v.group);
+      this.victims.push(v);
+      return v;
+    };
+
+    // --- Interior victim ---------------------------------------------------
+    // Interior blocks at col0/row1 (cx=-24, cz=+33) and col2/row0 (cx=+24, cz=-33).
+    // Pick one at random via the seeded RNG.
+    const interiorCentres = [
+      { x: -PITCH_X, z: PITCH_Z / 2 },
+      { x: PITCH_X,  z: -PITCH_Z / 2 },
+    ];
+    const ic = interiorCentres[rng() < 0.5 ? 0 : 1];
+    // Place the victim slightly inside the footprint, offset from dead centre.
+    const ivx = ic.x + (rng() - 0.5) * 3;
+    const ivz = ic.z + (rng() - 0.5) * 10;
+    addVictim(ivx, ivz);
+    // One captor enemy ~2m to the side.
+    this._addEnemy(new THREE.Vector3(ivx + 1.5, 0, ivz), {});
+
+    // --- Street victim(s) --------------------------------------------------
+    // 1–2 street victims (level 0 → 1, higher levels → 2).
+    const streetCount = this.index > 0 ? 2 : 1;
+    let placed = 0;
+    for (let guard = 0; placed < streetCount && guard < streetCount * 40; guard++) {
+      const vx = (rng() - 0.5) * this.GRID_HALF_X * 1.8;
+      const vz = (rng() - 0.5) * this.GRID_HALF_Z * 1.8;
+      if (!this._inStreet(vx, vz)) continue;
+      // Keep away from the player spawn.
+      if (Math.hypot(vx - this.spawn.x, vz - this.spawn.z) < 12) continue;
+      addVictim(vx, vz);
+      // Two attacker enemies menacing the victim.
+      this._addEnemy(new THREE.Vector3(vx + 2.0, 0, vz), {});
+      this._addEnemy(new THREE.Vector3(vx - 2.0, 0, vz + 1.0), {});
+      placed++;
+    }
   }
 
   /**
@@ -900,6 +958,7 @@ export class Level {
   update(dt, ctx) {
     for (const d of this.doors) d.update(dt);
     for (const e of this.enemies) e.update(dt, ctx);
+    for (const v of this.victims) v.update(dt, ctx);
   }
 
   dispose() {
@@ -909,6 +968,8 @@ export class Level {
     // only dispose them if THIS level created its own flat-colour fallbacks.
     const shared = new Set(Object.values(this._materials));
     if (!this.assets) shared.forEach((m) => m.dispose());
+    // Dispose victims (geometry/materials they own, if any).
+    for (const v of this.victims) v.dispose(this.scene);
     this.group.traverse((o) => {
       if (o.geometry) o.geometry.dispose();
       // Inline (per-mesh) materials still need disposing; skip the shared ones.
