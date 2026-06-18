@@ -65,6 +65,12 @@ const MODEL_DEFS = {
   prop_phone_booth: { size: 2.4, fit: "height", anchor: "bottom", rotY: 0 },
   prop_bicycle:     { size: 1.1, fit: "height", anchor: "bottom", rotY: 0 },
   prop_car:         { size: 1.5, fit: "height", anchor: "bottom", rotY: 0 },
+  // Belfast exterior building templates (optimized from asset-reference via
+  // scripts/optimize-buildings.sh). Provisional; tuned from the in-game audit.
+  bldg_terrace:     { size: 12, fit: "height", anchor: "bottom", rotY: 0 },
+  bldg_collapsed:   { size: 11, fit: "height", anchor: "bottom", rotY: 0 },
+  bldg_shop:        { size: 10, fit: "height", anchor: "bottom", rotY: 0 },
+  bldg_pub:         { size: 12, fit: "height", anchor: "bottom", rotY: 0 },
 };
 
 // 2D sprite textures (AI-generated). VFX use a black background (additive
