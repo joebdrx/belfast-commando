@@ -15,8 +15,9 @@ const WEAPONS = [
   { name: "Boomstick", model: "weapon_shotgun", vmRotY: Math.PI / 2, color: 0x4a3520, damage: 16, rpm: 95, auto: false, pellets: 8, spread: 0.07, size: [0.16, 0.18, 0.6], mag: 6, reloadTime: 2.0 },
 ];
 
-// Shared viewmodel offset — seats the gun in the FP arms' grip.
-const VM = { pos: [0.13, -0.2, -0.5] };
+// Shared viewmodel offset — seats the gun in the FP arms' grip. Pulled back
+// toward the player (z -0.5 -> -0.42) so the weapon reads as held closer in.
+const VM = { pos: [0.13, -0.2, -0.42] };
 
 // Dedicated first-person arms viewmodel (AI-generated `fp_arms_grip`): two
 // gloved forearms with green armbands gripping forward. `rot` pitches the model
@@ -24,7 +25,7 @@ const VM = { pos: [0.13, -0.2, -0.5] };
 const SHOW_FP_ARMS = true;
 const ARMS = {
   scale: 0.75,
-  pos: [0.15, -0.17, -0.28],
+  pos: [0.15, -0.17, -0.2],
   rot: [-Math.PI / 2 + 0.55, 0, 0],
 };
 
@@ -111,7 +112,7 @@ export class Weapon {
       barrel.rotation.x = Math.PI / 2;
       barrel.position.set(0, 0.02, -w.size[2] / 2 - 0.12);
       g.add(barrel);
-      g.position.set(0.22, -0.2, -0.5);
+      g.position.set(0.22, -0.2, -0.42);
     }
 
     this.viewmodel.add(g);

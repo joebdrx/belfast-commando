@@ -5,8 +5,16 @@ const SLIDE_HEIGHT = 0.95;
 const RADIUS = 0.4;
 
 const WALK_SPEED = 5.5;
-const SPRINT_SPEED = 9.5;
+const SPRINT_SPEED = 8.0;
 const SLIDE_SPEED = 15.0;
+
+// Sprint stamina: drains while actually running, regenerates otherwise. Hitting
+// zero forces an "exhausted" walk until it recovers past STAMINA_RECOVER — that
+// recovery window is the cooldown, and stops on/off stutter-sprinting.
+const MAX_STAMINA = 100;
+const STAMINA_DRAIN = 30; // per second while sprinting (~3.3s of sprint)
+const STAMINA_REGEN = 22; // per second while not sprinting (~4.5s full refill)
+const STAMINA_RECOVER = 30; // exhausted clears once stamina climbs back to this
 // Ground top speed is capped by the accel/friction equilibrium (ACCEL/FRICTION),
 // NOT by targetSpeed alone. At 60/10 = 6 m/s the SPRINT target (9.5) was
 // unreachable, so sprint felt identical to walk. Keep the ratio above the
@@ -66,6 +74,10 @@ export class Player {
     // Night") scale these; reset to 1 each level, re-applied after spawn.
     this.speedMul = 1;
     this.frictionMul = 1;
+
+    // Sprint stamina (0..MAX). `exhausted` locks sprint out until it recovers.
+    this.stamina = MAX_STAMINA;
+    this.exhausted = false;
 
     this.bobPhase = 0;
 
@@ -148,6 +160,8 @@ export class Player {
     this.eyeHeight = EYE_HEIGHT;
     this.speedMul = 1;
     this.frictionMul = 1;
+    this.stamina = MAX_STAMINA;
+    this.exhausted = false;
   }
 
   _basisFromYaw() {
@@ -171,7 +185,19 @@ export class Player {
     const wishing = _wish.lengthSq() > 0;
     if (wishing) _wish.normalize();
 
-    const sprinting = this.keys["ShiftLeft"] || this.keys["ShiftRight"];
+    // Sprint is stamina-gated: drains while running, regenerates otherwise,
+    // and locks out ("exhausted") at zero until it recovers past the threshold.
+    const wantSprint = this.keys["ShiftLeft"] || this.keys["ShiftRight"];
+    const movingFast = this.vel.x * this.vel.x + this.vel.z * this.vel.z > 1;
+    const sprinting = wantSprint && !this.exhausted && this.stamina > 0;
+    if (sprinting && movingFast) {
+      this.stamina = Math.max(0, this.stamina - STAMINA_DRAIN * dt);
+      if (this.stamina <= 0) this.exhausted = true;
+    } else {
+      this.stamina = Math.min(MAX_STAMINA, this.stamina + STAMINA_REGEN * dt);
+      if (this.exhausted && this.stamina >= STAMINA_RECOVER) this.exhausted = false;
+    }
+    if (this.ctx && this.ctx.hud) this.ctx.hud.setStamina(this.stamina, MAX_STAMINA, this.exhausted);
 
     // --- Slide: crouch/slide key while grounded + moving fast -------------
     // Decoupled from the sprint key: requiring Shift+Ctrl simultaneously made

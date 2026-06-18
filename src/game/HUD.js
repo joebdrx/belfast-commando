@@ -13,6 +13,8 @@ export class HUD {
     this.timer = this.$("hud-timer");
     this.health = this.$("hud-health-fill");
     this.healthText = this.$("hud-health-text");
+    this.staminaBar = this.$("hud-stamina");
+    this.staminaFill = this.$("hud-stamina-fill");
     this.weapon = this.$("hud-weapon");
     this.ammo = this.$("hud-ammo");
     this.objective = this.$("hud-objective");
@@ -69,6 +71,15 @@ export class HUD {
         pct > 0.5 ? "#3fb950" : pct > 0.25 ? "#d29922" : "#f85149";
     }
     if (this.healthText) this.healthText.textContent = `${Math.ceil(hp)} HP`;
+  }
+
+  /** Sprint stamina bar: blue normally, amber when low, red + pulsing when exhausted. */
+  setStamina(value, max = 100, exhausted = false) {
+    if (!this.staminaFill) return;
+    const pct = Math.max(0, Math.min(1, value / max));
+    this.staminaFill.style.width = `${pct * 100}%`;
+    this.staminaFill.style.background = exhausted ? "#f85149" : pct < 0.3 ? "#d29922" : "#54b3d6";
+    if (this.staminaBar) this.staminaBar.classList.toggle("exhausted", exhausted);
   }
 
   setWeapon(name) {

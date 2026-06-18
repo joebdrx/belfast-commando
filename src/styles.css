@@ -280,6 +280,28 @@ html, body {
   opacity: 0.66;
 }
 
+/* -- Sprint stamina bar (thinner, under the health readout) ------- */
+.hud-bar-stamina {
+  height: 7px;
+  margin-top: 4px;
+}
+#hud-stamina-fill {
+  height: 100%;
+  width: 100%;          /* JS overrides width 0-100% */
+  background: #54b3d6;  /* JS overrides colour: blue/amber/red (exhausted) */
+  border-radius: 2px;
+  transition: width 0.08s linear, background 0.2s ease;
+}
+/* Pulse the whole bar while exhausted (opacity only, so it won't fight the
+   inline fill colour the HUD sets). */
+#hud-stamina.exhausted {
+  animation: stamina-pulse 0.55s ease-in-out infinite;
+}
+@keyframes stamina-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
 /* -- Weapon label ------------------------------------------ */
 #hud-weapon {
   font-size: 18px;
