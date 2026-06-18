@@ -7,7 +7,11 @@ const RADIUS = 0.4;
 const WALK_SPEED = 5.5;
 const SPRINT_SPEED = 9.5;
 const SLIDE_SPEED = 15.0;
-const ACCEL = 60;
+// Ground top speed is capped by the accel/friction equilibrium (ACCEL/FRICTION),
+// NOT by targetSpeed alone. At 60/10 = 6 m/s the SPRINT target (9.5) was
+// unreachable, so sprint felt identical to walk. Keep the ratio above the
+// fastest ground target (slide 15 is set directly, so sprint 9.5 governs).
+const ACCEL = 120;
 const AIR_ACCEL = 12;
 const FRICTION = 10;
 const GRAVITY = 26;
@@ -169,9 +173,12 @@ export class Player {
 
     const sprinting = this.keys["ShiftLeft"] || this.keys["ShiftRight"];
 
-    // --- Slide: crouch while sprinting + grounded + moving ----------------
+    // --- Slide: crouch/slide key while grounded + moving fast -------------
+    // Decoupled from the sprint key: requiring Shift+Ctrl simultaneously made
+    // the slide undiscoverable. Now any fast movement (speed > 4) + the crouch
+    // key triggers a slide, so Ctrl/C reliably does something while running.
     const crouchKey = this.keys["ControlLeft"] || this.keys["KeyC"];
-    if (crouchKey && sprinting && this.onGround && !this.sliding && this.vel.lengthSq() > 16) {
+    if (crouchKey && this.onGround && !this.sliding && this.vel.lengthSq() > 16) {
       this._startSlide();
     }
     if (this.sliding) {
