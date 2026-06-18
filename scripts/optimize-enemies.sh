@@ -17,9 +17,9 @@ mkdir -p "$OUT"
 
 # archetype -> "<rig-dir>|<walking.glb>|<running_armature.glb>"
 declare -A RIG=(
-  [grunt]="invader1-meshy-rigging-multi-animation|K9EUkznCIi16_SBxmjLmB_walking.glb|u3XVW5IREF7fT8pA83SqY_running_armature.glb"
+  [grunt]="stabber-meshy-rigging-multi-animation|yb1bVR-wxEvWyFRGuKqgE_walking.glb|w9RN9K-sFzXgy7Z0-PTBX_running_armature.glb"
   [gunner]="invader2-meshy-rigging-multi-animation|2c5tp7E7pvv4SgEarnxvt_walking.glb|7TWxLU9gWd0fQWNOJHUcf_running_armature.glb"
-  [breacher]="stabber-meshy-rigging-multi-animation|yb1bVR-wxEvWyFRGuKqgE_walking.glb|w9RN9K-sFzXgy7Z0-PTBX_running_armature.glb"
+  [breacher]="invader1-meshy-rigging-multi-animation|K9EUkznCIi16_SBxmjLmB_walking.glb|u3XVW5IREF7fT8pA83SqY_running_armature.glb"
   [enforcer]="groomer-meshy-rigging-multi-animation|pV5-Lh2JrUFeOQnH7ON6o_walking.glb|MtthVIfoBOpx1fRWylvZz_running_armature.glb"
 )
 

@@ -19,7 +19,7 @@ declare -A SRC=(
   [bldg_terrace]="old_building.glb"
   [bldg_collapsed]="collapsed_uk_terraced_house.glb"
   [bldg_shop]="angers_shop_2_france.glb"
-  [bldg_church]="church_of_st_peter_stourton.glb"
+  [bldg_church]="angers_shop_2_france.glb"
   [bldg_skyline]="belfast_city.glb"
 )
 

@@ -226,6 +226,7 @@ export class Level {
     // --- Street network paint + far horizon. ------------------------------
     this._buildRoadPaint();
     this._buildBackdrop();
+    this._buildBoundary();
 
     // --- Street cover: crates + explosive barrels in the open lanes. ------
     const coverCount = 6 + this.index * 2;
@@ -672,7 +673,8 @@ export class Level {
       const pz = Math.sin(a) * RZ;
       const m = this.assets.getModel("bldg_skyline");
       if (!m) continue;
-      m.position.set(px, -12, pz); // sunk so the city's pale base/plaza tucks below ground
+      m.position.set(px, 6, pz); // raised so the city looms taller on the horizon
+      m.scale.multiplyScalar(1.35); // taller/more imposing skyline
       m.rotation.y = Math.atan2(-px, -pz); // city facade faces the map centre
       m.traverse((o) => {
         if (!o.material) return;
@@ -680,6 +682,43 @@ export class Level {
         mats.forEach((mat) => { mat.fog = false; mat.needsUpdate = true; });
       });
       this.group.add(m);
+    }
+  }
+
+  /**
+   * Solid building wall around the whole map edge: a closed rectangle of collider
+   * walls (the actual barrier that keeps the player in the playable area) clad with
+   * exterior-only building models (no interiors/doors) facing inward, all around.
+   */
+  _buildBoundary() {
+    const BX = this.GRID_HALF_X + 12; // ~43 — just past the outer blocks
+    const BZ = this.GRID_HALF_Z + 12; // ~73 — past the spawn approach (z≈68)
+    const H = this.WALL_H;
+    const wall = this._materials.brick;
+    // Closed collider rectangle — the barrier (also LOS blockers).
+    this._box(2 * BX, H, 1.5, wall, 0, H / 2, -BZ, { los: true });
+    this._box(2 * BX, H, 1.5, wall, 0, H / 2, BZ, { los: true });
+    this._box(1.5, H, 2 * BZ, wall, -BX, H / 2, 0, { los: true });
+    this._box(1.5, H, 2 * BZ, wall, BX, H / 2, 0, { los: true });
+    // Clad with exterior building models facing inward (visual "buildings all around").
+    if (!this.assets) return;
+    const TPL = ["bldg_terrace", "bldg_collapsed", "bldg_shop", "bldg_church"];
+    let n = 0;
+    const clad = (x, z, faceY) => {
+      const m = this.assets.getModel(TPL[n++ % TPL.length]);
+      if (!m) return;
+      m.position.set(x, 0, z);
+      m.rotation.y = faceY;
+      this.group.add(m);
+    };
+    const STEP = 16;
+    for (let x = -BX + 8; x <= BX - 8; x += STEP) {
+      clad(x, -BZ, 0); // south wall: face +Z (inward)
+      clad(x, BZ, Math.PI); // north wall: face -Z
+    }
+    for (let z = -BZ + 8; z <= BZ - 8; z += STEP) {
+      clad(-BX, z, Math.PI / 2); // west wall: face +X
+      clad(BX, z, -Math.PI / 2); // east wall: face -X
     }
   }
 
