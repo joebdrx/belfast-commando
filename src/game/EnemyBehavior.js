@@ -3,6 +3,7 @@ import * as THREE from "three";
 const _toPlayer = new THREE.Vector3();
 const _flat = new THREE.Vector3();
 const _tan = new THREE.Vector3();
+const _toVictim = new THREE.Vector3();
 
 /**
  * Quantise animation advance to a fixed frame rate (PS1 stop-motion). Pure.
@@ -120,6 +121,40 @@ export function stepBreacher(enemy, dt, ctx) {
   enemy._setAnim("run");
   // Contact detonation.
   if (Math.hypot(_toPlayer.x, _toPlayer.z) <= enemy.meleeRange) enemy.takeDamage(enemy.health + 50, _flat, 0);
+}
+
+/**
+ * Victim-menacing idle: the guard faces and "threatens" the held civilian.
+ * Triggers a visual melee lunge jab every ~1.1 s — NO damage to the victim.
+ * Allocation-free; uses module-scope _toVictim temp.
+ * @param {import('./Enemy.js').Enemy} enemy
+ * @param {number} dt
+ * @param {object} ctx
+ */
+export function menaceVictim(enemy, dt, ctx) {
+  const victimPos = enemy._guardingVictim.group.position;
+  _toVictim.copy(victimPos).sub(enemy.group.position).setY(0);
+  if (_toVictim.lengthSq() > 0.0001) {
+    enemy.group.rotation.y = Math.atan2(_toVictim.x, _toVictim.z);
+  }
+  // Prefer run clip for a threatening jitter; else walk.
+  enemy._setAnim(enemy.actions && enemy.actions.run ? "run" : "walk");
+
+  // Periodic lunge jab (visual only — does NOT damage the victim).
+  enemy._menaceTimer = (enemy._menaceTimer || 0) - dt;
+  if (enemy._menaceTimer <= 0) {
+    enemy._menaceTimer = 1.1;
+    enemy._lunge = 0.5;
+    if (ctx.audio && ctx.audio.enemyMelee) {
+      ctx.audio.enemyMelee(enemy.group.position, ctx.camera.position);
+    }
+  }
+
+  // Ease the lunge back to rest (same logic as in Enemy.update's grunt path).
+  if (enemy._rigRoot) {
+    enemy._lunge = enemy._lunge > 0.001 ? enemy._lunge * Math.max(0, 1 - dt * 9) : 0;
+    enemy._rigRoot.position.z = enemy._lunge;
+  }
 }
 
 /** Breacher death blast: VFX + audio + point-blank AoE to the player. */

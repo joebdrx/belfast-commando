@@ -304,9 +304,10 @@ export class Level {
     // Place the victim slightly inside the footprint, offset from dead centre.
     const ivx = ic.x + (rng() - 0.5) * 3;
     const ivz = ic.z + (rng() - 0.5) * 10;
-    addVictim(ivx, ivz);
-    // One captor enemy ~2m to the side.
+    const iv = addVictim(ivx, ivz);
+    // One captor enemy ~2m to the side — tagged so it menaces the victim.
     this._addEnemy(new THREE.Vector3(ivx + 1.5, 0, ivz), {});
+    this.enemies[this.enemies.length - 1]._guardingVictim = iv;
 
     // --- Street victim(s) --------------------------------------------------
     // 1–2 street victims (level 0 → 1, higher levels → 2).
@@ -318,10 +319,12 @@ export class Level {
       if (!this._inStreet(vx, vz)) continue;
       // Keep away from the player spawn.
       if (Math.hypot(vx - this.spawn.x, vz - this.spawn.z) < 12) continue;
-      addVictim(vx, vz);
-      // Two attacker enemies menacing the victim.
+      const sv = addVictim(vx, vz);
+      // Two attacker enemies — both tagged so they menace the victim.
       this._addEnemy(new THREE.Vector3(vx + 2.0, 0, vz), {});
+      this.enemies[this.enemies.length - 1]._guardingVictim = sv;
       this._addEnemy(new THREE.Vector3(vx - 2.0, 0, vz + 1.0), {});
+      this.enemies[this.enemies.length - 1]._guardingVictim = sv;
       placed++;
     }
   }
@@ -997,7 +1000,16 @@ export class Level {
   update(dt, ctx) {
     for (const d of this.doors) d.update(dt);
     for (const e of this.enemies) e.update(dt, ctx);
-    for (const v of this.victims) v.update(dt, ctx);
+    // Victims: tick then splice out any that have despawned off-screen.
+    for (let i = this.victims.length - 1; i >= 0; i--) {
+      const v = this.victims[i];
+      v.update(dt, ctx);
+      if (v.removed) {
+        this.group.remove(v.group);
+        v.dispose();
+        this.victims.splice(i, 1);
+      }
+    }
   }
 
   dispose() {

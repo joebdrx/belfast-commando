@@ -44,6 +44,8 @@ export class Enemy {
     this.animFps = arch.animFps || 11;
     this._animAccum = 0;
     this._pendingDetonate = false;
+    this._guardingVictim = null; // set by Level._spawnVictims on captor enemies
+    this._alerted = false;       // woken by player proximity or taking damage
     this.health = arch.health;
     this.sightRange = arch.sightRange;
     this.meleeRange = arch.meleeRange;
@@ -183,6 +185,7 @@ export class Enemy {
   /** @param {number} amount @param {THREE.Vector3} dir normalized push direction */
   takeDamage(amount, dir, force = 4) {
     if (this.dead) return;
+    this._alerted = true; // attacking a guard wakes it
     this.health -= amount;
     if (dir) this.knock.addScaledVector(dir, force);
     // Flinch flash (placeholder only — mutate emissive in place, no allocation)
@@ -274,6 +277,22 @@ export class Enemy {
         this.group.setRotationFromAxisAngle(this._toppleAxis, this._toppleAmt);
       }
       return;
+    }
+
+    // Victim-guarding enemies menace the victim and ignore the player until the
+    // player gets close or attacks them.
+    if (this._guardingVictim) {
+      if (this._guardingVictim.rescued) {
+        this._guardingVictim = null; // freed → resume normal AI
+      } else if (!this._alerted) {
+        const ALERT = 6;
+        if (this.group.position.distanceTo(ctx.player.position) < ALERT) {
+          this._alerted = true;
+        } else {
+          EnemyBehavior.menaceVictim(this, dt, ctx);
+          return;
+        }
+      }
     }
 
     // Non-grunt archetypes run their own steering/attack, then bail out before

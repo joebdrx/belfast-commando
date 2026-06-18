@@ -1,18 +1,21 @@
 import * as THREE from "three";
 
-/** Radius within which live enemies suppress rescue. */
-const RESCUE_RADIUS = 10;
-/** Radius within which the player must approach before rescue can trigger. */
-const PLAYER_SEEN_RADIUS = 18;
+/** Radius within which the player can press E to rescue. */
+const INTERACT_RADIUS = 3.5;
+/** Run speed (m/s) the victim flees at after rescue. */
+const FLEE_SPEED = 6;
+/** Despawn when this far from the player (AND behind/peripheral camera). */
+const DESPAWN_DIST = 28;
 
-// Module-scope temp vector so update() never allocates on the hot path.
+// Module-scope temps — never allocate on the hot path.
 const _tmp = new THREE.Vector3();
+const _fwd = new THREE.Vector3();
 
 /**
  * Victim
  * ------
  * A rescuable civilian held captive by enemies. The player rescues them by
- * clearing all nearby enemies and then approaching within PLAYER_SEEN_RADIUS.
+ * approaching within INTERACT_RADIUS and pressing E.
  *
  * IMPORTANT: Victims are stored in `level.victims`, never in `level.enemies`.
  * The weapon raycast and kick loop only iterate `level.enemies`, so victims
@@ -30,8 +33,14 @@ export class Victim {
     this.group.rotation.y = Math.random() * Math.PI * 2;
 
     this.rescued = false;
-    /** @private — whether the player has come close enough to enable rescue. */
-    this._seen = false;
+    /** Whether this victim currently owns the interact prompt on the HUD. @private */
+    this._promptActive = false;
+    /** Whether the victim is currently fleeing after rescue. @private */
+    this._fleeing = false;
+    /** Flee direction (world XZ, normalised). @private */
+    this._fleeDir = new THREE.Vector3();
+    /** Set true once the victim has despawned off-screen; Level checks this. */
+    this.removed = false;
 
     if (opts.model) {
       this.group.add(opts.model);
@@ -52,51 +61,90 @@ export class Victim {
   }
 
   /**
-   * Per-frame update. Checks rescue conditions; awards reward once.
+   * Per-frame update. Handles interact prompt, E-press rescue, flee, and despawn.
    * @param {number} dt
-   * @param {{ level: { enemies: Array }, player: { position: THREE.Vector3 }, state?: object, score?: object }} ctx
+   * @param {{ level: object, player: { position: THREE.Vector3, keys: object },
+   *           state?: object, score?: object, hud?: object, camera: THREE.Camera }} ctx
    */
   update(dt, ctx) {
-    if (this.rescued) return;
+    if (this.removed) return;
 
-    // Track whether the player has come close enough to "see" this victim.
-    if (!this._seen) {
-      _tmp.copy(ctx.player.position);
-      if (_tmp.distanceTo(this.group.position) < PLAYER_SEEN_RADIUS) {
-        this._seen = true;
+    // --- Post-rescue: flee and despawn when far + out of view ---------------
+    if (this._fleeing) {
+      this.group.position.addScaledVector(this._fleeDir, FLEE_SPEED * dt);
+      this.group.rotation.y = Math.atan2(this._fleeDir.x, this._fleeDir.z);
+
+      // Play run/walk clip if the victim model has a mixer (defensive guard).
+      if (this.mixer && this.actions) {
+        const clip = this.actions.run || this.actions.walk;
+        if (clip && !clip.isRunning()) { clip.reset(); clip.play(); }
       }
+
+      // Despawn: far AND behind/peripheral camera (dot < 0.25).
+      if (this.group.position.distanceToSquared(ctx.player.position) > DESPAWN_DIST * DESPAWN_DIST) {
+        ctx.camera.getWorldDirection(_fwd);
+        _tmp.copy(this.group.position).sub(ctx.camera.position).normalize();
+        if (_fwd.dot(_tmp) < 0.25) {
+          if (this._promptActive && ctx.hud) {
+            ctx.hud.setInteractPrompt(null);
+            this._promptActive = false;
+          }
+          this.removed = true;
+        }
+      }
+      return;
     }
 
-    if (!this._seen) return; // not yet approached — can't be auto-rescued at spawn
+    // --- Pre-rescue: interact prompt + E-press rescue -----------------------
+    const dist = _tmp.copy(ctx.player.position).distanceTo(this.group.position);
+    const inRange = dist < INTERACT_RADIUS;
 
-    // Count live enemies within rescue radius.
-    let nearbyLive = 0;
-    for (const e of ctx.level.enemies) {
-      if (e.dead) continue;
-      _tmp.copy(e.position);
-      if (_tmp.distanceTo(this.group.position) < RESCUE_RADIUS) {
-        nearbyLive++;
-      }
+    if (inRange && !this._promptActive) {
+      this._promptActive = true;
+      if (ctx.hud) ctx.hud.setInteractPrompt("Press E to free the civilian");
+    } else if (!inRange && this._promptActive) {
+      this._promptActive = false;
+      if (ctx.hud) ctx.hud.setInteractPrompt(null);
     }
 
-    if (nearbyLive > 0) return; // captors still present
+    if (inRange && ctx.player.keys && ctx.player.keys["KeyE"]) {
+      this._rescue(ctx);
+    }
+  }
 
-    // --- Rescue! -----------------------------------------------------------
+  /**
+   * Trigger the rescue sequence: rewards, dialogue, begin fleeing.
+   * @private
+   */
+  _rescue(ctx) {
     this.rescued = true;
 
-    if (ctx.state) ctx.state.addCurrency && ctx.state.addCurrency(15);
-    if (ctx.score) ctx.score.add(500, "CIVILIAN SAVED!");
-    if (ctx.state) ctx.state.emit && ctx.state.emit("victimRescued", { position: this.group.position.clone() });
+    // Clear interact prompt.
+    if (this._promptActive && ctx.hud) {
+      ctx.hud.setInteractPrompt(null);
+      this._promptActive = false;
+    }
 
-    // Lift and turn the model slightly to signal "freed" (no per-frame alloc).
-    this.group.position.y += 0.05;
-    this.group.rotation.y += Math.PI * 0.25;
+    // Rewards.
+    if (ctx.state) {
+      if (ctx.state.addCurrency) ctx.state.addCurrency(15);
+      if (ctx.state.emit) ctx.state.emit("victimRescued", { position: this.group.position.clone() });
+    }
+    if (ctx.score) ctx.score.add(500, "CIVILIAN SAVED!");
+
+    // Thanks dialogue (Belfast civilian flavour).
+    if (ctx.hud) ctx.hud.showDialogue("Thank you! God bless ye — now get them out of the Falls!");
+
+    // Pick flee direction: away from the player in XZ.
+    this._fleeDir.copy(this.group.position).sub(ctx.player.position).setY(0);
+    if (this._fleeDir.lengthSq() < 0.0001) this._fleeDir.set(0, 0, -1);
+    this._fleeDir.normalize();
+    this._fleeing = true;
   }
 
   /**
    * Remove the victim from the scene and free GPU resources.
-   * @param {THREE.Scene} scene  (unused — caller already removed from scene via
-   *   level.group; kept for symmetry with other disposable objects)
+   * @param {THREE.Scene} [_scene]  (unused — caller removes from level.group)
    */
   dispose(_scene) {
     this.group.traverse((o) => {

@@ -41,6 +41,45 @@ export class HUD {
     this._adrenalinePulse = 0;
     this._adrenalineOn = false;
     this._adrenalineFx = true; // toggled via settings
+
+    // Interact prompt: shown near bottom-middle when the player is within
+    // range of a victim (built in JS — index.html stays untouched).
+    this._interactPrompt = document.createElement("div");
+    this._interactPrompt.id = "hud-interact-prompt";
+    Object.assign(this._interactPrompt.style, {
+      position: "fixed", bottom: "22%", left: "50%",
+      transform: "translateX(-50%)",
+      padding: "6px 18px",
+      background: "rgba(0,0,0,0.72)",
+      color: "#f0a500",
+      fontFamily: "'Courier New', monospace",
+      fontSize: "13px", fontWeight: "bold",
+      letterSpacing: "0.08em", textTransform: "uppercase",
+      border: "1px solid #f0a500", borderRadius: "3px",
+      pointerEvents: "none", opacity: "0",
+      transition: "opacity 0.15s ease", zIndex: "50",
+    });
+    document.body.appendChild(this._interactPrompt);
+
+    // Dialogue bubble: bottom-centre, dark panel + orange accent (same palette
+    // as the interact prompt). Auto-hides via _dialogueT timer in update().
+    this._dialogue = document.createElement("div");
+    this._dialogue.id = "hud-dialogue";
+    Object.assign(this._dialogue.style, {
+      position: "fixed", bottom: "10%", left: "50%",
+      transform: "translateX(-50%)",
+      maxWidth: "480px", padding: "10px 22px",
+      background: "rgba(12,12,18,0.88)",
+      color: "#e8c87a",
+      fontFamily: "'Courier New', monospace",
+      fontSize: "14px", lineHeight: "1.6",
+      border: "2px solid #f0a500", borderRadius: "4px",
+      pointerEvents: "none", opacity: "0",
+      transition: "opacity 0.25s ease", zIndex: "50",
+      textAlign: "center",
+    });
+    document.body.appendChild(this._dialogue);
+    this._dialogueT = 0;
   }
 
   setScore(total, combo, mult) {
@@ -150,6 +189,33 @@ export class HUD {
     if (!active) this._adrenaline.style.opacity = "0";
   }
 
+  /**
+   * Show or hide the interact prompt (e.g. "Press E to free the civilian").
+   * Pass `null` or falsy to hide.
+   * @param {string|null} text
+   */
+  setInteractPrompt(text) {
+    if (!this._interactPrompt) return;
+    if (text) {
+      this._interactPrompt.textContent = text;
+      this._interactPrompt.style.opacity = "1";
+    } else {
+      this._interactPrompt.style.opacity = "0";
+    }
+  }
+
+  /**
+   * Show a timed dialogue bubble at the bottom of the screen.
+   * @param {string} text
+   * @param {number} [ms=3200]  Auto-hide delay in milliseconds.
+   */
+  showDialogue(text, ms = 3200) {
+    if (!this._dialogue) return;
+    this._dialogue.textContent = text;
+    this._dialogue.style.opacity = "1";
+    this._dialogueT = ms / 1000;
+  }
+
   showOverlay(title, body, hint) {
     if (!this.overlay) return;
     this.overlayTitle.innerHTML = title;
@@ -171,6 +237,13 @@ export class HUD {
       this._adrenalinePulse += dt * 5;
       const o = 0.45 + Math.sin(this._adrenalinePulse) * 0.25;
       this._adrenaline.style.opacity = String(o);
+    }
+    // Dialogue auto-hide timer.
+    if (this._dialogueT > 0) {
+      this._dialogueT -= dt;
+      if (this._dialogueT <= 0 && this._dialogue) {
+        this._dialogue.style.opacity = "0";
+      }
     }
   }
 }
