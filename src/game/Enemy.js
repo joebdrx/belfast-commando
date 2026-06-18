@@ -13,7 +13,7 @@ const _tangent = new THREE.Vector3();
  * -----
  * A placeholder low-poly soldier (red capsule + head). Lightweight AI:
  *  - stands/patrols, turns to face the player when in sight
- *  - fires weak hitscan shots on a cooldown
+ *  - charges in and swings a blade on a melee cooldown (no ranged fire)
  *  - reacts to bullet damage (flinch + knockback) and kicks (big knockback)
  *  - "ragdolls" on death by toppling over, then is scored.
  */
@@ -138,25 +138,7 @@ export class Enemy {
       this.group.add(gun);
     }
 
-    // Muzzle flash sprite (hidden until firing)
-    this.flash = new THREE.Mesh(
-      new THREE.PlaneGeometry(0.5, 0.5),
-      new THREE.MeshBasicMaterial({
-        color: 0xffcc55,
-        transparent: true,
-        opacity: 0,
-        depthWrite: false,
-        fog: false,
-      }),
-    );
-    this.flash.position.set(0.25, 1.1, 0.72);
-    if (opts.flashTex) {
-      this.flash.material.map = opts.flashTex;
-      this.flash.material.color.set(0xffffff);
-      this.flash.material.blending = THREE.AdditiveBlending;
-    }
-    this.group.add(this.flash);
-    this._flashTime = 0;
+    // No muzzle flash — every enemy is melee now (no ranged fire).
     this._hitFlash = 0;
 
     // Collider half-extents for the player's bullet raycasts & body block
@@ -171,12 +153,11 @@ export class Enemy {
     // Per-archetype colour tint so the types read at a glance: gunner steel-blue,
     // breacher volatile-orange, enforcer dark-iron (also big), grunt rusty. The
     // rigged model materials are shared across enemy clones, so clone each
-    // material before tinting (otherwise one enemy's tint bleeds onto all). The
-    // muzzle-flash quad is left untouched.
+    // material before tinting (otherwise one enemy's tint bleeds onto all).
     if (arch.tint) {
       const tint = new THREE.Color(arch.tint);
       this.group.traverse((o) => {
-        if (!o.material || o === this.flash) return;
+        if (!o.material) return;
         const tintMat = (m) => {
           const c = m.clone();
           if (c.color) c.color.copy(tint);
@@ -187,7 +168,7 @@ export class Enemy {
       });
     }
 
-    // Held weapon (pistol for ranged, blade for melee) — parented to the visual
+    // Held weapon (a blade for every archetype now) — parented to the visual
     // root so it rides the body and the melee lunge.
     this._weapon = null;
     if (opts.weapon) this._attachWeapon(opts.weapon);
@@ -350,17 +331,6 @@ export class Enemy {
     if (this._hitFlash > 0 && this._bodyMat) {
       this._hitFlash -= dt;
       if (this._hitFlash <= 0) this._bodyMat.emissiveIntensity = 0;
-    }
-    // Muzzle flash decay
-    if (this._flashTime > 0) {
-      this._flashTime -= dt;
-      this.flash.material.opacity = Math.max(0, this._flashTime / 0.06);
-      // Billboard toward camera in WORLD space (flash is a child of the yawed
-      // group, so undo the parent rotation before applying the camera's).
-      this.flash.quaternion
-        .copy(this.group.quaternion)
-        .invert()
-        .premultiply(ctx.camera.quaternion);
     }
 
     if (this.dead) {

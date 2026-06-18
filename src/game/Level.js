@@ -4,6 +4,7 @@ import { EnemyDirector } from "./EnemyDirector.js";
 import { footprintCollider, blockPlan } from "./BuildingLayout.js";
 import { Victim } from "./Victim.js";
 import { buildFacade } from "./BuildingFacade.js";
+import FURNITURE from "../data/furniture.json";
 
 const _ray = new THREE.Ray();
 const _dir = new THREE.Vector3();
@@ -470,6 +471,34 @@ export class Level {
     }
     for (let k = 0; k < Math.min(enemyCount, N); k++) {
       this._addEnemy(new THREE.Vector3(cx, 0, roomZ(order[k])), {});
+    }
+
+    // Furnish each room as a low apartment (data-driven layout, door approach +
+    // centre captor/victim slot kept clear; colliders on the large pieces).
+    for (let i = 0; i < N; i++) this._furnishRoom(cx, roomZ(i), doorSide);
+  }
+
+  /**
+   * Place the apartment furniture layout in one interior breach-room. X is
+   * mirrored by `doorSide` so pieces always line the back/side walls, never the
+   * door approach. A missing GLB is skipped (the room just gets less furniture).
+   */
+  _furnishRoom(cx, rz, doorSide) {
+    if (!this.assets || typeof this.assets.getModel !== "function") return;
+    for (const p of FURNITURE) {
+      const m = this.assets.getModel(p.slug);
+      if (!m) continue;
+      const wx = cx + doorSide * p.x;
+      const wz = rz + p.z;
+      m.position.set(wx, 0, wz);
+      m.rotation.y = (p.rotY || 0) * doorSide;
+      this.group.add(m);
+      if (p.collider) {
+        this.colliders.push(new THREE.Box3(
+          new THREE.Vector3(wx - p.w / 2, 0, wz - p.d / 2),
+          new THREE.Vector3(wx + p.w / 2, 1.6, wz + p.d / 2),
+        ));
+      }
     }
   }
 
@@ -1204,21 +1233,30 @@ export class Level {
     // invader GLB, then placeholder geometry.
     if (this.assets) {
       opts = { ...opts };
-      const rigged = this.assets.getRiggedEnemy(opts.archetype);
-      if (rigged) {
-        opts.rigged = rigged;
-      } else {
-        const model = this.assets.getModel("invader");
+      if (opts.archetype === "grunt") {
+        // GRUNT: a STATIC, un-rigged grrom model whose weapon is baked into the
+        // mesh. No rig (mixer/clips) and NO separate blade — it carries its own.
+        // Falls back to the invader GLB, then placeholder geometry, if missing.
+        const model = this.assets.getModel("grunt_grrom") || this.assets.getModel("invader");
         if (model) opts.model = model;
+        // Intentionally no opts.rigged and no opts.weapon for grunts.
+      } else {
+        // Other archetypes: rigged + animated invader (own walk/run/attack clips),
+        // falling back to the static invader GLB, then placeholder geometry.
+        const rigged = this.assets.getRiggedEnemy(opts.archetype);
+        if (rigged) {
+          opts.rigged = rigged;
+        } else {
+          const model = this.assets.getModel("invader");
+          if (model) opts.model = model;
+        }
+        // Arm every NON-grunt enemy with a blade to lunge with — no archetype is
+        // ranged, so a pistol is never assigned. Enforcer swings a machete; the
+        // lighter gunner/breacher rush in with a knife.
+        const wslug = opts.archetype === "enforcer" ? "enemy_machete" : "enemy_knife";
+        const wmodel = this.assets.getModel(wslug);
+        if (wmodel) opts.weapon = { object3D: wmodel, kind: "blade" };
       }
-      // Arm every enemy with a blade to lunge with — no archetype is ranged, so
-      // a pistol is never assigned. Enforcer swings a machete; grunt mixes
-      // knife/machete; the lighter gunner/breacher rush in with a knife.
-      const wslug = opts.archetype === "enforcer" ? "enemy_machete"
-        : opts.archetype === "grunt" ? (Math.random() < 0.5 ? "enemy_knife" : "enemy_machete")
-        : "enemy_knife";
-      const wmodel = this.assets.getModel(wslug);
-      if (wmodel) opts.weapon = { object3D: wmodel, kind: "blade" };
     }
     const e = new Enemy(pos, opts);
     this.group.add(e.group);

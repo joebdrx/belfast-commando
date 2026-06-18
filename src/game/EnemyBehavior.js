@@ -41,9 +41,13 @@ export function tickAnim(enemy, dt) {
   enemy._animAccum = accum;
 }
 
-/** Gunner: hold standoff range, strafe erratically, telegraph + hitscan. */
+/**
+ * Gunner: a fast, fragile MELEE rusher. Aggros on line-of-sight, beelines toward
+ * the player with a light strafe weave, telegraphs the swing as it closes, then
+ * circles + melee-strikes on the meleeTimer/meleeCooldown cadence (mirrors the
+ * grunt path). No ranged fire. Allocation-free (reuses the module temp vectors).
+ */
 export function stepGunner(enemy, dt, ctx) {
-  const a = enemy.archetypeCfg.ranged;
   const pos = enemy.group.position;
   const playerPos = ctx.player.position;
   _toPlayer.copy(playerPos).sub(pos);
@@ -52,32 +56,41 @@ export function stepGunner(enemy, dt, ctx) {
   enemy.group.rotation.y = Math.atan2(_toPlayer.x, _toPlayer.z);
   _flat.copy(_toPlayer).setY(0).normalize();
 
-  if (see) {
-    // Keep distance: back off if too close, advance if too far.
-    if (dist < a.standoff - 3) pos.addScaledVector(_flat, -enemy.runSpeed * dt);
-    else if (dist > a.standoff + 3) pos.addScaledVector(_flat, enemy.runSpeed * dt);
-    // Erratic strafe.
+  if (!see) {
+    enemy._setAnim("idle");
+  } else if (dist > enemy.meleeRange) {
+    // Charge: beeline + a light lateral weave so the rusher reads as jittery, but
+    // the forward closing always dominates so it ends in melee contact.
+    pos.addScaledVector(_flat, enemy.runSpeed * dt);
     enemy._strafeT = (enemy._strafeT || 0) - dt;
     if (enemy._strafeT <= 0) {
-      enemy._strafeT = a.strafeInterval;
+      enemy._strafeT = 0.45 + Math.random() * 0.4;
       enemy._strafeDir = Math.random() < 0.5 ? -1 : 1;
     }
     _tan.set(-_flat.z, 0, _flat.x).multiplyScalar(enemy._strafeDir);
     pos.addScaledVector(_tan, enemy.speed * dt);
     enemy._setAnim("run");
-    // Fire on interval (telegraph handled by the muzzle flash decay already in Enemy).
-    enemy._fireT = (enemy._fireT || a.fireInterval) - dt;
-    if (enemy._fireT <= 0) {
-      enemy._fireT = a.fireInterval;
-      enemy._flashTime = 0.06;
-      enemy.flash.material.opacity = 1;
-      ctx.player.damage(a.damage);
-      ctx.hud.flashDamage();
-      ctx.audio.enemyShot(pos, ctx.camera.position);
-      ctx.state && ctx.state.emit("enemyShot", { position: pos.clone(), dir: _flat.clone() });
-    }
+    // Wind-up: replay the (damage-free) swing as it closes in. Rigged-only —
+    // _telegraphSwing no-ops on static enemies.
+    if (dist <= enemy.meleeRange + MELEE_TELEGRAPH_PAD) enemy._telegraphSwing(ctx, dt);
   } else {
-    enemy._setAnim("idle");
+    // In reach — circle the player and swing on the melee cooldown. _meleeAttack
+    // plays the clip + lunge + audio and connects for damage at true meleeRange.
+    _tan.set(-_flat.z, 0, _flat.x).multiplyScalar(enemy._strafeDir);
+    pos.addScaledVector(_tan, enemy.speed * dt);
+    enemy._setAnim("run");
+    enemy.meleeTimer -= dt;
+    if (enemy.meleeTimer <= 0) {
+      enemy.meleeTimer = enemy.meleeCooldown;
+      enemy._meleeAttack(ctx);
+    }
+  }
+
+  // Ease the telegraph/strike lunge back to rest (visual model only). stepGunner
+  // returns early in Enemy.update, so its lunge must decay here.
+  if (enemy._rigRoot) {
+    enemy._lunge = enemy._lunge > 0.001 ? enemy._lunge * Math.max(0, 1 - dt * 9) : 0;
+    enemy._rigRoot.position.z = enemy._lunge;
   }
 }
 

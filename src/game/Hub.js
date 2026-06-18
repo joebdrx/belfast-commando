@@ -1,5 +1,7 @@
 import * as THREE from "three";
 
+const BASE = import.meta.env.BASE_URL || "/";
+
 /**
  * Hub
  * ---
@@ -18,7 +20,9 @@ import * as THREE from "three";
  * Visual palette deliberately echoes Engine.js (hemisphere + dim directional +
  * ambient + FogExp2), pulled darker and warmer for a cramped, smoky interior
  * lit by a single swinging bulb. Two ally NPCs flank the map table: Ruairí
- * (IRA, green armband) and Davy (Ulster-Scots, orange armband).
+ * (IRA) idles slung-rifle on his back, and Davy (Ulster-Scots) patrols carrying
+ * an SMG. A spare SMG also rests on the planning table, and the hero wears one
+ * slung across his back.
  */
 export class Hub {
   /**
@@ -51,6 +55,13 @@ export class Hub {
     this._bulbMat = null;
     this._heroGroup = null;
 
+    // Belfast wall murals (loaded async) + the spare SMG on the planning table.
+    // Tracked so dispose() can free the textures the generic traverse won't.
+    /** @type {THREE.Texture[]} */
+    this._muralTextures = [];
+    this._tableSmg = null;
+    this._tableTopY = 0.95;
+
     // Clickable safehouse fixtures + their projected-label anchors (world space).
     // Anchors are fixed (the fixtures never move; only the camera sways), so they
     // are computed once at build time and projected each frame with no alloc.
@@ -68,6 +79,7 @@ export class Hub {
 
     this._buildAtmosphere();
     this._buildShell();
+    this._buildMurals();
     this._buildBar();
     this._buildMapTable();
     this._buildBulb();
@@ -140,6 +152,47 @@ export class Hub {
     this._box(0.3, H, 10.3, wall, 5, H / 2, cz); // right wall
   }
 
+  /**
+   * Belfast sectarian wall murals, flush on the interior walls. Loaded async via
+   * TextureLoader; each panel's plane is built in the onLoad callback (aspect-
+   * preserved, unlit so it stays readable in the gloom) and the texture is
+   * tracked for dispose(). Room: X[-5,5], Z[-6,4], inner wall faces at ±4.85 /
+   * z=-5.85. The loyalist mural sits on the left wall (facing +X); the republican
+   * on the back wall above the bar (facing +Z). Load failure → no panel.
+   */
+  _buildMurals() {
+    const loader = new THREE.TextureLoader();
+    // [url, centre position, yaw]; size is derived from the image aspect on load.
+    const panels = [
+      // Loyalist — left wall (x≈-4.85), facing +X into the room.
+      { url: `${BASE}murals/loyalist.png`, pos: [-4.84, 1.95, -1.6], rotY: Math.PI / 2 },
+      // Republican — back wall (z≈-5.85), above the bar, facing +Z into the room.
+      { url: `${BASE}murals/republican.png`, pos: [-1.4, 1.95, -5.84], rotY: 0 },
+    ];
+    for (const p of panels) {
+      loader.load(
+        p.url,
+        (tex) => {
+          tex.colorSpace = THREE.SRGBColorSpace;
+          this._muralTextures.push(tex);
+          // Preserve aspect; cap the longest side at ~2.3m (readable, in-range).
+          const img = tex.image || {};
+          const aspect = img.width && img.height ? img.width / img.height : 1;
+          const target = 2.3;
+          const w = aspect >= 1 ? target : target * aspect;
+          const h = aspect >= 1 ? target / aspect : target;
+          const mat = new THREE.MeshBasicMaterial({ map: tex, toneMapped: false });
+          const panel = new THREE.Mesh(new THREE.PlaneGeometry(w, h), mat);
+          panel.position.set(p.pos[0], p.pos[1], p.pos[2]);
+          panel.rotation.y = p.rotY;
+          this.scene.add(panel);
+        },
+        undefined,
+        () => {}, // 404 / decode error → wall stays bare
+      );
+    }
+  }
+
   /** A long pub bar counter against the back wall, with a few bottles. */
   _buildBar() {
     const wood = this._mat("crate", 0x3f2a18, 0.8);
@@ -165,6 +218,7 @@ export class Hub {
   _buildMapTable() {
     const topMat = this._mat("crate", 0x4a3320, 0.82);
     const tableTopY = 0.95;
+    this._tableTopY = tableTopY;
     this._box(1.9, 0.1, 1.2, topMat, 0, tableTopY, -2.3); // table top
     for (const [lx, lz] of [[-0.85, -0.5], [0.85, -0.5], [-0.85, 0.5], [0.85, 0.5]]) {
       this._box(0.1, tableTopY, 0.1, topMat, lx, tableTopY / 2, -2.3 + lz);
@@ -194,6 +248,103 @@ export class Hub {
     route.position.set(0.02, tableTopY + 0.065, -2.25);
     route.rotation.y = 0.5;
     this.scene.add(route);
+
+    // A spare SMG (the weapon_ak model) laid flat across the map. The model
+    // streams in lazily, so the actual placement is done by _ensureTableSmg()
+    // (called from here + show()/update()) once getModel returns a clone.
+    this._ensureTableSmg();
+  }
+
+  /**
+   * Rest a fresh weapon_ak flat on the planning table at a slight angle, seated
+   * flush on the tabletop. No-op once placed or while the model is unavailable
+   * (headless / tests / still streaming). Each call uses its OWN model clone.
+   */
+  _ensureTableSmg() {
+    if (this._tableSmg || !this.assets || typeof this.assets.getModel !== "function") return;
+    const smg = this.assets.getModel("weapon_ak");
+    if (!smg) return;
+    // Lay it flat (the model's long axis is its barrel); a small yaw makes it
+    // sit casually across the planning map rather than square to the table.
+    smg.rotation.set(0, 0.6, 0);
+    smg.updateMatrixWorld(true);
+    const minY = new THREE.Box3().setFromObject(smg).min.y;
+    const restY = (this._tableTopY ?? 0.95) + 0.06; // sit on the parchment map
+    smg.position.set(-0.15, restY - minY, -2.35); // seat its bbox floor on the map
+    this.scene.add(smg);
+    this._tableSmg = smg;
+  }
+
+  /**
+   * Attach a fresh weapon_ak (SMG) to a streamed-in menu actor. `mode` "held"
+   * parents it barrel-forward to the RightHand bone (a patrolling fighter at the
+   * ready); "slung" parents it to the Spine/Spine02 bone lying diagonally across
+   * the back. The desired pose is expressed in the actor's own (world) frame and
+   * baked into the bone's local space, so the gun keeps its real ~0.62m size and
+   * rides the skeleton through any group yaw + animation. Falls back to a fixed
+   * offset on the actor group when the bone isn't found. No-op (null) when the
+   * model isn't loaded (headless / tests). Each call uses its OWN model clone.
+   * @param {{object3D:THREE.Object3D}} actor
+   * @param {"held"|"slung"} mode
+   */
+  _attachActorSmg(actor, mode) {
+    if (!actor || !actor.object3D || !this.assets || typeof this.assets.getModel !== "function") return null;
+    const mount = this.assets.getModel("weapon_ak");
+    if (!mount) return null;
+
+    // Real-world size + scale (unparented → world transform == local transform).
+    mount.updateMatrixWorld(true);
+    const size = new THREE.Box3().setFromObject(mount).getSize(new THREE.Vector3());
+    const worldScale = mount.getWorldScale(new THREE.Vector3());
+
+    // weapon_ak's barrel is its longest axis (native +X). qFwd points it down the
+    // actor's forward (+Z); the slung pose keeps the native axes and just rolls it.
+    const qFwd = new THREE.Quaternion();
+    if (size.y >= size.x && size.y >= size.z) qFwd.setFromAxisAngle(new THREE.Vector3(1, 0, 0), -Math.PI / 2); // +Y → +Z
+    else if (size.x >= size.z) qFwd.setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 2);                 // +X → +Z
+
+    // Per-mode pose, tuned in the actor's local frame (+Z forward, +Y up).
+    let poseQuat, offset;
+    if (mode === "held") {
+      // Carried at the ready in the right hand: barrel forward, muzzle dipped.
+      poseQuat = new THREE.Quaternion().setFromEuler(new THREE.Euler(0.22, 0.0, 0.05)).multiply(qFwd);
+      offset = new THREE.Vector3(0.0, 0.0, 0.06);
+    } else {
+      // Slung flat across the back at a diagonal, sitting just behind the torso.
+      poseQuat = new THREE.Quaternion().setFromEuler(new THREE.Euler(0.0, 0.0, 0.92));
+      offset = new THREE.Vector3(0.0, 0.08, -0.18);
+    }
+
+    // Locate the target bone (priority order), traversing the actor rig.
+    const want = mode === "held" ? ["RightHand"] : ["Spine02", "Spine"];
+    const found = {};
+    actor.object3D.traverse((o) => { if (o.isBone && want.includes(o.name)) found[o.name] = o; });
+    let bone = null;
+    for (const n of want) { if (found[n]) { bone = found[n]; break; } }
+
+    if (!bone) {
+      // Fallback: parent to the actor group at a hands/back-height offset.
+      actor.object3D.add(mount);
+      mount.quaternion.copy(poseQuat);
+      if (mode === "held") mount.position.set(0.22, 1.05, 0.18);
+      else mount.position.set(0.0, 1.3, -0.16);
+      return mount;
+    }
+
+    // Express the desired WORLD transform using the actor's actual world
+    // orientation (robust whether the group is still at identity or already
+    // posed), then bake it into the bone's local space.
+    actor.object3D.updateMatrixWorld(true);
+    const actorQuat = actor.object3D.getWorldQuaternion(new THREE.Quaternion());
+    const worldPos = new THREE.Vector3()
+      .setFromMatrixPosition(bone.matrixWorld)
+      .add(offset.clone().applyQuaternion(actorQuat));
+    const worldQuat = actorQuat.clone().multiply(poseQuat);
+    const desired = new THREE.Matrix4().compose(worldPos, worldQuat, worldScale);
+    const local = new THREE.Matrix4().copy(bone.matrixWorld).invert().multiply(desired);
+    local.decompose(mount.position, mount.quaternion, mount.scale);
+    bone.add(mount);
+    return mount;
   }
 
   /** A single swinging bulb on a cord above the table, with a warm point light. */
@@ -244,31 +395,29 @@ export class Hub {
 
   /**
    * Build the two ally NPCs. When the animated menu actor is available BOTH are
-   * the SAME rigged model (mirroring the hero): Ruairí (IRA, green armband) idles
-   * at the table, while Davy (Ulster-Scots, orange armband) slowly patrols a short
-   * back-and-forth path behind the table, turning to face his travel direction.
-   * If the actor is unavailable (headless / tests / not yet streamed) each falls
-   * back to the original low-poly capsule figure with a gentle idle bob.
+   * the SAME rigged model (mirroring the hero): Ruairí (IRA) idles at the table
+   * with a rifle slung on his back, while Davy (Ulster-Scots) slowly patrols a
+   * short back-and-forth path behind the table carrying his SMG at the ready,
+   * turning to face his travel direction. If the actor is unavailable (headless /
+   * tests / not yet streamed) each falls back to the low-poly capsule figure.
    */
   _buildNpcs() {
-    // Ruairí — IRA fighter, olive-green coat, green armband, dark flat cap. Idles.
+    // Ruairí — IRA fighter, olive-green coat, dark flat cap. Idles (rifle slung).
     this._buildNpc({
       x: -2.4,
       z: -3.3,
       yaw: 0.32,
       coat: 0x3c4a32,
-      band: 0x2f9e44,
       hat: "cap",
       hatColor: 0x1c2018,
     });
-    // Davy — Ulster-Scots paramilitary, rust coat, orange armband, maroon beret.
-    // Patrols a short path behind the table (clear of the hero + camera).
+    // Davy — Ulster-Scots paramilitary, rust coat, maroon beret. Patrols a short
+    // path behind the table (clear of the hero + camera), carrying his SMG.
     this._buildNpc({
       x: 2.4,
       z: -3.3,
       yaw: -0.32,
       coat: 0x5a3a22,
-      band: 0xe07b1a,
       hat: "beret",
       hatColor: 0x5a1f24,
       patrol: { minX: 1.2, maxX: 3.0, z: -3.7, speed: 0.55, dir: 1 },
@@ -280,7 +429,7 @@ export class Hub {
   /**
    * One ally figure. Prefers the shared animated menu actor (idle, or walk while
    * patrolling); falls back to the inline capsule fighter so the hub still reads
-   * headless. A small emissive faction armband is added as a subtle accent.
+   * headless.
    */
   _buildNpc(cfg) {
     const actor = this.assets && typeof this.assets.getMenuActor === "function"
@@ -290,23 +439,16 @@ export class Hub {
     else this._buildCapsuleNpc(cfg);
   }
 
-  /** Animated ally: the shared rigged actor + a faction armband accent. */
-  _buildAnimatedNpc({ x, z, yaw, band, patrol }, actor) {
+  /**
+   * Animated ally: the shared rigged actor, given an SMG (the patroller carries
+   * it at the ready in-hand; the idler wears it slung across the back).
+   */
+  _buildAnimatedNpc({ x, z, yaw, patrol }, actor) {
     const group = new THREE.Group();
     group.add(actor.object3D);
 
-    // Faction armband — a faintly emissive ring at chest height (subtle accent
-    // that rides with the body group; not bound to the animating arm bone).
-    const bandMat = new THREE.MeshStandardMaterial({
-      color: band,
-      roughness: 0.5,
-      emissive: band,
-      emissiveIntensity: 0.2,
-    });
-    const armband = new THREE.Mesh(new THREE.TorusGeometry(0.18, 0.035, 8, 16), bandMat);
-    armband.position.y = 1.3;
-    armband.rotation.x = Math.PI / 2;
-    group.add(armband);
+    // Give the ally a weapon_ak: held by the patroller, slung on the idler's back.
+    this._attachActorSmg(actor, patrol ? "held" : "slung");
 
     // Patroller walks (and faces its travel direction); idler stands and fidgets.
     const clip = patrol ? (actor.clips.walk || actor.clips.idle) : (actor.clips.idle || actor.clips.walk);
@@ -349,7 +491,7 @@ export class Hub {
   }
 
   /** Primitive capsule ally (fallback). Materials are inline so dispose() frees them. */
-  _buildCapsuleNpc({ x, z, yaw, coat, band, hat, hatColor }) {
+  _buildCapsuleNpc({ x, z, yaw, coat, hat, hatColor }) {
     const group = new THREE.Group();
 
     const coatMat = new THREE.MeshStandardMaterial({ color: coat, roughness: 0.85 });
@@ -361,18 +503,6 @@ export class Hub {
     const head = new THREE.Mesh(new THREE.SphereGeometry(0.22, 16, 12), skinMat);
     head.position.y = 1.72;
     group.add(head);
-
-    // Faction armband — a faintly emissive ring so the colour reads in the gloom.
-    const bandMat = new THREE.MeshStandardMaterial({
-      color: band,
-      roughness: 0.5,
-      emissive: band,
-      emissiveIntensity: 0.2,
-    });
-    const armband = new THREE.Mesh(new THREE.TorusGeometry(0.33, 0.055, 8, 16), bandMat);
-    armband.position.y = 1.32;
-    armband.rotation.x = Math.PI / 2;
-    group.add(armband);
 
     // Headgear for silhouette character.
     const hatMat = new THREE.MeshStandardMaterial({ color: hatColor, roughness: 0.8 });
@@ -480,6 +610,8 @@ export class Hub {
    */
   _attachHeroActor(group, actor) {
     group.add(actor.object3D);
+    // Sling a weapon_ak across the hero's back (he stands idle, gun stowed).
+    this._attachActorSmg(actor, "slung");
     const clip = (actor.clips && (actor.clips.idle || actor.clips.walk)) || null;
     this._heroMixer = this._playActorClip(actor.object3D, clip);
   }
@@ -666,6 +798,7 @@ export class Hub {
     this._ensureHeroModel();
     this._ensureNpcs();
     this._ensurePhone();
+    this._ensureTableSmg();
     this._poseCamera();
   }
 
@@ -722,6 +855,7 @@ export class Hub {
     if (!this._heroIsModel) this._ensureHeroModel(); // swap in real fighter once loaded
     if (!this._npcsAnimated) this._ensureNpcs(); // swap allies to the animated actor
     if (!this._phoneIsModel) this._ensurePhone(); // swap in the real landline once loaded
+    if (!this._tableSmg) this._ensureTableSmg(); // place the table SMG once loaded
     this._elapsed += dt;
     const t = this._elapsed;
 
@@ -785,10 +919,18 @@ export class Hub {
         }
       }
     });
+    // Mural textures aren't reached by the geometry/material traverse above.
+    for (let i = 0; i < this._muralTextures.length; i++) {
+      const t = this._muralTextures[i];
+      if (t && t.dispose) t.dispose();
+    }
+    this._muralTextures.length = 0;
+
     while (this.scene.children.length) this.scene.remove(this.scene.children[0]);
     this.npcs.length = 0;
     this._interactables.length = 0;
     this._heroGroup = null;
+    this._tableSmg = null;
     this._lamp = null;
     this._bulbMat = null;
   }

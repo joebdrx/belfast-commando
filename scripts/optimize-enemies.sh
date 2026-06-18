@@ -86,15 +86,29 @@ for arch in "${!RIG[@]}"; do
 done
 
 # Victim: RIGGED + animated, same Meshy multi-animation format as the enemies
-# (whose run armatures bind fine). `walking.glb` = mesh + walk clip (idle-ish
-# while captive); `running_armature.glb` = run clip on the same skeleton (flee).
-VICTIM_DIR="victim-meshy-rigging-multi-animation"
-echo "[victim] mesh+walk"
-optimize_mesh "$REF/$VICTIM_DIR/1Ru13hoYO338gw4Jcud1D_walking.glb" "$OUT/enemy_victim.glb"
-echo "[victim] run clip"
-$GT meshopt "$REF/$VICTIM_DIR/qKFTWNcs5aEi50OaPWxaF_running_armature.glb" "$OUT/anim_victim_run.glb" >/dev/null 2>&1 \
-  || cp "$REF/$VICTIM_DIR/qKFTWNcs5aEi50OaPWxaF_running_armature.glb" "$OUT/anim_victim_run.glb"
+# (whose run armatures bind fine). victim-2 rig: `*_walking.glb` = mesh + walk
+# clip ("Armature|walking_man|baselayer", idle-ish while captive);
+# `*_running_armature.glb` = run clip ("Armature|running|baselayer") on the SAME
+# skeleton (identical 24 bone names: Hips/Spine*/Left+RightHand…), so it binds for
+# the flee sprint. The source mesh carries a 4096² texture → resize to 512.
+VICTIM_DIR="victim-2-meshy-rigging-multi-animation"
+echo "[victim] mesh+walk (victim-2)"
+optimize_mesh "$REF/$VICTIM_DIR/CWbul6dv09JvhUDgybagu_walking.glb" "$OUT/enemy_victim.glb"
+echo "[victim] run clip (victim-2)"
+$GT meshopt "$REF/$VICTIM_DIR/PIEM81aguzwTTtq-2doA9_running_armature.glb" "$OUT/anim_victim_run.glb" >/dev/null 2>&1 \
+  || cp "$REF/$VICTIM_DIR/PIEM81aguzwTTtq-2doA9_running_armature.glb" "$OUT/anim_victim_run.glb"
 echo "  -> $OUT/anim_victim_run.glb ($(du -h "$OUT/anim_victim_run.glb" | cut -f1))"
+
+# Grunt: STATIC, un-rigged Meshy model (grrom-2) — 1 mesh, 0 skins, 0 animations,
+# with the weapon baked into the mesh. resize 512 + meshopt only (no rig pipeline).
+# Orientation: node_0 carries a baked +90° X-rotation (quat [.7071,0,0,.7071]) that
+# stands the model upright (Y is the tallest axis, ~1.1m of geometry → height-fit to
+# 1.85m on load); the figure's weapon protrudes toward +Z, i.e. it already faces +Z
+# (the AI's forward), so MODEL_DEFS uses rotY: 0. meshopt/resize preserve the node
+# TRS, so the upright pose survives the optimize step.
+GRROM_DIR="grrom-2-meshy-rigging-multi-animation"
+echo "[grunt_grrom] static mesh (grrom-2)"
+optimize_mesh "$REF/$GRROM_DIR/F3AX75mXziateNeVf1Rwy_model.glb" "$OUT/grunt_grrom.glb"
 
 # Enemy hand weapons: ranged enemies hold a pistol (existing weapon_pistol);
 # melee enemies hold a blade (knife / machete) they lunge with.

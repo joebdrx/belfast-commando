@@ -51,6 +51,11 @@ const MODEL_DEFS = {
   // Rescuable civilian. Primary path is the rigged getVictimRig() (walk/run);
   // this static-model entry is the fallback if the rig fails to load.
   enemy_victim:     { size: 1.7, fit: "height", anchor: "bottom", rotY: 0 },
+  // Grunt enemy: STATIC un-rigged Meshy model (grrom-2) with a built-in weapon.
+  // The source's node_0 bakes a +90° X-rotation so it loads UPRIGHT (Y tallest,
+  // height-fit to 1.85m) and the figure already faces +Z (weapon-forward) — the
+  // AI's forward — so rotY: 0. No darken (keeps its own grimy texture).
+  grunt_grrom:      { size: 1.85, fit: "height", anchor: "bottom", rotY: 0 },
   // first-person viewmodels — centred, scaled by their longest axis
   weapon_ak:        { size: 0.62, fit: "max", anchor: "center", rotY: 0 },
   weapon_pistol:    { size: 0.34, fit: "max", anchor: "center", rotY: 0 },
@@ -87,6 +92,14 @@ const MODEL_DEFS = {
   // wide (±65), so it can ring JUST beyond the grid edge without overlapping the
   // playable streets. Placed + fog-exempted by Level._buildSkyline.
   bldg_skyline:     { size: 130, fit: "max", anchor: "bottom", rotY: 0 },
+  // Apartment furniture (mobili/*.blend → furn_*.glb via scripts/convert-furniture.sh).
+  // Vertex-painted low-poly props; size = the piece's defining real-world dimension.
+  furn_bed:         { size: 2.0, fit: "max", anchor: "bottom", rotY: 0 },
+  furn_wardrobe:    { size: 2.0, fit: "height", anchor: "bottom", rotY: 0 },
+  furn_nightstand:  { size: 0.6, fit: "height", anchor: "bottom", rotY: 0 },
+  furn_table:       { size: 1.5, fit: "max", anchor: "bottom", rotY: 0 },
+  furn_chair:       { size: 0.9, fit: "height", anchor: "bottom", rotY: 0 },
+  furn_bookshelf:   { size: 1.9, fit: "height", anchor: "bottom", rotY: 0 },
 };
 
 // 2D sprite textures (AI-generated). VFX use a black background (additive
@@ -602,14 +615,23 @@ export class AssetManager {
 
   /**
    * The rescuable civilian, rigged + animated (walk while captive, run on flee).
-   * Returns a FRESH per-instance skeleton clone so each victim drives its own
-   * mixer. The clips are shared (read-only) across clones, matching the enemy
-   * rig pattern. Null (→ static model fallback in Level) if the rig failed to load.
+   * Mirrors getRiggedEnemy/getMenuActor: a FRESH per-instance SkeletonUtils clone
+   * wrapped in a group and height-normalised to ~1.7m using the height measured
+   * WITH the walk clip applied (the bind-pose bbox is tiny — see _loadRig). The
+   * rig's natural front is +Z, so Victim faces her by rotating the wrap group. The
+   * clips ({walk, run}) are shared (read-only) across clones. Null (→ static model
+   * fallback in Level) if the rig failed to load (e.g. missing GLB / headless).
    * @returns {{ object3D: THREE.Object3D, clips: object } | null}
    */
   getVictimRig() {
     if (!this._victimRig) return null;
-    return { object3D: cloneSkeleton(this._victimRig.scene), clips: this._victimRig.clips };
+    const inner = cloneSkeleton(this._victimRig.scene);
+    inner.rotation.y = 0; // rig front is +Z; Victim aims her by rotating the wrap
+    const wrap = new THREE.Group();
+    wrap.add(inner);
+    // Scale by the measured ANIMATED height (NOT the misleading tiny bind bbox).
+    wrap.scale.setScalar(1.7 / (this._victimRig.height || 1.7));
+    return { object3D: wrap, clips: this._victimRig.clips };
   }
 
   /**

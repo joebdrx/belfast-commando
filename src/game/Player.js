@@ -29,6 +29,13 @@ const KICK_RANGE = 2.8;
 const KICK_CONE = 0.55; // dot threshold (~56°)
 const KICK_COOLDOWN = 0.45;
 
+// Slow health regeneration: a reward for disengaging, NOT a fast combat heal.
+// After REGEN_DELAY seconds without taking damage, health trickles back at
+// REGEN_RATE HP/sec up to maxHealth (which the "thick_skin" upgrade may raise
+// above 100 — we always cap at the live maxHealth, never a hardcoded 100).
+const REGEN_DELAY = 5; // seconds of no damage before healing begins
+const REGEN_RATE = 6; // HP per second once healing has kicked in
+
 const _forward = new THREE.Vector3();
 const _right = new THREE.Vector3();
 const _wish = new THREE.Vector3();
@@ -69,6 +76,9 @@ export class Player {
     this.maxHealth = 100;
     this.health = 100;
     this.alive = true;
+    // Seconds since the last hit; once it passes REGEN_DELAY, health regens.
+    // Start "rested" — the player spawns at full HP so this is a no-op anyway.
+    this._timeSinceDamage = REGEN_DELAY;
 
     // Per-run modifier knobs (1 = unmodified). Run modifiers (e.g. "Rainy
     // Night") scale these; reset to 1 each level, re-applied after spawn.
@@ -134,6 +144,8 @@ export class Player {
   damage(amount) {
     if (!this.alive) return;
     this.health = Math.max(0, this.health - amount);
+    // Pause health regen: the full REGEN_DELAY must elapse again after each hit.
+    this._timeSinceDamage = 0;
     // Bridge to the run state: track damage for the FLAWLESS bonus + emit a
     // bus event for any juice/UI that reacts to taking hits. Guarded so the
     // core combat keeps working even before Wave-3 systems are wired.
@@ -174,6 +186,7 @@ export class Player {
     this.pitch = 0;
     this.health = this.maxHealth;
     this.alive = true;
+    this._timeSinceDamage = REGEN_DELAY;
     this.sliding = false;
     this.eyeHeight = EYE_HEIGHT;
     this.speedMul = 1;
@@ -193,6 +206,18 @@ export class Player {
       return;
     }
     this._basisFromYaw();
+
+    // --- Slow health regeneration -----------------------------------------
+    // Only after a quiet spell (no damage for REGEN_DELAY) does health trickle
+    // back, capped at the live maxHealth (raised by "thick_skin"). The HUD is
+    // pull-based — main's loop reads player.health each frame — but we also push
+    // setHealth here (mirroring setStamina) so the bar stays exact. Dead players
+    // never reach this code (early return above). No per-frame allocations.
+    this._timeSinceDamage += dt;
+    if (this._timeSinceDamage >= REGEN_DELAY && this.health < this.maxHealth) {
+      this.health = Math.min(this.maxHealth, this.health + REGEN_RATE * dt);
+      if (this.ctx && this.ctx.hud) this.ctx.hud.setHealth(this.health, this.maxHealth);
+    }
 
     // --- Desired movement direction (camera-relative, flattened) ----------
     _wish.set(0, 0, 0);
