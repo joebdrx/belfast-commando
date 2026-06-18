@@ -167,6 +167,30 @@ export class Enemy {
         o.material = Array.isArray(o.material) ? o.material.map(tintMat) : tintMat(o.material);
       });
     }
+
+    // Held weapon (pistol for ranged, blade for melee) — parented to the visual
+    // root so it rides the body and the melee lunge.
+    this._weapon = null;
+    if (opts.weapon) this._attachWeapon(opts.weapon);
+  }
+
+  /**
+   * Attach a held weapon to the visual root. The model's longest axis (blade /
+   * barrel) is auto-oriented to point forward (+Z, the enemy's facing/lunge
+   * direction) so it reads as gripped and lunges with the body.
+   * @param {{ object3D: THREE.Object3D, kind: "pistol"|"blade" }} weapon
+   */
+  _attachWeapon(weapon) {
+    const mount = weapon.object3D;
+    const size = new THREE.Vector3();
+    new THREE.Box3().setFromObject(mount).getSize(size);
+    if (size.y >= size.x && size.y >= size.z) mount.rotation.x = -Math.PI / 2; // +Y → +Z
+    else if (size.x >= size.z) mount.rotation.y = Math.PI / 2;                 // +X → +Z
+    if (weapon.kind === "blade") mount.rotation.z += 0.15; // slight grip tilt
+    const parent = this._rigRoot || this.group;
+    parent.add(mount);
+    mount.position.set(0.26, weapon.kind === "pistol" ? 1.05 : 1.0, 0.28);
+    this._weapon = mount;
   }
 
   get position() {

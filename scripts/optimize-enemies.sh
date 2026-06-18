@@ -41,10 +41,14 @@ for arch in "${!RIG[@]}"; do
   echo "  -> $OUT/anim_${arch}_run.glb ($(du -h "$OUT/anim_${arch}_run.glb" | cut -f1))"
 done
 
-# Victim: rigged + animated (mesh+walk + run clip) so she runs when fleeing.
-VDIR="$REF/victim-meshy-rigging-multi-animation"
-echo "[victim] rigged mesh+walk + run clip"
-optimize_mesh "$VDIR/1Ru13hoYO338gw4Jcud1D_walking.glb" "$OUT/enemy_victim.glb"
-$GT meshopt "$VDIR/qKFTWNcs5aEi50OaPWxaF_running_armature.glb" "$OUT/anim_victim_run.glb" >/dev/null 2>&1 || cp "$VDIR/qKFTWNcs5aEi50OaPWxaF_running_armature.glb" "$OUT/anim_victim_run.glb"
-echo "  -> enemy_victim.glb $(du -h "$OUT/enemy_victim.glb" | cut -f1)"
+# Victim: STATIC mesh. The rigged victim's separate run clip never bound to its
+# skeleton (mesh stayed frozen → "broken"), so we use the static civilian model.
+echo "[victim] static mesh"
+optimize_mesh "$REF/victim-model.glb" "$OUT/enemy_victim.glb"
+
+# Enemy hand weapons: ranged enemies hold a pistol (existing weapon_pistol);
+# melee enemies hold a blade (knife / machete) they lunge with.
+echo "[weapons] enemy blades"
+optimize_mesh "$REF/kitchen_knife.glb" "$OUT/enemy_knife.glb"
+optimize_mesh "$REF/kukri_machete.glb" "$OUT/enemy_machete.glb"
 echo "done."

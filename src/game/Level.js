@@ -700,30 +700,51 @@ export class Level {
     const BZ = this.GRID_HALF_Z + 12; // ~73 — past the spawn approach (z≈68)
     const H = this.WALL_H;
     const wall = this._materials.brick;
-    // Closed collider rectangle — the barrier (also LOS blockers).
-    this._box(2 * BX, H, 1.5, wall, 0, H / 2, -BZ, { los: true });
-    this._box(2 * BX, H, 1.5, wall, 0, H / 2, BZ, { los: true });
-    this._box(1.5, H, 2 * BZ, wall, -BX, H / 2, 0, { los: true });
-    this._box(1.5, H, 2 * BZ, wall, BX, H / 2, 0, { los: true });
-    // Clad with exterior building models facing inward (visual "buildings all around").
+    // Closed collider rectangle — the actual barrier (also LOS blockers). The
+    // meshes are made INVISIBLE: the recessed building facades below ARE the
+    // visible boundary ("just a facade on the outer walls"); this collider just
+    // stops the player ~at the facades. A visible brick wall here would sit in
+    // FRONT of the recessed buildings and occlude them.
+    const walls = [
+      this._box(2 * BX, H, 1.5, wall, 0, H / 2, -BZ, { los: true }),
+      this._box(2 * BX, H, 1.5, wall, 0, H / 2, BZ, { los: true }),
+      this._box(1.5, H, 2 * BZ, wall, -BX, H / 2, 0, { los: true }),
+      this._box(1.5, H, 2 * BZ, wall, BX, H / 2, 0, { los: true }),
+    ];
+    walls.forEach((w) => { w.visible = false; });
+    // Clad with exterior building models — RECESSED so they read as facades on
+    // the barrier. Each model's body is pushed fully OUTWARD past the wall so
+    // only its front face shows; nothing protrudes inward for the player to clip
+    // through. Spaced tightly so the facades read as a continuous street wall.
     if (!this.assets) return;
     const TPL = ["bldg_terrace", "bldg_collapsed", "bldg_shop", "bldg_church"];
     let n = 0;
-    const clad = (x, z, faceY) => {
+    const _box = new THREE.Box3();
+    // out = outward sign on `axis`; barrier = wall coordinate. Place the model,
+    // then shift it along `axis` so its INNER face (toward the play area) lands
+    // ~0.6m inside the wall plane — robust to off-centre pivots, deep naves and
+    // spires, so no building body ever protrudes into the street.
+    const clad = (x, z, faceY, axis, out) => {
       const m = this.assets.getModel(TPL[n++ % TPL.length]);
       if (!m) return;
-      m.position.set(x, 0, z);
       m.rotation.y = faceY;
+      m.position.set(x, 0, z);
+      m.updateMatrixWorld(true);
+      _box.setFromObject(m);
+      const innerFace = out > 0 ? _box.min[axis] : _box.max[axis];
+      const wallC = axis === "x" ? BX : BZ;
+      const target = (out > 0 ? wallC : -wallC) - out * 0.6;
+      m.position[axis] += target - innerFace;
       this.group.add(m);
     };
-    const STEP = 16;
-    for (let x = -BX + 8; x <= BX - 8; x += STEP) {
-      clad(x, -BZ, 0); // south wall: face +Z (inward)
-      clad(x, BZ, Math.PI); // north wall: face -Z
+    const STEP = 11;
+    for (let x = -BX + 6; x <= BX - 6; x += STEP) {
+      clad(x, -BZ, 0, "z", -1); // south wall: facade faces +Z (inward), body pushed -Z
+      clad(x, BZ, Math.PI, "z", 1); // north wall: facade faces -Z, body pushed +Z
     }
-    for (let z = -BZ + 8; z <= BZ - 8; z += STEP) {
-      clad(-BX, z, Math.PI / 2); // west wall: face +X
-      clad(BX, z, -Math.PI / 2); // east wall: face -X
+    for (let z = -BZ + 6; z <= BZ - 6; z += STEP) {
+      clad(-BX, z, Math.PI / 2, "x", -1); // west wall: facade faces +X
+      clad(BX, z, -Math.PI / 2, "x", 1); // east wall: facade faces -X
     }
   }
 
@@ -927,6 +948,14 @@ export class Level {
         const model = this.assets.getModel("invader");
         if (model) opts.model = model;
       }
+      // Arm every enemy: ranged → pistol; everyone else → a blade to lunge with.
+      const ranged = opts.archetype === "gunner";
+      const wslug = ranged ? "weapon_pistol"
+        : opts.archetype === "enforcer" ? "enemy_machete"
+        : opts.archetype === "grunt" ? (Math.random() < 0.5 ? "enemy_knife" : "enemy_machete")
+        : "enemy_knife";
+      const wmodel = this.assets.getModel(wslug);
+      if (wmodel) opts.weapon = { object3D: wmodel, kind: ranged ? "pistol" : "blade" };
     }
     const e = new Enemy(pos, opts);
     this.group.add(e.group);

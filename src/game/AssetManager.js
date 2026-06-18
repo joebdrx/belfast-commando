@@ -48,10 +48,17 @@ const MODEL_DEFS = {
   enemy_variant:    { size: 1.85, fit: "height", anchor: "bottom", rotY: Math.PI, darken: 0.75 },
   invader:          { size: 1.85, fit: "height", anchor: "bottom", rotY: Math.PI, darken: 0.75 },
   player_fighter:   { size: 1.85, fit: "height", anchor: "bottom", rotY: Math.PI },
+  // Rescuable civilian — STATIC mesh (the rigged victim's separate clips don't
+  // bind to its skeleton → frozen/"broken"; a clean static pose is reliable).
+  enemy_victim:     { size: 1.7, fit: "height", anchor: "bottom", rotY: 0 },
   // first-person viewmodels — centred, scaled by their longest axis
   weapon_ak:        { size: 0.62, fit: "max", anchor: "center", rotY: 0 },
   weapon_pistol:    { size: 0.34, fit: "max", anchor: "center", rotY: 0 },
   weapon_shotgun:   { size: 0.58, fit: "max", anchor: "center", rotY: 0 }, // sawed-off boomstick
+  // Enemy hand weapons (attached in Enemy._attachWeapon). Sized by longest axis;
+  // the blade is auto-oriented to point forward at attach time.
+  enemy_knife:      { size: 0.42, fit: "max", anchor: "center", rotY: 0 },
+  enemy_machete:    { size: 0.60, fit: "max", anchor: "center", rotY: 0 },
   viewmodel_hands:  { size: 0.45, fit: "max", anchor: "center", rotY: 0 },
   fp_arms_grip:     { size: 0.55, fit: "max", anchor: "center", rotY: 0 },
   kick_boot:        { size: 0.40, fit: "max", anchor: "center", rotY: 0 },
@@ -181,7 +188,7 @@ export class AssetManager {
     // Environment map, 3D models, 2D sprites, and the rigged enemy run alongside.
     const envJob = scene ? this._loadEnvironment(scene) : Promise.resolve();
     const skyJob = scene ? this._loadSky(scene) : Promise.resolve();
-    await Promise.all([...jobs, envJob, skyJob, this.loadModels(), this.loadSprites(), this.loadMurals(), this._loadRiggedEnemy(), this._loadArchetypeRigs(), this._loadVictimRig(), this.captureFacades(), this.loadFace(), this.loadHouseSide()]);
+    await Promise.all([...jobs, envJob, skyJob, this.loadModels(), this.loadSprites(), this.loadMurals(), this._loadRiggedEnemy(), this._loadArchetypeRigs(), this.captureFacades(), this.loadFace(), this.loadHouseSide()]);
   }
 
   /** Load the photo face that gets billboarded onto each enemy's head. */
@@ -454,12 +461,6 @@ export class AssetManager {
     this._gruntVariants = [this._rigs.grunt, this._rigs.gunner, this._rigs.breacher].filter(Boolean);
   }
 
-  /** The rescuable civilian's rigged, animated model (walk + run clips). */
-  async _loadVictimRig() {
-    try { this._victimRig = await this._loadRig("enemy_victim", "anim_victim_run", 1.0); }
-    catch { this._victimRig = null; }
-  }
-
   /** A fresh clone of the rigged character for use as first-person arms,
    *  with its bones exposed by name for posing. */
   getFpArms() {
@@ -504,16 +505,14 @@ export class AssetManager {
     return { object3D: wrap, clips: rig.clips };
   }
 
-  /** A fresh animated victim instance: normalised Object3D + walk/run clips. */
+  /**
+   * The rescuable civilian is a STATIC model (getModel("enemy_victim")), not a
+   * rig — the Meshy victim's separate run clip never bound to its skeleton (the
+   * mesh stayed frozen, reading as "broken"), so a clean static pose is used.
+   * Returning null makes Level._spawnVictims fall back to the static model.
+   */
   getVictimRig() {
-    const rig = this._victimRig;
-    if (!rig) return null;
-    const inner = cloneSkeleton(rig.scene);
-    inner.rotation.y = 0;
-    const wrap = new THREE.Group();
-    wrap.add(inner);
-    wrap.scale.setScalar(1.7 / (rig.height || 1.7)); // civilian ~1.7m
-    return { object3D: wrap, clips: rig.clips };
+    return null;
   }
 
   /**
