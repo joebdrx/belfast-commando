@@ -48,10 +48,17 @@ const MODEL_DEFS = {
   enemy_variant:    { size: 1.85, fit: "height", anchor: "bottom", rotY: Math.PI, darken: 0.75 },
   invader:          { size: 1.85, fit: "height", anchor: "bottom", rotY: Math.PI, darken: 0.75 },
   player_fighter:   { size: 1.85, fit: "height", anchor: "bottom", rotY: Math.PI },
+  // Rescuable civilian — STATIC mesh (the rigged victim's separate clips don't
+  // bind to its skeleton → frozen/"broken"; a clean static pose is reliable).
+  enemy_victim:     { size: 1.7, fit: "height", anchor: "bottom", rotY: 0 },
   // first-person viewmodels — centred, scaled by their longest axis
   weapon_ak:        { size: 0.62, fit: "max", anchor: "center", rotY: 0 },
   weapon_pistol:    { size: 0.34, fit: "max", anchor: "center", rotY: 0 },
   weapon_shotgun:   { size: 0.58, fit: "max", anchor: "center", rotY: 0 }, // sawed-off boomstick
+  // Enemy hand weapons (attached in Enemy._attachWeapon). Sized by longest axis;
+  // the blade is auto-oriented to point forward at attach time.
+  enemy_knife:      { size: 0.42, fit: "max", anchor: "center", rotY: 0 },
+  enemy_machete:    { size: 0.60, fit: "max", anchor: "center", rotY: 0 },
   viewmodel_hands:  { size: 0.45, fit: "max", anchor: "center", rotY: 0 },
   fp_arms_grip:     { size: 0.55, fit: "max", anchor: "center", rotY: 0 },
   kick_boot:        { size: 0.40, fit: "max", anchor: "center", rotY: 0 },
@@ -65,6 +72,21 @@ const MODEL_DEFS = {
   prop_phone_booth: { size: 2.4, fit: "height", anchor: "bottom", rotY: 0 },
   prop_bicycle:     { size: 1.1, fit: "height", anchor: "bottom", rotY: 0 },
   prop_car:         { size: 1.5, fit: "height", anchor: "bottom", rotY: 0 },
+  // Wall-mounted landline phone for the safehouse (HUB). The source is modelled
+  // lying flat (thin Y axis), so scale by its longest axis to ~0.3m and let
+  // Hub._buildPhone stand it upright + face it into the room. Centre-anchored so
+  // it pivots about its own middle when Hub rotates it onto the wall.
+  landline_phone:   { size: 0.3, fit: "max", anchor: "center", rotY: 0 },
+  // Belfast exterior building templates (optimized from asset-reference via
+  // scripts/optimize-buildings.sh). Provisional; tuned from the in-game audit.
+  bldg_terrace:     { size: 12, fit: "height", anchor: "bottom", rotY: 0 },
+  bldg_collapsed:   { size: 11, fit: "height", anchor: "bottom", rotY: 0 },
+  bldg_shop:        { size: 10, fit: "height", anchor: "bottom", rotY: 0 },
+  bldg_church:      { size: 17, fit: "height", anchor: "bottom", rotY: 0 }, // landmark; taller (spire)
+  // City backdrop ringed around the map edges as a skyline (not a block). ~130m
+  // wide (±65), so it can ring JUST beyond the grid edge without overlapping the
+  // playable streets. Placed + fog-exempted by Level._buildSkyline.
+  bldg_skyline:     { size: 130, fit: "max", anchor: "bottom", rotY: 0 },
 };
 
 // 2D sprite textures (AI-generated). VFX use a black background (additive
@@ -103,6 +125,8 @@ export class AssetManager {
     this.faceTexture = null; // photo face slapped onto enemy heads (non-1.png)
     this.houseSideTexture = null; // grimy tenement facade for building side walls (4h.png)
     this._riggedEnemy = null; // { scene, clips:{walk,run,idle} }
+    this._menuActor = null; // { scene, clips:{walk,idle}, height } — safehouse hero + ally NPCs
+    this._attackClip = null; // shared melee attack AnimationClip (retargets onto every rig)
     this.loaded = 0;
     this.total = Object.keys(DEFS).length;
 
@@ -171,7 +195,7 @@ export class AssetManager {
     // Environment map, 3D models, 2D sprites, and the rigged enemy run alongside.
     const envJob = scene ? this._loadEnvironment(scene) : Promise.resolve();
     const skyJob = scene ? this._loadSky(scene) : Promise.resolve();
-    await Promise.all([...jobs, envJob, skyJob, this.loadModels(), this.loadSprites(), this.loadMurals(), this._loadRiggedEnemy(), this.captureFacades(), this.loadFace(), this.loadHouseSide()]);
+    await Promise.all([...jobs, envJob, skyJob, this.loadModels(), this.loadSprites(), this.loadMurals(), this._loadRiggedEnemy(), this._loadArchetypeRigs(), this._loadAttackClip(), this._loadMenuActor(), this.captureFacades(), this.loadFace(), this.loadHouseSide()]);
   }
 
   /** Load the photo face that gets billboarded onto each enemy's head. */
@@ -390,6 +414,79 @@ export class AssetManager {
     return !!this._riggedEnemy;
   }
 
+  /**
+   * Load the shared melee attack clip ONCE (anim_attack.glb — an animation-only
+   * GLB, mesh stripped at build time). Its tracks target the same bone names as
+   * walk/run, so this single clip retargets onto every rigged enemy. We rename
+   * the clip "attack" so it can't collide with the walk/run clip names, and only
+   * read animations[0]. Missing file → stays null and enemies simply skip the
+   * attack animation.
+   */
+  async _loadAttackClip() {
+    try {
+      const gltf = await this.gltfLoader.loadAsync(`${BASE}models/anim_attack.glb`);
+      const clip = gltf.animations[0] || null;
+      if (clip) clip.name = "attack";
+      this._attackClip = clip;
+    } catch {
+      this._attackClip = null;
+    }
+  }
+
+  /**
+   * Per-archetype rigged + animated enemy models (each its own Meshy character,
+   * so grunt/gunner/breacher/enforcer read as distinct enemy types). Each base
+   * GLB carries its walk clip (animations[0]); a tiny armature GLB adds the run
+   * clip on the same skeleton. Height is measured WITH the walk clip applied
+   * (the rig's bind-pose bbox is tiny — see _loadRiggedEnemy).
+   */
+  /**
+   * Load one rigged character: a base GLB (walk clip = animations[0]) + an armature
+   * run clip on the same skeleton. Returns {scene, clips:{walk,run}, height} with
+   * height measured WITH the walk clip applied (bind-pose bbox is tiny).
+   */
+  async _loadRig(meshSlug, runSlug, darken = 0.85) {
+    const base = await this.gltfLoader.loadAsync(`${BASE}models/${meshSlug}.glb`);
+    const clips = {};
+    if (base.animations[0]) clips.walk = base.animations[0];
+    if (runSlug) {
+      const run = await this.gltfLoader.loadAsync(`${BASE}models/${runSlug}.glb`).catch(() => null);
+      if (run && run.animations[0]) clips.run = run.animations[0];
+    }
+    base.scene.traverse((o) => {
+      if (o.isMesh) o.frustumCulled = false; // skinned bounds animate; avoid pop-out
+      const mats = o.material ? (Array.isArray(o.material) ? o.material : [o.material]) : [];
+      for (const m of mats) {
+        if (!m) continue;
+        if (m.metalness !== undefined) m.metalness = 0;
+        if (m.color && darken !== 1) m.color.multiplyScalar(darken);
+        m.needsUpdate = true;
+      }
+    });
+    let height = 1.7;
+    if (clips.walk) {
+      const tmp = new THREE.AnimationMixer(base.scene);
+      tmp.clipAction(clips.walk).play();
+      tmp.update(0.2);
+      base.scene.updateMatrixWorld(true);
+      height = new THREE.Box3().setFromObject(base.scene).getSize(new THREE.Vector3()).y || 1.7;
+      tmp.stopAllAction();
+    }
+    return { scene: base.scene, clips, height };
+  }
+
+  async _loadArchetypeRigs() {
+    this._rigs = {};
+    const ARCHES = ["grunt", "gunner", "breacher", "enforcer"];
+    await Promise.all(ARCHES.map(async (arch) => {
+      try { this._rigs[arch] = await this._loadRig(`enemy_${arch}`, `anim_${arch}_run`); }
+      catch { /* missing → getRiggedEnemy falls back to the generic rig */ }
+    }));
+    // Grunt variety: a grunt spawns as a random pick from these distinct rigs
+    // (stabber + invader2 + invader1) so the swarm doesn't look uniform.
+    this._gruntVariants = [this._rigs.grunt, this._rigs.gunner, this._rigs.breacher].filter(Boolean);
+  }
+
   /** A fresh clone of the rigged character for use as first-person arms,
    *  with its bones exposed by name for posing. */
   getFpArms() {
@@ -402,20 +499,111 @@ export class AssetManager {
     return { object3D, bones, height: this._riggedEnemy.height || 1.7 };
   }
 
-  /** A fresh animated enemy instance: normalised Object3D + its animation clips. */
-  getRiggedEnemy() {
-    if (!this._riggedEnemy) return null;
-    const inner = cloneSkeleton(this._riggedEnemy.scene);
+  /**
+   * A fresh animated enemy instance: normalised Object3D + its animation clips.
+   * Prefers the archetype's own rig (distinct enemy type); falls back to the
+   * generic rigged invader (which wears the photo face). The per-archetype models
+   * have their own heads, so they do NOT get the shared photo face.
+   */
+  getRiggedEnemy(archetype) {
+    let rig = null;
+    let distinct = false;
+    if (archetype === "grunt" && this._gruntVariants && this._gruntVariants.length) {
+      // Grunts pick a random distinct rig (stabber / invader2 / invader1) for variety.
+      rig = this._gruntVariants[Math.floor(Math.random() * this._gruntVariants.length)];
+      distinct = true;
+    } else if (archetype && this._rigs && this._rigs[archetype]) {
+      rig = this._rigs[archetype];
+      distinct = true;
+    } else {
+      rig = this._riggedEnemy;
+    }
+    if (!rig) return null;
+    const inner = cloneSkeleton(rig.scene);
     // The rig's natural front is +Z, which is what Enemy's facing math
     // (group.rotation.y = atan2(toPlayer)) expects — so NO 180° flip.
     inner.rotation.y = 0;
     const wrap = new THREE.Group();
     wrap.add(inner);
     // Scale by the measured animated height (NOT the misleading geometry bbox).
-    // The model is already feet-at-origin and centred at natural scale.
-    wrap.scale.setScalar(1.85 / (this._riggedEnemy.height || 1.7));
-    this._attachFace(wrap);
-    return { object3D: wrap, clips: this._riggedEnemy.clips };
+    wrap.scale.setScalar(1.85 / (rig.height || 1.7));
+    if (!distinct) this._attachFace(wrap); // only the generic invader wears the photo face
+    // Add the shared one-shot melee attack clip (retargets onto this rig's
+    // bones) without mutating the rig's shared clips object.
+    const clips = this._attackClip ? { ...rig.clips, attack: this._attackClip } : rig.clips;
+    return { object3D: wrap, clips };
+  }
+
+  /**
+   * Load the safehouse (HUB) menu actor: one skinned, animated humanoid used for
+   * BOTH the hero centrepiece and the ally NPCs. Mirrors _loadRig — a base GLB
+   * carrying the WALK clip (animations[0]) plus a small standing IDLE/fidget clip
+   * (Confused_Scratch) on the same skeleton, retargeted by bone name. Height is
+   * measured WITH the walk clip applied (the rig's bind-pose bbox is tiny — see
+   * _loadRiggedEnemy). Missing file → stays null and Hub uses its primitives.
+   */
+  async _loadMenuActor() {
+    try {
+      const base = await this.gltfLoader.loadAsync(`${BASE}models/menu_actor.glb`);
+      const clips = {};
+      if (base.animations[0]) clips.walk = base.animations[0];
+      const idle = await this.gltfLoader.loadAsync(`${BASE}models/anim_menu_idle.glb`).catch(() => null);
+      if (idle && idle.animations[0]) clips.idle = idle.animations[0];
+      base.scene.traverse((o) => {
+        if (o.isMesh) o.frustumCulled = false; // skinned bounds animate; avoid pop-out
+        const mats = o.material ? (Array.isArray(o.material) ? o.material : [o.material]) : [];
+        for (const m of mats) {
+          if (!m) continue;
+          if (m.metalness !== undefined) m.metalness = 0;
+          m.needsUpdate = true;
+        }
+      });
+      let height = 1.7;
+      if (clips.walk) {
+        const tmp = new THREE.AnimationMixer(base.scene);
+        tmp.clipAction(clips.walk).play();
+        tmp.update(0.2);
+        base.scene.updateMatrixWorld(true);
+        height = new THREE.Box3().setFromObject(base.scene).getSize(new THREE.Vector3()).y || 1.7;
+        tmp.stopAllAction();
+      }
+      this._menuActor = { scene: base.scene, clips, height };
+    } catch {
+      this._menuActor = null;
+    }
+  }
+
+  hasMenuActor() {
+    return !!this._menuActor;
+  }
+
+  /**
+   * A fresh animated menu actor for the safehouse: a SkeletonUtils clone wrapped
+   * in a group and scaled to a natural ~1.8m height, plus its shared clips. The
+   * rig's natural front is +Z (same as the enemy rigs), so callers face it by
+   * rotating the wrapping group. Each caller drives its OWN AnimationMixer on the
+   * returned object3D (clones share the AnimationClip data harmlessly). Returns
+   * null when the GLB is unavailable (headless / tests) → Hub uses primitives.
+   * @returns {{object3D:THREE.Group, clips:{walk?:THREE.AnimationClip, idle?:THREE.AnimationClip}}|null}
+   */
+  getMenuActor() {
+    if (!this._menuActor) return null;
+    const inner = cloneSkeleton(this._menuActor.scene);
+    inner.rotation.y = 0; // rig front is +Z; callers rotate the wrap to aim it
+    const wrap = new THREE.Group();
+    wrap.add(inner);
+    wrap.scale.setScalar(1.8 / (this._menuActor.height || 1.7));
+    return { object3D: wrap, clips: this._menuActor.clips };
+  }
+
+  /**
+   * The rescuable civilian is a STATIC model (getModel("enemy_victim")), not a
+   * rig — the Meshy victim's separate run clip never bound to its skeleton (the
+   * mesh stayed frozen, reading as "broken"), so a clean static pose is used.
+   * Returning null makes Level._spawnVictims fall back to the static model.
+   */
+  getVictimRig() {
+    return null;
   }
 
   /**

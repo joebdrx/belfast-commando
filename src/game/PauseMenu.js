@@ -72,56 +72,67 @@ export class PauseMenu {
     style.textContent = `
       .${PREFIX}root {
         position: fixed; inset: 0; z-index: 40;
-        display: flex; align-items: center; justify-content: center;
+        display: flex; align-items: stretch; justify-content: flex-start;
         pointer-events: auto;
         font-family: "Arial Narrow", "Inter", system-ui, sans-serif;
         color: #f0ede8;
         background:
-          radial-gradient(ellipse at center, rgba(8,10,13,0.62) 0%, rgba(3,4,6,0.9) 100%);
+          linear-gradient(100deg, rgba(3,4,6,0.86) 0%, rgba(4,5,7,0.6) 46%, rgba(4,5,7,0.18) 100%);
       }
       .${PREFIX}root.${PREFIX}hidden { display: none; }
+      /* Left-aligned command panel, matching the safehouse lobby aesthetic. */
       .${PREFIX}card {
-        max-width: 520px; width: 92%;
-        max-height: 88vh; overflow-y: auto;
-        padding: 36px 44px;
-        background: rgba(14,16,18,0.94);
-        border: 1px solid rgba(255,122,26,0.28);
-        border-top: 2px solid #ff7a1a;
-        border-radius: 4px; text-align: center;
-        box-shadow: 0 0 80px rgba(0,0,0,0.85), inset 0 1px 0 rgba(255,255,255,0.04);
+        position: relative;
+        width: 40%; min-width: 340px; max-width: 480px;
+        height: 100%; overflow-y: auto;
+        padding: 48px 42px;
+        background: linear-gradient(100deg,
+          rgba(8,9,11,0.97) 0%, rgba(9,11,13,0.95) 70%, rgba(11,13,15,0.6) 100%);
+        border-right: 1px solid rgba(255,122,26,0.20);
+        text-align: left;
+        box-shadow: 26px 0 70px rgba(0,0,0,0.6);
+      }
+      /* Far-left amber stencil stripe (mirrors the safehouse menu). */
+      .${PREFIX}card::before {
+        content: ""; position: absolute; top: 0; left: 0; bottom: 0; width: 4px;
+        background: linear-gradient(#ff7a1a, rgba(255,122,26,0.15));
       }
       .${PREFIX}title {
-        font-size: 34px; font-weight: 900; letter-spacing: 0.10em;
-        text-transform: uppercase; color: #ff7a1a; line-height: 1.05;
+        font-size: 32px; font-weight: 900; letter-spacing: 0.08em;
+        text-transform: uppercase; color: #ff7a1a; line-height: 1.04;
         text-shadow: 0 0 22px rgba(255,122,26,0.5), 0 2px 4px rgba(0,0,0,0.85);
-        margin-bottom: 6px;
+        margin-bottom: 4px;
       }
       .${PREFIX}subtitle {
-        font-size: 13px; font-weight: 800; letter-spacing: 0.16em;
+        font-size: 12px; font-weight: 800; letter-spacing: 0.16em;
         text-transform: uppercase; color: rgba(240,237,232,0.55);
-        margin-bottom: 24px;
+        margin-bottom: 26px;
+        padding-bottom: 18px; border-bottom: 1px solid rgba(255,255,255,0.08);
       }
       .${PREFIX}btnrow {
-        display: flex; flex-wrap: wrap; gap: 12px; justify-content: center;
+        display: flex; flex-direction: column; gap: 11px;
       }
       .${PREFIX}btn {
-        flex: 1 1 40%; min-width: 150px;
-        padding: 14px 18px;
+        width: 100%;
+        padding: 15px 18px; text-align: left;
         font-family: inherit; font-size: 15px; font-weight: 800;
         letter-spacing: 0.10em; text-transform: uppercase;
         color: #f0ede8; cursor: pointer;
-        background: rgba(255,255,255,0.05);
-        border: 1px solid rgba(255,122,26,0.35);
-        border-radius: 4px;
+        background: rgba(255,255,255,0.045);
+        border: 1px solid rgba(255,122,26,0.30);
+        border-left: 3px solid rgba(255,122,26,0.55);
+        border-radius: 3px;
         transition: background 0.14s ease, border-color 0.14s ease, transform 0.06s ease;
       }
-      .${PREFIX}btn:hover { background: rgba(255,122,26,0.18); border-color: #ff7a1a; }
-      .${PREFIX}btn:active { transform: translateY(1px); }
-      .${PREFIX}btn-primary {
-        flex: 1 1 100%;
-        background: rgba(255,122,26,0.16); border-color: #ff7a1a;
+      .${PREFIX}btn:hover {
+        background: rgba(255,122,26,0.18); border-color: #ff7a1a; border-left-color: #ff7a1a;
       }
-      .${PREFIX}btn-primary:hover { background: rgba(255,122,26,0.28); }
+      .${PREFIX}btn:active { transform: translateX(2px); }
+      .${PREFIX}btn-primary {
+        background: rgba(255,122,26,0.18); border-color: #ff7a1a;
+        border-left-color: #ff7a1a;
+      }
+      .${PREFIX}btn-primary:hover { background: rgba(255,122,26,0.30); }
       .${PREFIX}section-label {
         font-size: 12px; font-weight: 800; letter-spacing: 0.18em;
         text-transform: uppercase; color: rgba(240,237,232,0.5);

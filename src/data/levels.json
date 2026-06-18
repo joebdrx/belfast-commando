@@ -2,6 +2,7 @@
   {
     "id": "falls_road",
     "index": 0,
+    "code": "1916",
     "name": "Falls Road",
     "seed": 0,
     "intro": "Operation: Reclaim the Falls. Doors in, invaders out — same as always.",
@@ -12,6 +13,7 @@
   {
     "id": "shankill",
     "index": 1,
+    "code": "1969",
     "name": "Shankill",
     "seed": 1,
     "intro": "Operation: Hold the Shankill. Davy's people are with us now — don't shoot the orange sashes.",
@@ -23,6 +25,7 @@
   {
     "id": "the_markets",
     "index": 2,
+    "code": "0316",
     "name": "The Markets",
     "seed": 2,
     "intro": "Operation: Take the Markets. Tight wee streets — keep your back to a wall.",
@@ -34,6 +37,7 @@
   {
     "id": "the_docks",
     "index": 3,
+    "code": "1845",
     "name": "The Docks",
     "seed": 3,
     "intro": "Operation: Storm the Docks. They came off boats — send them back the same way.",
@@ -45,6 +49,7 @@
   {
     "id": "ardoyne",
     "index": 4,
+    "code": "0707",
     "name": "Ardoyne",
     "seed": 4,
     "intro": "Operation: Break the Ardoyne line. They've dug in deep — kick harder.",
@@ -56,6 +61,7 @@
   {
     "id": "short_strand",
     "index": 5,
+    "code": "2112",
     "name": "Short Strand",
     "seed": 5,
     "intro": "Operation: Relieve the Short Strand. Outnumbered, surrounded — perfect.",
@@ -67,6 +73,7 @@
   {
     "id": "divis_tower",
     "index": 6,
+    "code": "0451",
     "name": "Divis Tower",
     "seed": 6,
     "intro": "Operation: Crown the Divis. Last invader command post in the city is up top. Finish it.",

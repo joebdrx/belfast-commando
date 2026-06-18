@@ -20,7 +20,7 @@ const GRAVITY = 11;
 const TYPES = {
   kick: { count: 10, color: 0xffd27f, speed: 4.0, up: 1.4, life: 0.42, gravity: true, shrink: false, scale: 1.0 },
   explosion: { count: 20, color: 0xffaa44, speed: 8.5, up: 1.6, life: 0.55, gravity: true, shrink: true, scale: 1.3 },
-  blood: { count: 8, color: 0x7a0d0d, speed: 3.2, up: 1.1, life: 0.5, gravity: true, shrink: false, scale: 0.9 },
+  blood: { count: 18, color: 0x7a0d0d, speed: 4.6, up: 1.25, life: 0.55, gravity: true, shrink: false, scale: 0.95 },
   spark: { count: 6, color: 0xffee66, speed: 6.0, up: 0.7, life: 0.32, gravity: false, shrink: true, scale: 0.8 },
 };
 

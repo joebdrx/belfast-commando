@@ -28,50 +28,32 @@ export class RetroMaterial {
     this.uniforms.uSnap.value.set(r.x, r.y);
   }
 
-  /** Nearest-filter a texture in place. */
+  /**
+   * Crunchy PS1 texture filtering: NEAREST magnification (crisp blocky texels up
+   * close) but MIPMAPPED minification so distant tiled surfaces don't shimmer.
+   * Mipmaps stay ON — disabling them made far textures sparkle/"flash".
+   */
   applyTextureFilter(tex) {
     if (!tex) return tex;
-    tex.minFilter = THREE.NearestFilter;
     tex.magFilter = THREE.NearestFilter;
-    tex.generateMipmaps = false;
+    tex.minFilter = THREE.LinearMipmapLinearFilter;
+    tex.generateMipmaps = true;
     tex.needsUpdate = true;
     return tex;
   }
 
-  /** Inject vertex snapping into a material via onBeforeCompile (idempotent). */
+  /**
+   * Vertex snapping is intentionally DISABLED. Quantising clip-space xy made
+   * coplanar layered surfaces (murals/facades/road paint/decals) flip their
+   * depth-test winner frame-to-frame, which read as textures flashing. The
+   * nearest-filter crunch + claustrophobic fog carry the PS1 look without it.
+   * Kept as no-ops so existing call sites (AssetManager) need no changes.
+   */
   patchMaterial(mat) {
-    if (!mat || this._patched.has(mat)) return mat;
-    this._patched.add(mat);
-    const uSnap = this.uniforms.uSnap;
-    const prev = mat.onBeforeCompile;
-    mat.onBeforeCompile = (shader) => {
-      if (prev) prev(shader);
-      shader.uniforms.uSnap = uSnap;
-      shader.vertexShader = "uniform vec2 uSnap;\n" + shader.vertexShader;
-      shader.vertexShader = shader.vertexShader.replace(
-        "#include <project_vertex>",
-        `#include <project_vertex>
-        {
-          vec4 snapPos = gl_Position;
-          snapPos.xyz /= snapPos.w;
-          snapPos.xy = floor(snapPos.xy * uSnap) / uSnap;
-          snapPos.xyz *= snapPos.w;
-          gl_Position = snapPos;
-        }`,
-      );
-    };
-    mat.needsUpdate = true;
     return mat;
   }
 
-  /** Patch every material under an Object3D (GLB models). */
   patchObject(obj) {
-    if (!obj) return obj;
-    obj.traverse((o) => {
-      if (!o.material) return;
-      const mats = Array.isArray(o.material) ? o.material : [o.material];
-      mats.forEach((m) => this.patchMaterial(m));
-    });
     return obj;
   }
 }

@@ -1,0 +1,26 @@
+[
+  {
+    "id": "pistol",
+    "name": "Sidearm",
+    "slug": "weapon_pistol",
+    "cost": 0,
+    "requires": null,
+    "desc": "Standard issue. Always at your hip."
+  },
+  {
+    "id": "boomstick",
+    "name": "Boomstick",
+    "slug": "weapon_shotgun",
+    "cost": 200,
+    "requires": "pistol",
+    "desc": "Close-range devastation. Sawn-off persuasion."
+  },
+  {
+    "id": "smg",
+    "name": "SMG",
+    "slug": "weapon_ak",
+    "cost": 400,
+    "requires": "boomstick",
+    "desc": "Full-auto. For when subtlety has left the building."
+  }
+]

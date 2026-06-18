@@ -273,6 +273,38 @@ export class LevelManager {
     return LEVELS.length;
   }
 
+  // ---- level codes (skip-to-level) -----------------------------------------
+
+  /**
+   * The 4-digit skip code for the campaign entry at `index`.
+   * @param {number} index 0-based campaign index.
+   * @returns {string|null} the code, or null if `index` is out of range.
+   */
+  codeForIndex(index) {
+    const i = index | 0;
+    if (i < 0 || i >= LEVELS.length) return null;
+    const entry = LEVELS[i];
+    return entry && entry.code != null ? String(entry.code) : null;
+  }
+
+  /**
+   * The campaign index whose code matches `code`. Normalizes by trimming and
+   * comparing as a string, and bypasses the `unlockedLevels` gate entirely
+   * (codes are meant to skip ahead).
+   * @param {string} code the entered 4-digit code.
+   * @returns {number} the matching 0-based index, or -1 if none matches.
+   */
+  indexForCode(code) {
+    if (code == null) return -1;
+    const want = String(code).trim();
+    if (!want) return -1;
+    for (let i = 0; i < LEVELS.length; i++) {
+      const c = LEVELS[i] && LEVELS[i].code;
+      if (c != null && String(c).trim() === want) return i;
+    }
+    return -1;
+  }
+
   /** @returns {number} live invader count (delegates to the Level). */
   get enemiesRemaining() {
     return this.level ? this.level.enemiesRemaining : 0;

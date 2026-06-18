@@ -1,3 +1,4 @@
+import * as THREE from "three";
 import { Engine } from "./game/Engine.js";
 import { AssetManager } from "./game/AssetManager.js";
 import { Player } from "./game/Player.js";
@@ -160,14 +161,40 @@ class Game {
     this.achievements.attach();
 
     // Wire the safehouse menu. Upgrades/Story Logs are self-rendered sub-panels
-    // inside Menu; we only need the launch + (optional) exit hooks.
-    this.menu.setProviders({ progression: this.progression });
+    // inside Menu; we only need the launch + (optional) exit hooks. The level
+    // manager backs the landline level-code dial.
+    this.menu.setProviders({ progression: this.progression, levelManager: this.levelManager });
     this.menu.setHandlers({
       onStartOperation: () => this._startCampaign(),
       onUpgrades: () => {},
       onStoryLogs: () => {},
       onExit: () => {},
+      // Landline dial accepted a valid code → remember the skip target for the
+      // next "Start Operation" (door or button). indexForCode already bypassed
+      // the unlock gate. We ALSO pay out RP for that code — but only the first
+      // time it's entered (Progression.redeemCode guards against re-farming).
+      onCodeAccepted: (index) => {
+        this._pendingSkipIndex = index;
+        // Reward scales with sector index so later (harder) levels pay more.
+        // Upgrades cost 50–300 RP, so 150 + index*100 keeps each code worth a
+        // purchase. index 0→150, 1→250, 2→350 ... 6→750.
+        const code = this.levelManager.codeForIndex(index);
+        const reward = 150 + index * 100;
+        const { awarded } = this.progression.redeemCode(code, reward);
+        if (awarded > 0) this.menu.refresh(); // refresh the RP readout
+      },
     });
+
+    // Pending level-code skip (null = start the campaign at sector 1).
+    this._pendingSkipIndex = null;
+
+    // Safehouse 3D interaction: raycast clicks + project floating labels. Temps
+    // are reused every frame so the HUB loop branch never allocates.
+    this._raycaster = new THREE.Raycaster();
+    this._ndc = new THREE.Vector2();
+    this._tmpProj = new THREE.Vector3();
+    this._hubLabels = [];
+    this._buildHubLabels();
 
     // Extraction reached → finish the level.
     this.levelManager.setOnExtract(() => this._completeLevel());
@@ -210,27 +237,40 @@ class Game {
     this.hud.setCrosshairActive(false);
     this.hud.hideOverlay();
     this.hud.setAdrenaline(false);
+    this.hud.setOperationCode(null);
     this._setHudVisible(false);
     this.hub.show();
     this.menu.refresh();
     this.menu.show();
+    this._setHubLabelsVisible(true);
   }
 
-  /** Menu "Start Operation": begin a fresh campaign run at sector 1. */
+  /**
+   * Menu "Start Operation" (button OR safehouse door): begin a campaign run.
+   * Starts at sector 1 unless the player dialled a valid level code on the
+   * safehouse landline, in which case we skip to that sector (one-shot).
+   */
   _startCampaign() {
     if (!this._assetsReady) return; // still streaming Belfast; ignore until ready
     this.audio.init();
     this.menu.hide();
     this.hub.hide();
     this.score.resetAll();
-    this.state.startRun({ levelIndex: 0 });
-    this._loadLevel(0);
+    const index =
+      this._pendingSkipIndex != null && this._pendingSkipIndex >= 0 ? this._pendingSkipIndex : 0;
+    this._pendingSkipIndex = null; // consume the skip
+    this.state.startRun({ levelIndex: index });
+    this._loadLevel(index);
   }
 
   /** Build + deploy into a campaign sector (LEVEL phase). */
   _loadLevel(index) {
     this.weapon.reset();
+    // Every operation starts on the pistol, with only owned weapons selectable.
+    this.weapon.setOwned(this.progression.getOwnedWeapons());
+    this.weapon.setWeaponById("pistol");
     this.juice.reset();
+    this._setHubLabelsVisible(false);
     this.pauseMenu.hide();
     this.modifiers.clear(); // drop any previous sector's modifier
     this.abilities.refresh();
@@ -276,6 +316,9 @@ class Game {
     this.progression.save();
 
     this.hud.setLevel(index + 1);
+    // Surface the operation's 4-digit skip code so the player can note it and
+    // dial it from the safehouse landline later (clearly labelled in the HUD).
+    this.hud.setOperationCode(this.levelManager.codeForIndex(index));
     this.hud.setWeapon(this.weapon.current.name);
     this.hud.setAmmo(this.weapon.ammo[this.weapon.index], this.weapon.current.mag, false);
     this.hud.setObjective(
@@ -405,8 +448,10 @@ class Game {
   _bindUI() {
     // The #overlay card is used only for PAUSED + RESULTS (HUB uses Menu).
     document.getElementById("overlay").addEventListener("click", () => this._handlePrimaryClick());
-    this.dom.addEventListener("click", () => {
-      if (this.phase === "LEVEL" && !this.paused && document.pointerLockElement !== this.dom) {
+    this.dom.addEventListener("click", (e) => {
+      if (this.phase === "HUB") {
+        this._onHubClick(e);
+      } else if (this.phase === "LEVEL" && !this.paused && document.pointerLockElement !== this.dom) {
         this._requestLock();
       }
     });
@@ -454,6 +499,97 @@ class Game {
     if (p && typeof p.catch === "function") p.catch(() => {});
   }
 
+  // ---- safehouse 3D interaction (HUB) ------------------------------------
+
+  /**
+   * Build a floating DOM label per hub interactable, once. The labels live in
+   * `#hub-labels` (index.html); their world anchors are fixed (hub fixtures
+   * never move) so the loop only re-projects them each frame.
+   */
+  _buildHubLabels() {
+    this._hubLabelsEl = document.getElementById("hub-labels");
+    if (!this._hubLabelsEl) return;
+    const interactables = this.hub.getInteractables ? this.hub.getInteractables() : [];
+    for (const it of interactables) {
+      const el = document.createElement("div");
+      el.className = "hub-label";
+      el.textContent = it.label;
+      el.style.opacity = "0";
+      this._hubLabelsEl.appendChild(el);
+      this._hubLabels.push({ el, anchor: it.anchor });
+    }
+  }
+
+  /** Show/hide the whole floating-label layer (HUB only). */
+  _setHubLabelsVisible(visible) {
+    if (this._hubLabelsEl) this._hubLabelsEl.style.display = visible ? "block" : "none";
+  }
+
+  /** Project each interactable's world anchor to screen space (reused temps). */
+  _updateHubLabels() {
+    if (!this._hubLabels.length) return;
+    const cam = this.engine.camera;
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    for (const lbl of this._hubLabels) {
+      this._tmpProj.copy(lbl.anchor).project(cam);
+      const onScreen =
+        this._tmpProj.z < 1 &&
+        this._tmpProj.x >= -1.05 && this._tmpProj.x <= 1.05 &&
+        this._tmpProj.y >= -1.05 && this._tmpProj.y <= 1.05;
+      if (!onScreen) {
+        lbl.el.style.opacity = "0";
+        continue;
+      }
+      // Clamp within the viewport so edge fixtures (e.g. the wall phone) don't
+      // bleed off-screen. Labels are centre-anchored (translateX(-50%)), so keep
+      // a half-width margin; also avoid the left options panel (~40% width).
+      const half = (lbl.el.offsetWidth || 220) / 2 + 8;
+      const px = (this._tmpProj.x * 0.5 + 0.5) * w;
+      lbl.el.style.left = `${Math.min(Math.max(px, half), w - half)}px`;
+      lbl.el.style.top = `${(-this._tmpProj.y * 0.5 + 0.5) * h}px`;
+      lbl.el.style.opacity = "1";
+    }
+  }
+
+  /** Raycast a HUB cursor click against the hub interactables and dispatch. */
+  _onHubClick(e) {
+    if (this.phase !== "HUB") return;
+    const interactables = this.hub.getInteractables ? this.hub.getInteractables() : [];
+    if (!interactables.length) return;
+
+    const rect = this.dom.getBoundingClientRect();
+    this._ndc.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+    this._ndc.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+    this._raycaster.setFromCamera(this._ndc, this.engine.camera);
+
+    const objects = interactables.map((it) => it.object3D);
+    const hits = this._raycaster.intersectObjects(objects, true);
+    if (!hits.length) return;
+
+    // Walk up the hit object's ancestry to find which interactable it belongs to.
+    let node = hits[0].object;
+    while (node) {
+      const match = interactables.find((it) => it.object3D === node);
+      if (match) {
+        this._dispatchHubAction(match.id);
+        return;
+      }
+      node = node.parent;
+    }
+  }
+
+  /** Map a hub interactable id to its action. */
+  _dispatchHubAction(id) {
+    if (id === "start") {
+      this._startCampaign();
+    } else if (id === "upgrades") {
+      this.menu.openUpgrades();
+    } else if (id === "phone") {
+      this.menu.openDial();
+    }
+  }
+
   // ---- main loop ---------------------------------------------------------
 
   _loop(now) {
@@ -481,6 +617,7 @@ class Game {
       this.floating.update(realDt);
     } else if (this.phase === "HUB") {
       this.hub.update(realDt);
+      this._updateHubLabels();
     }
 
     this.hud.update(dt);

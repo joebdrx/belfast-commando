@@ -1,6 +1,8 @@
 import * as THREE from "three";
 import { Enemy } from "./Enemy.js";
 import { EnemyDirector } from "./EnemyDirector.js";
+import { footprintCollider, blockPlan } from "./BuildingLayout.js";
+import { Victim } from "./Victim.js";
 
 const _ray = new THREE.Ray();
 const _dir = new THREE.Vector3();
@@ -105,6 +107,8 @@ export class Level {
     this.doors = [];
     /** @type {Enemy[]} */
     this.enemies = [];
+    /** @type {Victim[]} */
+    this.victims = [];
     // Archetype mix scales with sector index. Deterministic enough; uses the
     // global RNG so each run varies. Drives _addEnemy when no archetype is given.
     this._director = new EnemyDirector(index || 0);
@@ -207,16 +211,22 @@ export class Level {
     // --- 3×3 terraced blocks: enclosed rooms with kickable doors. ---------
     // Roughly half the blocks hide an invader; the rest are empty rooms to
     // breach. Street enemies (added below) guarantee a fight regardless.
-    for (const cz of COORDS_Z) {
-      for (const cx of COORDS_X) {
-        const enemyCount = 2 + (rng() < 0.5 ? 1 : 0); // 2–3 occupied rooms per building
-        this._buildBlock(cx, cz, enemyCount, rng);
-      }
-    }
+    COORDS_Z.forEach((cz, row) => {
+      COORDS_X.forEach((cx, col) => {
+        const plan = blockPlan(col, row, this.index);
+        if (plan.kind === "interior") {
+          const enemyCount = 2 + (rng() < 0.5 ? 1 : 0);
+          this._buildBlock(cx, cz, enemyCount, rng);
+        } else {
+          this._buildModelBlock(cx, cz, plan.template, rng);
+        }
+      });
+    });
 
     // --- Street network paint + far horizon. ------------------------------
     this._buildRoadPaint();
     this._buildBackdrop();
+    this._buildBoundary();
 
     // --- Street cover: crates + explosive barrels in the open lanes. ------
     const coverCount = 6 + this.index * 2;
@@ -237,8 +247,9 @@ export class Level {
       placed++;
     }
 
-    // Burnt-out car roadblock at the cross-street intersection (cover + LOS).
+    // Burnt-out car roadblocks at the two cross-street intersections (cover + LOS).
     this._buildCar(PITCH_X / 2, 0);
+    this._buildCar(-PITCH_X / 2, 0);
 
     // --- Street enemies patrolling the open grid. -------------------------
     const streetEnemies = 12 + this.index * 3;
@@ -259,6 +270,66 @@ export class Level {
     // --- Set-dressing props + sectarian wall murals. ----------------------
     this._setDressing(rng);
     this._addMurals(rng);
+
+    // --- Rescuable victims held by enemies. --------------------------------
+    this._spawnVictims(rng);
+  }
+
+  /**
+   * Spawn 2–3 rescuable civilians:
+   *   • At least one INSIDE an interior building (near block centre, a captor enemy beside them).
+   *   • At least one in a STREET (with 2 attacker enemies nearby).
+   * Victims are pushed to `this.victims`, NEVER to `this.enemies`.
+   * @param {()=>number} rng  Seeded RNG from _buildProcedural.
+   */
+  _spawnVictims(rng) {
+    const { PITCH_X, PITCH_Z } = this;
+
+    // Helper: add a victim at (vx, vz). Prefer the rigged (animated) victim so
+    // she runs rather than slides; fall back to a static model, then a capsule.
+    const addVictim = (vx, vz) => {
+      const rig = this.assets && this.assets.getVictimRig && this.assets.getVictimRig();
+      const opts = rig ? { rig } : { model: this.assets && this.assets.getModel("enemy_victim") };
+      const v = new Victim(new THREE.Vector3(vx, 0, vz), opts);
+      this.group.add(v.group);
+      this.victims.push(v);
+      return v;
+    };
+
+    // --- Interior victim ---------------------------------------------------
+    // Interior blocks at col0/row1 (cx=-24, cz=+33) and col2/row0 (cx=+24, cz=-33).
+    // Pick one at random via the seeded RNG.
+    const interiorCentres = [
+      { x: -PITCH_X, z: PITCH_Z / 2 },
+      { x: PITCH_X,  z: -PITCH_Z / 2 },
+    ];
+    const ic = interiorCentres[rng() < 0.5 ? 0 : 1];
+    // Place the victim slightly inside the footprint, offset from dead centre.
+    const ivx = ic.x + (rng() - 0.5) * 3;
+    const ivz = ic.z + (rng() - 0.5) * 10;
+    const iv = addVictim(ivx, ivz);
+    // One captor enemy ~2m to the side — tagged so it menaces the victim.
+    this._addEnemy(new THREE.Vector3(ivx + 1.5, 0, ivz), {});
+    this.enemies[this.enemies.length - 1]._guardingVictim = iv;
+
+    // --- Street victim(s) --------------------------------------------------
+    // 1–2 street victims (level 0 → 1, higher levels → 2).
+    const streetCount = this.index > 0 ? 2 : 1;
+    let placed = 0;
+    for (let guard = 0; placed < streetCount && guard < streetCount * 40; guard++) {
+      const vx = (rng() - 0.5) * this.GRID_HALF_X * 1.8;
+      const vz = (rng() - 0.5) * this.GRID_HALF_Z * 1.8;
+      if (!this._inStreet(vx, vz)) continue;
+      // Keep away from the player spawn.
+      if (Math.hypot(vx - this.spawn.x, vz - this.spawn.z) < 12) continue;
+      const sv = addVictim(vx, vz);
+      // Two attacker enemies — both tagged so they menace the victim.
+      this._addEnemy(new THREE.Vector3(vx + 2.0, 0, vz), {});
+      this.enemies[this.enemies.length - 1]._guardingVictim = sv;
+      this._addEnemy(new THREE.Vector3(vx - 2.0, 0, vz + 1.0), {});
+      this.enemies[this.enemies.length - 1]._guardingVictim = sv;
+      placed++;
+    }
   }
 
   /**
@@ -345,26 +416,25 @@ export class Level {
     this._buildRoof(cx, cz);
     this._buildChimney(cx, cz);
 
-    // --- Cladding: tenement photo on the long sides, model facades on the ends.
-    if (this._materials.sideHouse) {
-      const backRotY = doorSide === 1 ? -Math.PI / 2 : Math.PI / 2;
-      const doorRotY = doorSide === 1 ? Math.PI / 2 : -Math.PI / 2;
-      // Solid back wall — one panel.
-      this._sideWall(backWallX - doorSide * 0.31, wallH / 2, cz, backRotY, this.BLOCK_L, wallH);
-      // Door wall — a panel per solid segment (doorways stay open).
-      let s = cz - halfL;
-      for (let i = 0; i <= N; i++) {
-        const e = i < N ? roomZ(i) - doorW / 2 : cz + halfL;
-        if (e - s > 0.4) {
-          this._sideWall(doorWallX + doorSide * 0.31, wallH / 2, (s + e) / 2, doorRotY, e - s, wallH);
-        }
-        if (i < N) s = roomZ(i) + doorW / 2;
+    // --- Cladding: uniform BRICK on every exterior face (long sides + ends), at
+    // a real-world brick scale (no stretching). The grimy-photo/baked-facade
+    // cladding is gone — interior buildings now read as solid brick all round.
+    const backRotY = doorSide === 1 ? -Math.PI / 2 : Math.PI / 2;
+    const doorRotY = doorSide === 1 ? Math.PI / 2 : -Math.PI / 2;
+    // Solid back long wall — one panel.
+    this._brickWall(backWallX - doorSide * 0.31, wallH / 2, cz, backRotY, this.BLOCK_L, wallH);
+    // Door long wall — a panel per solid segment (doorways stay open).
+    let s = cz - halfL;
+    for (let i = 0; i <= N; i++) {
+      const e = i < N ? roomZ(i) - doorW / 2 : cz + halfL;
+      if (e - s > 0.4) {
+        this._brickWall(doorWallX + doorSide * 0.31, wallH / 2, (s + e) / 2, doorRotY, e - s, wallH);
       }
+      if (i < N) s = roomZ(i) + doorW / 2;
     }
-    if (this._facades.length) {
-      this._addFacade(cx, wallH / 2, cz - halfL - 0.32, Math.PI, this.BLOCK_W); // north end
-      this._addFacade(cx, wallH / 2, cz + halfL + 0.32, 0, this.BLOCK_W); // south end
-    }
+    // End (short) walls — brick too, so the whole shell is brick.
+    this._brickWall(cx, wallH / 2, cz - halfL - 0.32, Math.PI, this.BLOCK_W, wallH); // north end faces -Z
+    this._brickWall(cx, wallH / 2, cz + halfL + 0.32, 0, this.BLOCK_W, wallH); // south end faces +Z
 
     // Garrison `enemyCount` distinct random rooms (released when their door breaks).
     const order = [];
@@ -376,6 +446,175 @@ export class Level {
     for (let k = 0; k < Math.min(enemyCount, N); k++) {
       this._addEnemy(new THREE.Vector3(cx, 0, roomZ(order[k])), {});
     }
+  }
+
+  /**
+   * Exterior-only block: a building-model template tiled into a terraced row
+   * down the block's long (Z) run, plus ONE footprint collider matching the
+   * block (never the model mesh — keeps the street grid walkable). Falls back to
+   * the procedural block if the template model isn't available.
+   */
+  _buildModelBlock(cx, cz, slug, rng) {
+    const probe = this.assets && this.assets.getModel(slug);
+    if (!probe) { this._buildBlock(cx, cz, 0, rng); return; } // safe fallback
+
+    // Pavement apron (matches the interior blocks' look; walk-over, no collider).
+    const pave = new THREE.Mesh(
+      new THREE.BoxGeometry(this.BLOCK_W + 3, 0.12, this.BLOCK_L + 3),
+      this._materials.pavement,
+    );
+    pave.position.set(cx, 0.06, cz);
+    this.group.add(pave);
+
+    // Face the model's front toward the inner street (east blocks face -X, etc.).
+    // The middle column (cx≈0) is rotated 90° ("horizontal") so its buildings
+    // run across rather than straight down the central lane.
+    const faceY = cx < -0.5 ? Math.PI / 2 : cx > 0.5 ? -Math.PI / 2 : Math.PI / 2;
+    const rotated = Math.abs(Math.sin(faceY)) > 0.5; // ±90° → local X runs along world Z
+    const frontSign = Math.sign(Math.sin(faceY)) || 1; // +1 → facades face +X; -1 → -X
+
+    // Measure ANY model's footprint (before rotating) and map its axes to the
+    // block's long run (Z) and frontage depth (X). Generalised from the old
+    // single-template probe so each placed model is measured individually —
+    // models have DIFFERENT depths, so a single tile step would overlap/gap.
+    const measure = (m) => {
+      const s = new THREE.Box3().setFromObject(m).getSize(new THREE.Vector3());
+      return { run: Math.max(2, rotated ? s.x : s.z), front: Math.max(2, rotated ? s.z : s.x) };
+    };
+
+    // Per-block tile pattern: mostly mid-size houses (terrace/shop) with an
+    // occasional different building (collapsed) and a sparing church landmark.
+    // Varies by grid position + sector index so adjacent blocks read differently.
+    const pickSlug = this._terracePattern(slug, cx, cz);
+
+    // Build the tile list, measuring EACH model's own depth and clamping it to a
+    // mid-size band so no single model dominates the terrace. Greedily fill the
+    // block length; we then uniformly normalise so tiles fill it edge-to-edge.
+    const RUN_MIN = 7, RUN_MAX = 13, GAP = 0.45;
+    const tiles = [];
+    let acc = 0;
+    for (let i = 0; tiles.length < 12; i++) {
+      const tslug = pickSlug(i);
+      let m = this.assets.getModel(tslug) || this.assets.getModel(slug) || probe;
+      const dim = measure(m); // measured BEFORE any rotation/scale is applied
+      const eff = Math.min(RUN_MAX, Math.max(RUN_MIN, dim.run));
+      const add = eff + (tiles.length ? GAP : 0);
+      if (tiles.length && acc + add > this.BLOCK_L + 1.0) break;
+      tiles.push({ slug: tslug, model: m, run: dim.run, front: dim.front, eff });
+      acc += add;
+      if (acc >= this.BLOCK_L - 0.5) break;
+    }
+    if (!tiles.length) { const d = measure(probe); tiles.push({ slug, model: probe, run: d.run, front: d.front, eff: d.run }); }
+
+    // Normalise so the row fills the block edge-to-edge (no centred gaps, matches
+    // the footprint collider). Each tile advances the Z cursor by ITS OWN depth.
+    const n = tiles.length;
+    const sumEff = tiles.reduce((a, t) => a + t.eff, 0) || 1;
+    const k = (this.BLOCK_L - GAP * (n - 1)) / sumEff;
+    let cursor = cz - this.BLOCK_L / 2;
+    for (let i = 0; i < n; i++) {
+      const t = tiles[i];
+      const sRun = t.eff * k;                  // this tile's final run depth (Z)
+      const runScale = sRun / t.run;           // per-model scale from its measured depth
+      const frontScale = this.BLOCK_W / t.front;
+      const m = t.model;
+      m.rotation.y = faceY;
+      if (rotated) { m.scale.x *= runScale; m.scale.z *= frontScale; }
+      else { m.scale.z *= runScale; m.scale.x *= frontScale; }
+      m.position.set(cx, 0, cursor + sRun / 2);
+      this._brightenBuildingModel(m, t.slug); // lift the over-dark bldg_collapsed
+      this.group.add(m);
+      cursor += sRun + (i < n - 1 ? GAP : 0);
+    }
+
+    // Brick BACK + SIDE walls so walking around the block reveals no bare faces
+    // (the tiled models are essentially front facades). Front stays open.
+    this._cladModelBlockShell(cx, cz, frontSign);
+
+    // One clean footprint collider + LOS blocker for the whole block.
+    const box = footprintCollider(cx, cz, this.BLOCK_W, this.WALL_H, this.BLOCK_L);
+    this.colliders.push(box);
+    this.losBlockers.push(box);
+  }
+
+  /**
+   * Per-block terrace pattern (a function of the tile index). Favours the two
+   * mid-size houses (terrace/shop), drops in `bldg_collapsed` as occasional
+   * variety every third tile, and uses the large `bldg_church` only as a single
+   * landmark at the head of church-assigned blocks. Seeded by grid position +
+   * sector index so neighbouring blocks alternate differently.
+   */
+  _terracePattern(primary, cx, cz) {
+    const col = cx < -0.5 ? 0 : cx > 0.5 ? 2 : 1;
+    const row = cz < 0 ? 0 : 1;
+    const seed = col * 2 + row + (this.index | 0);
+    const mids = ["bldg_terrace", "bldg_shop"];
+    const base = mids[seed % 2];
+    const alt = mids[(seed + 1) % 2];
+    const vphase = seed % 3;
+    const churchBlock = primary === "bldg_church";
+    return (i) => {
+      if (churchBlock && i === 0) return "bldg_church"; // one landmark per church block
+      const j = i + vphase;
+      if (j % 3 === 2) return "bldg_collapsed";          // occasional different building
+      return (j % 2 === 0) ? base : alt;                 // otherwise alternate the houses
+    };
+  }
+
+  /**
+   * Wrap a model block's footprint with BRICK walls on the BACK long face and
+   * the two SHORT end faces, leaving the street-facing front (where the model
+   * facades sit) open. Sized to BLOCK_W × WALL_H × BLOCK_L, nudged just outside
+   * the footprint so they never z-fight the model or clip the street.
+   */
+  _cladModelBlockShell(cx, cz, frontSign) {
+    const halfW = this.BLOCK_W / 2;
+    const halfL = this.BLOCK_L / 2;
+    const h = this.WALL_H;
+    // Back long wall — opposite the facades, facing outward (-frontSign·X).
+    const backX = cx - frontSign * halfW;
+    this._brickWall(backX - frontSign * 0.05, h / 2, cz, -frontSign * Math.PI / 2, this.BLOCK_L, h);
+    // Two end walls, facing outward along ∓Z.
+    this._brickWall(cx, h / 2, cz - halfL - 0.05, Math.PI, this.BLOCK_W, h);
+    this._brickWall(cx, h / 2, cz + halfL + 0.05, 0, this.BLOCK_W, h);
+  }
+
+  /**
+   * Detect and lift the one over-dark building model. `bldg_collapsed` bakes a
+   * charred near-black "Black" material (confirmed via gltf-transform inspect:
+   * white baseColorFactor but a very dark diffuse texture); the others render at
+   * normal brightness. We brighten by NAME/colour (the charred surface) plus a
+   * gentle, capped lift across the rest of the collapsed model — never touching
+   * the other three. Idempotent via a userData flag (model materials are shared
+   * across getModel clones, so this runs once per material).
+   */
+  _brightenBuildingModel(root, slug) {
+    const darkModel = slug === "bldg_collapsed";
+    root.traverse((o) => {
+      if (!o.isMesh || !o.material) return;
+      const mats = Array.isArray(o.material) ? o.material : [o.material];
+      for (const m of mats) {
+        if (!m || !m.color || (m.userData && m.userData._bcLit)) continue;
+        const maxc = Math.max(m.color.r, m.color.g, m.color.b);
+        const charred = /black|char|burn|soot|coal|ash/i.test(m.name || "");
+        if (charred || maxc < 0.3) {
+          // Charred near-black surface → warm it and add a flat emissive floor so
+          // it stops reading as pure black (texture stays dark; emissive lifts it).
+          m.color.setRGB(1.0, 0.84, 0.72);
+          if (m.emissive) m.emissive.setHex(0x3a2a1e);
+          m.emissiveIntensity = 1.0;
+          m.userData._bcLit = true;
+          m.needsUpdate = true;
+        } else if (darkModel) {
+          // Rest of the (uniformly dim) collapsed model → gentle capped lift.
+          m.color.setRGB(Math.min(1.35, m.color.r * 1.3), Math.min(1.35, m.color.g * 1.3), Math.min(1.35, m.color.b * 1.3));
+          if (m.emissive) m.emissive.setHex(0x1a130d);
+          m.emissiveIntensity = 0.8;
+          m.userData._bcLit = true;
+          m.needsUpdate = true;
+        }
+      }
+    });
   }
 
   /**
@@ -393,6 +632,30 @@ export class Level {
     mesh.position.set(x, y, z);
     mesh.rotation.y = rotY;
     this.group.add(mesh);
+  }
+
+  /**
+   * A BRICK-clad wall panel. UVs are scaled to a steady real-world brick size
+   * (~TILE_M metres per texture tile on both axes) so bricks never stretch on
+   * tall/long walls — final tiling = geometry UV × the brick map's own repeat.
+   * Shared brick material (one draw material); per-panel geometry UVs do the
+   * scaling, so tall and long walls all read at the same brick scale.
+   */
+  _brickWall(x, y, z, rotY, w, h) {
+    const TILE_M = 4; // metres of wall per brick-texture tile
+    const mat = this._materials.brick;
+    const rep = mat && mat.map && mat.map.repeat ? mat.map.repeat : { x: 1, y: 1 };
+    const geo = new THREE.PlaneGeometry(w, h);
+    const uv = geo.attributes.uv;
+    const sx = Math.max(1, (w / TILE_M) / (rep.x || 1));
+    const sy = Math.max(1, (h / TILE_M) / (rep.y || 1));
+    for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * sx, uv.getY(i) * sy);
+    uv.needsUpdate = true;
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.set(x, y, z);
+    mesh.rotation.y = rotY;
+    this.group.add(mesh);
+    return mesh;
   }
 
   /** Pitched gable roof, ridge running along Z (the long axis) over the terrace. */
@@ -520,16 +783,175 @@ export class Level {
 
   /** Distant hazy hills ringing the quarter, far off on the horizon. */
   _buildBackdrop() {
-    const baseR = Math.max(this.GRID_HALF_X, this.GRID_HALF_Z) + 62; // beyond the buildings
-    const n = 22;
+    // The Belfast city skyline (below) is the backdrop now; a couple of faint,
+    // far hills behind it just fill the lowest horizon gaps between city copies.
+    const baseR = Math.max(this.GRID_HALF_X, this.GRID_HALF_Z) + 150; // well beyond the skyline
+    const n = 10;
     for (let i = 0; i < n; i++) {
       const a = (i / n) * Math.PI * 2;
-      const r = baseR + (i % 3) * 12;
-      const hill = new THREE.Mesh(new THREE.SphereGeometry(30, 12, 8), this._materials.hill);
-      hill.scale.set(2.2, 0.6 + (i % 4) * 0.12, 1);
-      hill.position.set(Math.cos(a) * r, -14, Math.sin(a) * r);
+      const hill = new THREE.Mesh(new THREE.SphereGeometry(30, 10, 6), this._materials.hill);
+      hill.scale.set(2.6, 0.5, 1);
+      hill.position.set(Math.cos(a) * baseR, -16, Math.sin(a) * baseR);
       this.group.add(hill);
     }
+    this._buildSkyline();
+  }
+
+  /**
+   * City skyline backdrop ringed around the map edges (Belfast city model).
+   * FOG-AFFECTED so the distant skyline dissolves into the uniform grey veil —
+   * no hard horizon edge. Each copy faces the map centre; sunk slightly to hide
+   * its base.
+   */
+  _buildSkyline() {
+    if (!this.assets) return; // each copy is a getModel probe; absent slug → no-op
+    // Distant HORIZON ring: pushed far past the playable grid so it can never
+    // interfere with the walkable area. Multiple copies of the same city model
+    // evenly ring the horizon; each is fog-affected so it fades into the grey,
+    // and frustum-culled so only the few in view ever render.
+    const RX = this.GRID_HALF_X + 150; // ≈181
+    const RZ = this.GRID_HALF_Z + 150; // ≈211
+    const COPIES = 8;
+    for (let i = 0; i < COPIES; i++) {
+      const a = (i / COPIES) * Math.PI * 2;
+      const px = Math.cos(a) * RX;
+      const pz = Math.sin(a) * RZ;
+      const m = this.assets.getModel("bldg_skyline");
+      if (!m) continue;
+      m.position.set(px, 6, pz); // raised so the city looms taller on the horizon
+      m.scale.multiplyScalar(1.35); // taller/more imposing skyline
+      m.rotation.y = Math.atan2(-px, -pz); // city facade faces the map centre
+      m.traverse((o) => {
+        if (!o.material) return;
+        const mats = Array.isArray(o.material) ? o.material : [o.material];
+        mats.forEach((mat) => { mat.fog = true; mat.needsUpdate = true; });
+      });
+      this.group.add(m);
+    }
+  }
+
+  /**
+   * Belfast peace-wall boundary: a closed rectangle of VISIBLE ~5m cement slabs
+   * (the actual barrier that contains the player) crowned with razor barbwire,
+   * backed by recessed exterior building models that tower above the wall.
+   */
+  _buildBoundary() {
+    const BX = this.GRID_HALF_X + 12; // ~43 — just past the outer blocks
+    const BZ = this.GRID_HALF_Z + 12; // ~73 — past the spawn approach (z≈68)
+    const WH = 5; // visible cement wall height — buildings still tower above it
+    const T = 0.6; // slab thickness
+    const wall = this._materials.concrete;
+    // Closed rectangle of visible concrete slabs, flush on each boundary plane.
+    // These ARE the barrier (colliders + LOS blockers): a 5m wall is far taller
+    // than the 1.7m player, so containment is preserved. Slabs span the full
+    // boundary length so there is no gap. The recessed facades below sit ~0.6m
+    // inside the plane (the slab's inner face is ~0.3m inside) → no coplanar
+    // faces, so no z-fighting; the taller buildings read clearly above the wall.
+    this._box(2 * BX, WH, T, wall, 0, WH / 2, -BZ, { los: true });
+    this._box(2 * BX, WH, T, wall, 0, WH / 2, BZ, { los: true });
+    this._box(T, WH, 2 * BZ, wall, -BX, WH / 2, 0, { los: true });
+    this._box(T, WH, 2 * BZ, wall, BX, WH / 2, 0, { los: true });
+    // Razor / concertina barbwire crowning the wall tops.
+    this._buildBarbwire(BX, BZ, WH);
+    // Clad with exterior building models — RECESSED so they read as facades on
+    // the barrier. Each model's body is pushed fully OUTWARD past the wall so
+    // only its front face shows; nothing protrudes inward for the player to clip
+    // through. Spaced tightly so the facades read as a continuous street wall.
+    if (!this.assets) return;
+    const TPL = ["bldg_terrace", "bldg_collapsed", "bldg_shop", "bldg_church"];
+    let n = 0;
+    const _box = new THREE.Box3();
+    // out = outward sign on `axis`; barrier = wall coordinate. Place the model,
+    // then shift it along `axis` so its INNER face (toward the play area) lands
+    // ~0.6m inside the wall plane — robust to off-centre pivots, deep naves and
+    // spires, so no building body ever protrudes into the street.
+    const clad = (x, z, faceY, axis, out) => {
+      const slug = TPL[n++ % TPL.length];
+      const m = this.assets.getModel(slug);
+      if (!m) return;
+      m.rotation.y = faceY;
+      m.position.set(x, 0, z);
+      m.updateMatrixWorld(true);
+      _box.setFromObject(m);
+      const innerFace = out > 0 ? _box.min[axis] : _box.max[axis];
+      const wallC = axis === "x" ? BX : BZ;
+      const target = (out > 0 ? wallC : -wallC) - out * 0.6;
+      m.position[axis] += target - innerFace;
+      this._brightenBuildingModel(m, slug); // lift the over-dark bldg_collapsed here too
+      this.group.add(m);
+    };
+    const STEP = 11;
+    for (let x = -BX + 6; x <= BX - 6; x += STEP) {
+      clad(x, -BZ, 0, "z", -1); // south wall: facade faces +Z (inward), body pushed -Z
+      clad(x, BZ, Math.PI, "z", 1); // north wall: facade faces -Z, body pushed +Z
+    }
+    for (let z = -BZ + 6; z <= BZ - 6; z += STEP) {
+      clad(-BX, z, Math.PI / 2, "x", -1); // west wall: facade faces +X
+      clad(BX, z, -Math.PI / 2, "x", 1); // east wall: facade faces -X
+    }
+  }
+
+  /**
+   * Cheap concertina razor-wire crowning the cement boundary walls. Two
+   * InstancedMeshes (one draw call each): low-poly torus "coils" strung along
+   * each wall top, plus thin angled support posts leaning outward over the edge.
+   * Purely decorative — no colliders.
+   */
+  _buildBarbwire(BX, BZ, topY) {
+    const mat = new THREE.MeshStandardMaterial({ color: 0x2a2c2e, metalness: 0.6, roughness: 0.5 });
+    // Each run: `axis` is the direction the wall (and the wire) runs along.
+    const runs = [
+      { axis: "x", fixed: -BZ, from: -BX, to: BX },
+      { axis: "x", fixed: BZ, from: -BX, to: BX },
+      { axis: "z", fixed: -BX, from: -BZ, to: BZ },
+      { axis: "z", fixed: BX, from: -BZ, to: BZ },
+    ];
+    const COIL_STEP = 0.9;
+    const POST_STEP = 4.5;
+    // Count instances up front so each InstancedMesh is exactly sized.
+    let coilN = 0;
+    let postN = 0;
+    for (const r of runs) {
+      const len = r.to - r.from;
+      coilN += Math.max(1, Math.floor(len / COIL_STEP)) + 1;
+      postN += Math.max(1, Math.floor(len / POST_STEP)) + 1;
+    }
+    const coils = new THREE.InstancedMesh(new THREE.TorusGeometry(0.34, 0.035, 5, 8), mat, coilN);
+    const posts = new THREE.InstancedMesh(new THREE.BoxGeometry(0.06, 0.95, 0.06), mat, postN);
+    const d = new THREE.Object3D();
+    const coilY = topY + 0.34; // coil rests on the wall top
+    let ci = 0;
+    let pi = 0;
+    for (const r of runs) {
+      const len = r.to - r.from;
+      const along = r.axis;
+      const outward = r.fixed < 0 ? -1 : 1; // away from the map centre
+      const nCoil = Math.max(1, Math.floor(len / COIL_STEP));
+      for (let i = 0; i <= nCoil; i++) {
+        const t = r.from + (len * i) / nCoil;
+        d.position.set(along === "x" ? t : r.fixed, coilY, along === "x" ? r.fixed : t);
+        // Orient the coil so its axis follows the run (concertina look).
+        d.rotation.set(0, along === "x" ? Math.PI / 2 : 0, 0);
+        d.updateMatrix();
+        coils.setMatrixAt(ci++, d.matrix);
+      }
+      const nPost = Math.max(1, Math.floor(len / POST_STEP));
+      for (let i = 0; i <= nPost; i++) {
+        const t = r.from + (len * i) / nPost;
+        d.position.set(along === "x" ? t : r.fixed, topY + 0.45, along === "x" ? r.fixed : t);
+        // Lean the post outward over the wall edge.
+        if (along === "x") d.rotation.set(outward * 0.4, 0, 0);
+        else d.rotation.set(0, 0, -outward * 0.4);
+        d.updateMatrix();
+        posts.setMatrixAt(pi++, d.matrix);
+      }
+    }
+    coils.instanceMatrix.needsUpdate = true;
+    posts.instanceMatrix.needsUpdate = true;
+    coils.frustumCulled = false;
+    posts.frustumCulled = false;
+    this.group.add(coils);
+    this.group.add(posts);
   }
 
   /** True when (x,z) is in a street lane, not inside a building footprint. */
@@ -619,8 +1041,32 @@ export class Level {
       }
     };
 
-    // Phone booth on a corner pavement.
-    place("prop_phone_booth", -this.PITCH_X / 2 + 1.2, this.GRID_HALF_Z - 6, 0, [0.5, 0.5, 2.4]);
+    // Phone booth standing ON the pavement apron at the east edge of the
+    // cx=-24 block (apron x∈[-32.5,-15.5]; building face at x=-17), facing the
+    // street. x=-16.2 sits in the ~1.5m pavement strip, clear of the building.
+    place("prop_phone_booth", -16.2, 52, -Math.PI / 2, [0.5, 0.5, 2.4]);
+
+    // Heavier, collidable street furniture for cover + a populated feel. Each
+    // sits on a pavement edge (just off a building face) or in an open lane,
+    // with a footprint collider [hw(x), hd(z), h(y)] hugging the model. Traffic
+    // cones stay collider-free (footprint null). Positions are hand-placed and
+    // verified against the block/apron spans so nothing clips a building.
+    const furniture = [
+      ["prop_wheelie_bin", -16.2, 24.0, -Math.PI / 2, [0.34, 0.34, 1.0]],
+      ["prop_wheelie_bin", -16.2, 25.3, -Math.PI / 2, [0.34, 0.34, 1.0]],
+      ["prop_wheelie_bin", 8.0, -22.0, Math.PI / 2, [0.34, 0.34, 1.0]],
+      ["prop_wheelie_bin", -8.0, 40.0, -Math.PI / 2, [0.34, 0.34, 1.0]],
+      ["prop_bicycle", -16.3, -20.0, 0, [0.26, 0.9, 1.0]],
+      ["prop_bicycle", 16.3, 30.0, 0, [0.26, 0.9, 1.0]],
+      ["crate_supply", -12.0, 14.0, 0.3, [0.55, 0.55, 1.1]],
+      ["crate_supply", 12.0, -14.0, -0.4, [0.55, 0.55, 1.1]],
+      ["sandbag_barricade", -12.0, 48.0, 0, [0.9, 0.55, 1.0]],
+      ["sandbag_barricade", 12.0, 18.0, Math.PI / 2, [0.55, 0.9, 1.0]],
+      ["prop_traffic_cone", -12.0, 11.0, 0, null],
+      ["prop_traffic_cone", -12.0, 17.0, 0, null],
+      ["prop_traffic_cone", 12.0, -11.0, 0, null],
+    ];
+    for (const [slug, fx, fz, fry, fp] of furniture) place(slug, fx, fz, fry, fp);
 
     // Sandbag barricades as occasional street cover.
     for (let i = 0; i < 2 + this.index; i++) {
@@ -725,13 +1171,21 @@ export class Level {
     // invader GLB, then placeholder geometry.
     if (this.assets) {
       opts = { ...opts, flashTex: this.assets.getSprite("muzzle_flash") };
-      const rigged = this.assets.getRiggedEnemy();
+      const rigged = this.assets.getRiggedEnemy(opts.archetype);
       if (rigged) {
         opts.rigged = rigged;
       } else {
         const model = this.assets.getModel("invader");
         if (model) opts.model = model;
       }
+      // Arm every enemy: ranged → pistol; everyone else → a blade to lunge with.
+      const ranged = opts.archetype === "gunner";
+      const wslug = ranged ? "weapon_pistol"
+        : opts.archetype === "enforcer" ? "enemy_machete"
+        : opts.archetype === "grunt" ? (Math.random() < 0.5 ? "enemy_knife" : "enemy_machete")
+        : "enemy_knife";
+      const wmodel = this.assets.getModel(wslug);
+      if (wmodel) opts.weapon = { object3D: wmodel, kind: ranged ? "pistol" : "blade" };
     }
     const e = new Enemy(pos, opts);
     this.group.add(e.group);
@@ -744,11 +1198,10 @@ export class Level {
       model.position.set(x, 0, z);
       model.rotation.y = 0; // broadside across the street (roadblock; length runs along X)
       this.group.add(model);
-      // Model-independent collider + LOS footprint (cover), matching the broadside footprint.
-      const box = new THREE.Box3(
-        new THREE.Vector3(x - 2.1, 0, z - 1.0),
-        new THREE.Vector3(x + 2.1, 1.5, z + 1.0),
-      );
+      // Tight collider + LOS box fitted to the actual (normalised) model rather
+      // than a hardcoded oversized AABB — prop_car is height-fit to 1.5m.
+      model.updateMatrixWorld(true);
+      const box = new THREE.Box3().setFromObject(model).expandByScalar(0.05);
       this.colliders.push(box);
       this.losBlockers.push(box);
     } else {
@@ -807,6 +1260,16 @@ export class Level {
   update(dt, ctx) {
     for (const d of this.doors) d.update(dt);
     for (const e of this.enemies) e.update(dt, ctx);
+    // Victims: tick then splice out any that have despawned off-screen.
+    for (let i = this.victims.length - 1; i >= 0; i--) {
+      const v = this.victims[i];
+      v.update(dt, ctx);
+      if (v.removed) {
+        this.group.remove(v.group);
+        v.dispose();
+        this.victims.splice(i, 1);
+      }
+    }
   }
 
   dispose() {
@@ -816,6 +1279,8 @@ export class Level {
     // only dispose them if THIS level created its own flat-colour fallbacks.
     const shared = new Set(Object.values(this._materials));
     if (!this.assets) shared.forEach((m) => m.dispose());
+    // Dispose victims (geometry/materials they own, if any).
+    for (const v of this.victims) v.dispose(this.scene);
     this.group.traverse((o) => {
       if (o.geometry) o.geometry.dispose();
       // Inline (per-mesh) materials still need disposing; skip the shared ones.
