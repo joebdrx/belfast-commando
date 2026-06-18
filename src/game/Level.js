@@ -818,7 +818,7 @@ export class Level {
     // invader GLB, then placeholder geometry.
     if (this.assets) {
       opts = { ...opts, flashTex: this.assets.getSprite("muzzle_flash") };
-      const rigged = this.assets.getRiggedEnemy();
+      const rigged = this.assets.getRiggedEnemy(opts.archetype);
       if (rigged) {
         opts.rigged = rigged;
       } else {

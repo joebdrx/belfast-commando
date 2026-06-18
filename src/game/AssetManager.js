@@ -181,7 +181,7 @@ export class AssetManager {
     // Environment map, 3D models, 2D sprites, and the rigged enemy run alongside.
     const envJob = scene ? this._loadEnvironment(scene) : Promise.resolve();
     const skyJob = scene ? this._loadSky(scene) : Promise.resolve();
-    await Promise.all([...jobs, envJob, skyJob, this.loadModels(), this.loadSprites(), this.loadMurals(), this._loadRiggedEnemy(), this.captureFacades(), this.loadFace(), this.loadHouseSide()]);
+    await Promise.all([...jobs, envJob, skyJob, this.loadModels(), this.loadSprites(), this.loadMurals(), this._loadRiggedEnemy(), this._loadArchetypeRigs(), this.captureFacades(), this.loadFace(), this.loadHouseSide()]);
   }
 
   /** Load the photo face that gets billboarded onto each enemy's head. */
@@ -400,6 +400,49 @@ export class AssetManager {
     return !!this._riggedEnemy;
   }
 
+  /**
+   * Per-archetype rigged + animated enemy models (each its own Meshy character,
+   * so grunt/gunner/breacher/enforcer read as distinct enemy types). Each base
+   * GLB carries its walk clip (animations[0]); a tiny armature GLB adds the run
+   * clip on the same skeleton. Height is measured WITH the walk clip applied
+   * (the rig's bind-pose bbox is tiny — see _loadRiggedEnemy).
+   */
+  async _loadArchetypeRigs() {
+    this._rigs = {};
+    const ARCHES = ["grunt", "gunner", "breacher", "enforcer"];
+    await Promise.all(ARCHES.map(async (arch) => {
+      try {
+        const base = await this.gltfLoader.loadAsync(`${BASE}models/enemy_${arch}.glb`);
+        const clips = {};
+        if (base.animations[0]) clips.walk = base.animations[0];
+        const run = await this.gltfLoader.loadAsync(`${BASE}models/anim_${arch}_run.glb`).catch(() => null);
+        if (run && run.animations[0]) clips.run = run.animations[0];
+        base.scene.traverse((o) => {
+          if (o.isMesh) o.frustumCulled = false; // skinned bounds animate; avoid pop-out
+          const mats = o.material ? (Array.isArray(o.material) ? o.material : [o.material]) : [];
+          for (const m of mats) {
+            if (!m) continue;
+            if (m.metalness !== undefined) m.metalness = 0;
+            if (m.color) m.color.multiplyScalar(0.85); // mild grimming; keep the model's detail
+            m.needsUpdate = true;
+          }
+        });
+        let height = 1.7;
+        if (clips.walk) {
+          const tmp = new THREE.AnimationMixer(base.scene);
+          tmp.clipAction(clips.walk).play();
+          tmp.update(0.2);
+          base.scene.updateMatrixWorld(true);
+          height = new THREE.Box3().setFromObject(base.scene).getSize(new THREE.Vector3()).y || 1.7;
+          tmp.stopAllAction();
+        }
+        this._rigs[arch] = { scene: base.scene, clips, height };
+      } catch {
+        /* missing → getRiggedEnemy falls back to the generic rig */
+      }
+    }));
+  }
+
   /** A fresh clone of the rigged character for use as first-person arms,
    *  with its bones exposed by name for posing. */
   getFpArms() {
@@ -412,20 +455,26 @@ export class AssetManager {
     return { object3D, bones, height: this._riggedEnemy.height || 1.7 };
   }
 
-  /** A fresh animated enemy instance: normalised Object3D + its animation clips. */
-  getRiggedEnemy() {
-    if (!this._riggedEnemy) return null;
-    const inner = cloneSkeleton(this._riggedEnemy.scene);
+  /**
+   * A fresh animated enemy instance: normalised Object3D + its animation clips.
+   * Prefers the archetype's own rig (distinct enemy type); falls back to the
+   * generic rigged invader (which wears the photo face). The per-archetype models
+   * have their own heads, so they do NOT get the shared photo face.
+   */
+  getRiggedEnemy(archetype) {
+    const distinct = !!(archetype && this._rigs && this._rigs[archetype]);
+    const rig = distinct ? this._rigs[archetype] : this._riggedEnemy;
+    if (!rig) return null;
+    const inner = cloneSkeleton(rig.scene);
     // The rig's natural front is +Z, which is what Enemy's facing math
     // (group.rotation.y = atan2(toPlayer)) expects — so NO 180° flip.
     inner.rotation.y = 0;
     const wrap = new THREE.Group();
     wrap.add(inner);
     // Scale by the measured animated height (NOT the misleading geometry bbox).
-    // The model is already feet-at-origin and centred at natural scale.
-    wrap.scale.setScalar(1.85 / (this._riggedEnemy.height || 1.7));
-    this._attachFace(wrap);
-    return { object3D: wrap, clips: this._riggedEnemy.clips };
+    wrap.scale.setScalar(1.85 / (rig.height || 1.7));
+    if (!distinct) this._attachFace(wrap); // only the generic invader wears the photo face
+    return { object3D: wrap, clips: rig.clips };
   }
 
   /**
