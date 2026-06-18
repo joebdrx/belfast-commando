@@ -51,11 +51,6 @@ const MODEL_DEFS = {
   // Rescuable civilian. Primary path is the rigged getVictimRig() (walk/run);
   // this static-model entry is the fallback if the rig fails to load.
   enemy_victim:     { size: 1.7, fit: "height", anchor: "bottom", rotY: 0 },
-  // Grunt enemy: STATIC un-rigged Meshy model (grrom-2) with a built-in weapon.
-  // The source's node_0 bakes a +90° X-rotation so it loads UPRIGHT (Y tallest,
-  // height-fit to 1.85m) and the figure already faces +Z (weapon-forward) — the
-  // AI's forward — so rotY: 0. No darken (keeps its own grimy texture).
-  grunt_grrom:      { size: 1.85, fit: "height", anchor: "bottom", rotY: 0 },
   // first-person viewmodels — centred, scaled by their longest axis
   weapon_ak:        { size: 0.62, fit: "max", anchor: "center", rotY: 0 },
   weapon_pistol:    { size: 0.34, fit: "max", anchor: "center", rotY: 0 },
@@ -496,9 +491,11 @@ export class AssetManager {
       try { this._rigs[arch] = await this._loadRig(`enemy_${arch}`, `anim_${arch}_run`); }
       catch { /* missing → getRiggedEnemy falls back to the generic rig */ }
     }));
-    // Grunt variety: a grunt spawns as a random pick from these distinct rigs
-    // (stabber + invader2 + invader1) so the swarm doesn't look uniform.
-    this._gruntVariants = [this._rigs.grunt, this._rigs.gunner, this._rigs.breacher].filter(Boolean);
+    // Grunt variety: a grunt spawns as a random pick from these distinct rigs so
+    // the swarm doesn't look uniform. The stabber rig (this._rigs.grunt) is
+    // deliberately EXCLUDED — that cleaver character is being retired pending an
+    // animated replacement, so grunts use the invader2 / invader1 rigs only.
+    this._gruntVariants = [this._rigs.gunner, this._rigs.breacher].filter(Boolean);
     // Rescuable civilian: same Meshy rig pipeline (walk + run armature). darken=1
     // keeps her natural-coloured so she reads as a civilian, not an enemy.
     this._victimRig = await this._loadRig("enemy_victim", "anim_victim_run", 1.0).catch(() => null);

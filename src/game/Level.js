@@ -1233,30 +1233,21 @@ export class Level {
     // invader GLB, then placeholder geometry.
     if (this.assets) {
       opts = { ...opts };
-      if (opts.archetype === "grunt") {
-        // GRUNT: a STATIC, un-rigged grrom model whose weapon is baked into the
-        // mesh. No rig (mixer/clips) and NO separate blade — it carries its own.
-        // Falls back to the invader GLB, then placeholder geometry, if missing.
-        const model = this.assets.getModel("grunt_grrom") || this.assets.getModel("invader");
-        if (model) opts.model = model;
-        // Intentionally no opts.rigged and no opts.weapon for grunts.
+      // Every archetype uses a rigged + animated enemy (its own walk/run/attack
+      // clips), falling back to the static invader GLB, then placeholder geometry.
+      const rigged = this.assets.getRiggedEnemy(opts.archetype);
+      if (rigged) {
+        opts.rigged = rigged;
       } else {
-        // Other archetypes: rigged + animated invader (own walk/run/attack clips),
-        // falling back to the static invader GLB, then placeholder geometry.
-        const rigged = this.assets.getRiggedEnemy(opts.archetype);
-        if (rigged) {
-          opts.rigged = rigged;
-        } else {
-          const model = this.assets.getModel("invader");
-          if (model) opts.model = model;
-        }
-        // Arm every NON-grunt enemy with a blade to lunge with — no archetype is
-        // ranged, so a pistol is never assigned. Enforcer swings a machete; the
-        // lighter gunner/breacher rush in with a knife.
-        const wslug = opts.archetype === "enforcer" ? "enemy_machete" : "enemy_knife";
-        const wmodel = this.assets.getModel(wslug);
-        if (wmodel) opts.weapon = { object3D: wmodel, kind: "blade" };
+        const model = this.assets.getModel("invader");
+        if (model) opts.model = model;
       }
+      // Arm every enemy with a blade to lunge with — no archetype is ranged, so a
+      // pistol is never assigned. Enforcer swings a machete; everyone else rushes
+      // in with a knife.
+      const wslug = opts.archetype === "enforcer" ? "enemy_machete" : "enemy_knife";
+      const wmodel = this.assets.getModel(wslug);
+      if (wmodel) opts.weapon = { object3D: wmodel, kind: "blade" };
     }
     const e = new Enemy(pos, opts);
     this.group.add(e.group);

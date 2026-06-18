@@ -99,19 +99,8 @@ $GT meshopt "$REF/$VICTIM_DIR/PIEM81aguzwTTtq-2doA9_running_armature.glb" "$OUT/
   || cp "$REF/$VICTIM_DIR/PIEM81aguzwTTtq-2doA9_running_armature.glb" "$OUT/anim_victim_run.glb"
 echo "  -> $OUT/anim_victim_run.glb ($(du -h "$OUT/anim_victim_run.glb" | cut -f1))"
 
-# Grunt: STATIC, un-rigged Meshy model (grrom-2) — 1 mesh, 0 skins, 0 animations,
-# with the weapon baked into the mesh. resize 512 + meshopt only (no rig pipeline).
-# Orientation: node_0 carries a baked +90° X-rotation (quat [.7071,0,0,.7071]) that
-# stands the model upright (Y is the tallest axis, ~1.1m of geometry → height-fit to
-# 1.85m on load); the figure's weapon protrudes toward +Z, i.e. it already faces +Z
-# (the AI's forward), so MODEL_DEFS uses rotY: 0. meshopt/resize preserve the node
-# TRS, so the upright pose survives the optimize step.
-GRROM_DIR="grrom-2-meshy-rigging-multi-animation"
-echo "[grunt_grrom] static mesh (grrom-2)"
-optimize_mesh "$REF/$GRROM_DIR/F3AX75mXziateNeVf1Rwy_model.glb" "$OUT/grunt_grrom.glb"
-
-# Enemy hand weapons: ranged enemies hold a pistol (existing weapon_pistol);
-# melee enemies hold a blade (knife / machete) they lunge with.
+# Enemy hand weapons: every melee enemy holds a blade (knife / machete) to lunge
+# with. (No ranged enemies, so no pistol is built into the runtime set.)
 echo "[weapons] enemy blades"
 optimize_mesh "$REF/kitchen_knife.glb" "$OUT/enemy_knife.glb"
 optimize_mesh "$REF/kukri_machete.glb" "$OUT/enemy_machete.glb"
