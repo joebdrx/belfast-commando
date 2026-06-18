@@ -48,8 +48,8 @@ const MODEL_DEFS = {
   enemy_variant:    { size: 1.85, fit: "height", anchor: "bottom", rotY: Math.PI, darken: 0.75 },
   invader:          { size: 1.85, fit: "height", anchor: "bottom", rotY: Math.PI, darken: 0.75 },
   player_fighter:   { size: 1.85, fit: "height", anchor: "bottom", rotY: Math.PI },
-  // Rescuable civilian — STATIC mesh (the rigged victim's separate clips don't
-  // bind to its skeleton → frozen/"broken"; a clean static pose is reliable).
+  // Rescuable civilian. Primary path is the rigged getVictimRig() (walk/run);
+  // this static-model entry is the fallback if the rig fails to load.
   enemy_victim:     { size: 1.7, fit: "height", anchor: "bottom", rotY: 0 },
   // first-person viewmodels — centred, scaled by their longest axis
   weapon_ak:        { size: 0.62, fit: "max", anchor: "center", rotY: 0 },
@@ -126,6 +126,7 @@ export class AssetManager {
     this.faceTexture = null; // photo face slapped onto enemy heads (non-1.png)
     this.houseSideTexture = null; // grimy tenement facade for building side walls (4h.png)
     this._riggedEnemy = null; // { scene, clips:{walk,run,idle} }
+    this._victimRig = null; // { scene, clips:{walk,run}, height } — rescuable civilian
     this._menuActor = null; // { scene, clips:{walk,idle}, height } — safehouse hero + ally NPCs
     this._attackClip = null; // shared melee attack AnimationClip (retargets onto every rig)
     this.loaded = 0;
@@ -486,6 +487,9 @@ export class AssetManager {
     // Grunt variety: a grunt spawns as a random pick from these distinct rigs
     // (stabber + invader2 + invader1) so the swarm doesn't look uniform.
     this._gruntVariants = [this._rigs.grunt, this._rigs.gunner, this._rigs.breacher].filter(Boolean);
+    // Rescuable civilian: same Meshy rig pipeline (walk + run armature). darken=1
+    // keeps her natural-coloured so she reads as a civilian, not an enemy.
+    this._victimRig = await this._loadRig("enemy_victim", "anim_victim_run", 1.0).catch(() => null);
   }
 
   /** A fresh clone of the rigged character for use as first-person arms,
@@ -598,13 +602,15 @@ export class AssetManager {
   }
 
   /**
-   * The rescuable civilian is a STATIC model (getModel("enemy_victim")), not a
-   * rig — the Meshy victim's separate run clip never bound to its skeleton (the
-   * mesh stayed frozen, reading as "broken"), so a clean static pose is used.
-   * Returning null makes Level._spawnVictims fall back to the static model.
+   * The rescuable civilian, rigged + animated (walk while captive, run on flee).
+   * Returns a FRESH per-instance skeleton clone so each victim drives its own
+   * mixer. The clips are shared (read-only) across clones, matching the enemy
+   * rig pattern. Null (→ static model fallback in Level) if the rig failed to load.
+   * @returns {{ object3D: THREE.Object3D, clips: object } | null}
    */
   getVictimRig() {
-    return null;
+    if (!this._victimRig) return null;
+    return { object3D: cloneSkeleton(this._victimRig.scene), clips: this._victimRig.clips };
   }
 
   /**

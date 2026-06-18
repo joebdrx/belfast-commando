@@ -85,10 +85,16 @@ for arch in "${!RIG[@]}"; do
   echo "  -> $OUT/anim_${arch}_run.glb ($(du -h "$OUT/anim_${arch}_run.glb" | cut -f1))"
 done
 
-# Victim: STATIC mesh. The rigged victim's separate run clip never bound to its
-# skeleton (mesh stayed frozen → "broken"), so we use the static civilian model.
-echo "[victim] static mesh"
-optimize_mesh "$REF/victim-model.glb" "$OUT/enemy_victim.glb"
+# Victim: RIGGED + animated, same Meshy multi-animation format as the enemies
+# (whose run armatures bind fine). `walking.glb` = mesh + walk clip (idle-ish
+# while captive); `running_armature.glb` = run clip on the same skeleton (flee).
+VICTIM_DIR="victim-meshy-rigging-multi-animation"
+echo "[victim] mesh+walk"
+optimize_mesh "$REF/$VICTIM_DIR/1Ru13hoYO338gw4Jcud1D_walking.glb" "$OUT/enemy_victim.glb"
+echo "[victim] run clip"
+$GT meshopt "$REF/$VICTIM_DIR/qKFTWNcs5aEi50OaPWxaF_running_armature.glb" "$OUT/anim_victim_run.glb" >/dev/null 2>&1 \
+  || cp "$REF/$VICTIM_DIR/qKFTWNcs5aEi50OaPWxaF_running_armature.glb" "$OUT/anim_victim_run.glb"
+echo "  -> $OUT/anim_victim_run.glb ($(du -h "$OUT/anim_victim_run.glb" | cut -f1))"
 
 # Enemy hand weapons: ranged enemies hold a pistol (existing weapon_pistol);
 # melee enemies hold a blade (knife / machete) they lunge with.

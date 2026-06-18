@@ -2,9 +2,9 @@ import * as THREE from "three";
 
 /** Radius within which the player can press E to rescue. */
 const INTERACT_RADIUS = 3.5;
-/** Flee speed (m/s) after rescue. Kept brisk-but-modest: the victim is a static
- *  mesh (the rigged run clip wouldn't bind), so a slower glide reads better. */
-const FLEE_SPEED = 3.5;
+/** Flee speed (m/s) after rescue. Brisk run to match the rigged run animation
+ *  (the new Meshy victim binds its run clip, so she sprints rather than glides). */
+const FLEE_SPEED = 4.2;
 /** Despawn when this far from the player (AND behind/peripheral camera). */
 const DESPAWN_DIST = 24;
 /** Hard fallback: despawn after this long fleeing even if cornered/in-view. */
@@ -21,10 +21,9 @@ const _fwd = new THREE.Vector3();
  * ------
  * A rescuable civilian held captive by enemies. The player rescues them by
  * approaching within INTERACT_RADIUS and pressing E; she thanks the player and
- * flees away (static model — the rigged victim's run clip never bound to its
- * skeleton, so it stayed frozen/"broken"), colliding with buildings + the
- * boundary walls (so she stays in the map and never phases through geometry),
- * then despawns once she is far and out of the player's view.
+ * flees away (rigged + animated — walk while captive, run on flee), colliding
+ * with buildings + the boundary walls (so she stays in the map and never phases
+ * through geometry), then despawns once she is far and out of the player's view.
  *
  * IMPORTANT: Victims are stored in `level.victims`, never in `level.enemies`.
  * The weapon raycast and kick loop only iterate `level.enemies`, so victims are
