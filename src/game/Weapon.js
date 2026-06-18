@@ -12,7 +12,7 @@ const WEAPONS = [
   // happen to face opposite directions, hence opposite signs.
   { name: "Sidearm", model: "weapon_pistol", vmRotY: -Math.PI / 2, color: 0x2b2b2b, damage: 34, rpm: 360, auto: false, pellets: 1, spread: 0.004, size: [0.12, 0.16, 0.4], mag: 12, reloadTime: 1.1 },
   { name: "SMG", model: "weapon_ak", vmRotY: Math.PI / 2, color: 0x3a3f44, damage: 18, rpm: 850, auto: true, pellets: 1, spread: 0.018, size: [0.1, 0.18, 0.55], mag: 30, reloadTime: 1.6 },
-  { name: "Boomstick", model: "weapon_shotgun", vmRotY: -Math.PI / 2, color: 0x4a3520, damage: 16, rpm: 95, auto: false, pellets: 8, spread: 0.07, size: [0.16, 0.18, 0.6], mag: 6, reloadTime: 2.0 },
+  { name: "Boomstick", model: "weapon_shotgun", vmRotY: Math.PI / 2, color: 0x4a3520, damage: 16, rpm: 95, auto: false, pellets: 8, spread: 0.07, size: [0.16, 0.18, 0.6], mag: 6, reloadTime: 2.0 },
 ];
 
 // Shared viewmodel offset — seats the gun in the FP arms' grip.
