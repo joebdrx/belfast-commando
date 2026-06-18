@@ -13,11 +13,14 @@ OUT="public/models"
 mkdir -p "$OUT"
 
 # slug -> source filename. Edit this list as the audit selects/drops candidates.
+# bldg_pub (betsey_trotwood) removed per request; bldg_street replaces it.
+# bldg_skyline is the city backdrop ringed around the map edges (not a block).
 declare -A SRC=(
   [bldg_terrace]="old_building.glb"
   [bldg_collapsed]="collapsed_uk_terraced_house.glb"
   [bldg_shop]="angers_shop_2_france.glb"
-  [bldg_pub]="betsey_trotwood_pub.glb"
+  [bldg_street]="street_exterior_dead_end.glb"
+  [bldg_skyline]="belfast_city.glb"
 )
 
 for slug in "${!SRC[@]}"; do
