@@ -1,6 +1,7 @@
 import gameState from "./GameState.js";
 import UPGRADES from "../data/upgrades.json";
 import BOOTS from "../data/boots.json";
+import WEAPONS from "../data/weapons.json";
 
 /**
  * Progression
@@ -44,6 +45,11 @@ class Progression {
   /** @returns {object|null} the boot definition for `id`, or null. */
   _boot(id) {
     return BOOTS.find((b) => b.id === id) || null;
+  }
+
+  /** @returns {object|null} the weapon definition for `id`, or null. */
+  _weapon(id) {
+    return WEAPONS.find((w) => w.id === id) || null;
   }
 
   // ---- persistence -------------------------------------------------------
@@ -282,6 +288,75 @@ class Progression {
         owned,
         equipped: prog.boots.equipped === b.id,
         affordable: !owned && rp >= b.cost,
+      };
+    });
+  }
+
+  // ---- weapons (data-driven from WEAPONS) --------------------------------
+
+  /**
+   * Owned weapon ids. Always includes "pistol"; reads from
+   * `progression.weapons.owned`, defaulting defensively to `["pistol"]` when
+   * the field is missing (e.g. a partially-hydrated/legacy save).
+   * @returns {string[]}
+   */
+  getOwnedWeapons() {
+    const prog = this.state.getProgression();
+    const owned = prog.weapons && Array.isArray(prog.weapons.owned) ? prog.weapons.owned : null;
+    if (!owned) return ["pistol"];
+    return owned.includes("pistol") ? owned : ["pistol", ...owned];
+  }
+
+  /** @returns {boolean} whether weapon `id` is owned. */
+  ownsWeapon(id) {
+    return this.getOwnedWeapons().includes(id);
+  }
+
+  /**
+   * Buy weapon `id` (one-time unlock). Fails if already owned, if the def's
+   * `requires` weapon isn't owned yet, or if RP is insufficient. Atomic: never
+   * deducts RP without adding the weapon. Spends RP and persists on success.
+   * @returns {{ok:true} | {ok:false, reason:string}}
+   */
+  buyWeapon(id) {
+    const weapon = this._weapon(id);
+    if (!weapon) return { ok: false, reason: "unknown" };
+    if (this.ownsWeapon(id)) return { ok: false, reason: "owned" };
+    if (weapon.requires && !this.ownsWeapon(weapon.requires)) {
+      return { ok: false, reason: "locked" };
+    }
+    if (!this.state.spendCurrency(weapon.cost)) return { ok: false, reason: "broke" };
+    const prog = this.state.getProgression();
+    if (!prog.weapons || !Array.isArray(prog.weapons.owned)) {
+      prog.weapons = { owned: this.getOwnedWeapons() };
+    }
+    prog.weapons.owned.push(id);
+    this.save();
+    return { ok: true };
+  }
+
+  /**
+   * Menu-ready snapshot of every weapon, in weapons.json order.
+   * @returns {Array<object>} `{ id, name, slug, cost, desc, requires, owned,
+   *   requiresMet, affordable, locked }`. `locked` = requires not met;
+   *   `affordable` = enough RP AND requiresMet AND not owned.
+   */
+  listWeapons() {
+    const rp = this.state.getProgression().resistancePoints;
+    return WEAPONS.map((w) => {
+      const owned = this.ownsWeapon(w.id);
+      const requiresMet = !w.requires || this.ownsWeapon(w.requires);
+      return {
+        id: w.id,
+        name: w.name,
+        slug: w.slug,
+        cost: w.cost,
+        desc: w.desc,
+        requires: w.requires,
+        owned,
+        requiresMet,
+        affordable: !owned && requiresMet && rp >= w.cost,
+        locked: !requiresMet,
       };
     });
   }

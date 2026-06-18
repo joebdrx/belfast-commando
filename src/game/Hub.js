@@ -42,10 +42,19 @@ export class Hub {
     this._lamp = null;
     this._lampBase = 8; // base point-light intensity (flickers around this)
     this._bulbMat = null;
+    this._heroGroup = null;
 
-    // Fixed flattering camera pose (set in show(), nudged in update()).
-    this._camBase = new THREE.Vector3(0, 1.7, 3.0);
-    this._lookTarget = new THREE.Vector3(0, 1.35, -2.5);
+    // Clickable safehouse fixtures + their projected-label anchors (world space).
+    // Anchors are fixed (the fixtures never move; only the camera sways), so they
+    // are computed once at build time and projected each frame with no alloc.
+    /** @type {Array<{object3D:THREE.Object3D, id:string, label:string, anchor:THREE.Vector3}>} */
+    this._interactables = [];
+
+    // Lobby framing (CoD-style): camera sits front-left and looks slightly left
+    // into the room so the hero fighter — placed on the RIGHT — reads large in
+    // the right portion of the frame, leaving the left for the menu panel.
+    this._camBase = new THREE.Vector3(-0.6, 1.5, 2.7);
+    this._lookTarget = new THREE.Vector3(-0.45, 1.12, -2.4);
     this._tmpV = new THREE.Vector3(); // reused each frame — no per-frame alloc
     this._elapsed = 0;
     this._visible = false;
@@ -57,6 +66,9 @@ export class Hub {
     this._buildBulb();
     this._buildCrates();
     this._buildNpcs();
+    this._buildHero();
+    this._buildDoor();
+    this._buildPhone();
   }
 
   // ---- construction helpers ------------------------------------------------
@@ -214,10 +226,13 @@ export class Hub {
       m.position.set(x, y, z);
       m.rotation.y = (x + z) * 0.2; // slight varied yaw, deterministic
       this.scene.add(m);
+      return m;
     };
-    place(3.9, 0.55, -4.7, 1.1);
+    // The large right-hand crate doubles as the clickable ARMORY (upgrades/arsenal).
+    const armory = place(3.9, 0.55, -4.7, 1.1);
     place(3.7, 1.45, -4.8, 0.7);
     place(-4.0, 0.5, -4.9, 1.0);
+    this._registerInteractable(armory, "upgrades", "Armory", 1.15);
   }
 
   /**
@@ -305,13 +320,214 @@ export class Hub {
     this.npcs.push({ group, baseY: 0, phase: this.npcs.length * 1.7 });
   }
 
+  /**
+   * The hero: the player's own fighter, posed standing on the RIGHT of the frame
+   * (the lobby centrepiece). Uses the shared `player_fighter` GLB when available,
+   * falling back to a primitive commando silhouette so the hub still reads in
+   * headless/tests or before the asset streams in. A warm key + cool rim light
+   * make the figure pop against the gloom.
+   */
+  _buildHero() {
+    const group = new THREE.Group();
+    group.position.set(1.8, 0, -0.6); // front-right, the lobby focal point
+    group.rotation.y = 2.78; // face the camera (front to viewer), slight angled stance
+
+    let model = null;
+    if (this.assets && typeof this.assets.getModel === "function") {
+      model = this.assets.getModel("player_fighter"); // fresh clone or null
+    }
+    if (model) {
+      group.add(model);
+    } else {
+      this._buildHeroFallback(group);
+    }
+    this.scene.add(group);
+    this._heroGroup = group;
+    // True once the real GLB is in place. The hub is usually constructed before
+    // the model stream finishes, so the constructor gets `null` and uses the
+    // primitive fallback; `_ensureHeroModel()` (called from show()) swaps the
+    // real fighter in as soon as it is available.
+    this._heroIsModel = !!model;
+
+    // Warm key light raking the hero from front-right (cosy lobby spill).
+    const key = new THREE.PointLight(0xffd9a0, 6.0, 7, 2);
+    key.position.set(3.4, 2.4, 1.4);
+    this.scene.add(key);
+    // Cool rim from behind-left to separate the silhouette from the wall.
+    const rim = new THREE.PointLight(0x6f8bd6, 3.2, 6, 2);
+    rim.position.set(0.4, 2.2, -2.6);
+    this.scene.add(rim);
+  }
+
+  /** Primitive stand-in hero (balaclava commando with a slung rifle). */
+  _buildHeroFallback(group) {
+    const coatMat = new THREE.MeshStandardMaterial({ color: 0x2b3138, roughness: 0.82 });
+    const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.34, 1.0, 6, 12), coatMat);
+    body.position.y = 1.05;
+    group.add(body);
+
+    const maskMat = new THREE.MeshStandardMaterial({ color: 0x14161a, roughness: 0.7 });
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.23, 16, 12), maskMat);
+    head.position.y = 1.82;
+    group.add(head);
+
+    // Amber goggles stripe so the hero reads as the player-faction lead.
+    const visorMat = new THREE.MeshStandardMaterial({
+      color: 0xff7a1a,
+      emissive: 0xff7a1a,
+      emissiveIntensity: 0.45,
+      roughness: 0.4,
+    });
+    const visor = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.07, 0.04), visorMat);
+    visor.position.set(0, 1.86, 0.2);
+    group.add(visor);
+
+    const rifleMat = new THREE.MeshStandardMaterial({ color: 0x202329, roughness: 0.55, metalness: 0.35 });
+    const rifle = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.06, 1.05), rifleMat);
+    rifle.position.set(-0.2, 1.05, 0.16);
+    rifle.rotation.set(-0.4, -0.25, -0.25);
+    group.add(rifle);
+  }
+
+  /**
+   * A heavy reinforced exit door on the right wall — the clickable "Start
+   * Operation" fixture, crowned by a green deployment lamp.
+   */
+  _buildDoor() {
+    const door = new THREE.Group();
+    door.position.set(4.86, 0, -3.6); // flush to the right wall (x≈5)
+    door.rotation.y = -Math.PI / 2; // face -x, into the room
+
+    const frameMat = this._mat("door", 0x4a3322, 0.7);
+    const slabMat = new THREE.MeshStandardMaterial({ color: 0x2c2f33, roughness: 0.55, metalness: 0.4 });
+
+    // Frame (slightly larger box) + recessed slab.
+    const frame = new THREE.Mesh(new THREE.BoxGeometry(1.5, 2.7, 0.16), frameMat);
+    frame.position.y = 1.35;
+    door.add(frame);
+    const slab = new THREE.Mesh(new THREE.BoxGeometry(1.25, 2.45, 0.1), slabMat);
+    slab.position.set(0, 1.25, 0.06);
+    door.add(slab);
+
+    // Push-bar + a riveted reinforcement strip.
+    const barMat = new THREE.MeshStandardMaterial({ color: 0x6a6e73, roughness: 0.4, metalness: 0.6 });
+    const bar = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.1, 0.08), barMat);
+    bar.position.set(0, 1.15, 0.13);
+    door.add(bar);
+
+    // Green over-door deployment lamp (emissive + a soft glow).
+    const lampMat = new THREE.MeshStandardMaterial({
+      color: 0x39ff14,
+      emissive: 0x39ff14,
+      emissiveIntensity: 0.9,
+      roughness: 0.4,
+    });
+    const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.09, 12, 8), lampMat);
+    lamp.position.set(0, 2.78, 0.12);
+    door.add(lamp);
+
+    this.scene.add(door);
+    this._registerInteractable(door, "start", "Deploy — Start Operation", 3.0);
+  }
+
+  /**
+   * A wall-mounted landline phone on the right wall — the clickable fixture that
+   * opens the level-code dial. Old cradle + handset + coiled cord.
+   */
+  _buildPhone() {
+    const phone = new THREE.Group();
+    phone.position.set(4.88, 1.4, -1.6); // right wall, front-of-room
+    phone.rotation.y = -Math.PI / 2; // face -x
+
+    const bodyMat = new THREE.MeshStandardMaterial({ color: 0x141414, roughness: 0.6 });
+    const cradle = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.46, 0.16), bodyMat);
+    phone.add(cradle);
+
+    // A faint amber keypad face so the phone reads as "interactive".
+    const keypadMat = new THREE.MeshStandardMaterial({
+      color: 0x3a2a12,
+      emissive: 0xff7a1a,
+      emissiveIntensity: 0.25,
+      roughness: 0.5,
+    });
+    const keypad = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.26, 0.03), keypadMat);
+    keypad.position.set(0, -0.02, 0.09);
+    phone.add(keypad);
+
+    // Handset sitting on top of the cradle.
+    const handset = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.07, 0.08), bodyMat);
+    handset.position.set(0, 0.27, 0.06);
+    phone.add(handset);
+
+    // Coiled cord (a thin torus knot stand-in) dangling below.
+    const cordMat = new THREE.MeshStandardMaterial({ color: 0x0c0c0c, roughness: 0.9 });
+    const cord = new THREE.Mesh(new THREE.TorusGeometry(0.08, 0.018, 6, 14), cordMat);
+    cord.position.set(0.1, -0.3, 0.05);
+    cord.rotation.x = Math.PI / 2;
+    phone.add(cord);
+
+    this.scene.add(phone);
+    this._registerInteractable(phone, "phone", "Landline — Dial Code", 2.0);
+  }
+
+  /**
+   * Register a clickable fixture + cache its label anchor (world position with a
+   * vertical offset). The anchor is fixed because hub fixtures never move.
+   * @param {THREE.Object3D} object3D the (group) to raycast against.
+   * @param {string} id dispatch id ("start" | "upgrades" | "phone").
+   * @param {string} label floating-label text.
+   * @param {number} labelY world-space height for the label anchor.
+   */
+  _registerInteractable(object3D, id, label, labelY) {
+    const anchor = new THREE.Vector3();
+    object3D.getWorldPosition(anchor);
+    anchor.y = labelY;
+    this._interactables.push({ object3D, id, label, anchor });
+  }
+
+  /**
+   * The clickable safehouse fixtures for the orchestrator's raycast + labels.
+   * Each entry: `{ object3D, id, label, anchor }` where `anchor` is the fixed
+   * world-space point (do NOT mutate it — copy before projecting).
+   * @returns {Array<{object3D:THREE.Object3D, id:string, label:string, anchor:THREE.Vector3}>}
+   */
+  getInteractables() {
+    return this._interactables;
+  }
+
   // ---- runtime API ---------------------------------------------------------
 
   /** Pose the shared camera to the fixed flattering view and mark the hub live. */
   show() {
     this._visible = true;
     this._elapsed = 0;
+    this._ensureHeroModel();
     this._poseCamera();
+  }
+
+  /**
+   * Swap the primitive fallback hero for the real `player_fighter` GLB once it
+   * has streamed in. No-op if the real model is already shown or still missing.
+   */
+  _ensureHeroModel() {
+    if (this._heroIsModel || !this._heroGroup) return;
+    if (!this.assets || typeof this.assets.getModel !== "function") return;
+    const model = this.assets.getModel("player_fighter");
+    if (!model) return;
+    // Drop the fallback primitives, keep the group's transform.
+    for (let i = this._heroGroup.children.length - 1; i >= 0; i--) {
+      const c = this._heroGroup.children[i];
+      this._heroGroup.remove(c);
+      c.traverse((o) => {
+        if (o.geometry) o.geometry.dispose();
+        if (o.material) {
+          const mats = Array.isArray(o.material) ? o.material : [o.material];
+          for (const m of mats) if (m && m.dispose) m.dispose();
+        }
+      });
+    }
+    this._heroGroup.add(model);
+    this._heroIsModel = true;
   }
 
   /** Leaving HUB: stop driving the camera. (Restoring it is the orchestrator's job.) */
@@ -339,6 +555,7 @@ export class Hub {
    */
   update(dt) {
     if (!this._visible) return;
+    if (!this._heroIsModel) this._ensureHeroModel(); // swap in real fighter once loaded
     this._elapsed += dt;
     const t = this._elapsed;
 
@@ -380,6 +597,8 @@ export class Hub {
     });
     while (this.scene.children.length) this.scene.remove(this.scene.children[0]);
     this.npcs.length = 0;
+    this._interactables.length = 0;
+    this._heroGroup = null;
     this._lamp = null;
     this._bulbMat = null;
   }

@@ -18,6 +18,7 @@ export class HUD {
     this.weapon = this.$("hud-weapon");
     this.ammo = this.$("hud-ammo");
     this.objective = this.$("hud-objective");
+    this.opcode = this.$("hud-opcode");
     this.level = this.$("hud-level");
     this.callouts = this.$("hud-callouts");
     this.vignette = this.$("hud-damage");
@@ -143,6 +144,16 @@ export class HUD {
 
   setObjective(text) {
     if (this.objective) this.objective.textContent = text;
+  }
+
+  /**
+   * Show (or clear) the current operation's 4-digit skip code so the player can
+   * note it down and dial it from the safehouse phone later. Pass null to clear.
+   * @param {string|null} code
+   */
+  setOperationCode(code) {
+    if (!this.opcode) return;
+    this.opcode.textContent = code ? `OPERATION CODE: ${code}` : "";
   }
 
   popCallout(label, points, mult) {

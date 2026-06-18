@@ -120,6 +120,7 @@ export class AssetManager {
     this.faceTexture = null; // photo face slapped onto enemy heads (non-1.png)
     this.houseSideTexture = null; // grimy tenement facade for building side walls (4h.png)
     this._riggedEnemy = null; // { scene, clips:{walk,run,idle} }
+    this._attackClip = null; // shared melee attack AnimationClip (retargets onto every rig)
     this.loaded = 0;
     this.total = Object.keys(DEFS).length;
 
@@ -188,7 +189,7 @@ export class AssetManager {
     // Environment map, 3D models, 2D sprites, and the rigged enemy run alongside.
     const envJob = scene ? this._loadEnvironment(scene) : Promise.resolve();
     const skyJob = scene ? this._loadSky(scene) : Promise.resolve();
-    await Promise.all([...jobs, envJob, skyJob, this.loadModels(), this.loadSprites(), this.loadMurals(), this._loadRiggedEnemy(), this._loadArchetypeRigs(), this.captureFacades(), this.loadFace(), this.loadHouseSide()]);
+    await Promise.all([...jobs, envJob, skyJob, this.loadModels(), this.loadSprites(), this.loadMurals(), this._loadRiggedEnemy(), this._loadArchetypeRigs(), this._loadAttackClip(), this.captureFacades(), this.loadFace(), this.loadHouseSide()]);
   }
 
   /** Load the photo face that gets billboarded onto each enemy's head. */
@@ -408,6 +409,25 @@ export class AssetManager {
   }
 
   /**
+   * Load the shared melee attack clip ONCE (anim_attack.glb — an animation-only
+   * GLB, mesh stripped at build time). Its tracks target the same bone names as
+   * walk/run, so this single clip retargets onto every rigged enemy. We rename
+   * the clip "attack" so it can't collide with the walk/run clip names, and only
+   * read animations[0]. Missing file → stays null and enemies simply skip the
+   * attack animation.
+   */
+  async _loadAttackClip() {
+    try {
+      const gltf = await this.gltfLoader.loadAsync(`${BASE}models/anim_attack.glb`);
+      const clip = gltf.animations[0] || null;
+      if (clip) clip.name = "attack";
+      this._attackClip = clip;
+    } catch {
+      this._attackClip = null;
+    }
+  }
+
+  /**
    * Per-archetype rigged + animated enemy models (each its own Meshy character,
    * so grunt/gunner/breacher/enforcer read as distinct enemy types). Each base
    * GLB carries its walk clip (animations[0]); a tiny armature GLB adds the run
@@ -502,7 +522,10 @@ export class AssetManager {
     // Scale by the measured animated height (NOT the misleading geometry bbox).
     wrap.scale.setScalar(1.85 / (rig.height || 1.7));
     if (!distinct) this._attachFace(wrap); // only the generic invader wears the photo face
-    return { object3D: wrap, clips: rig.clips };
+    // Add the shared one-shot melee attack clip (retargets onto this rig's
+    // bones) without mutating the rig's shared clips object.
+    const clips = this._attackClip ? { ...rig.clips, attack: this._attackClip } : rig.clips;
+    return { object3D: wrap, clips };
   }
 
   /**

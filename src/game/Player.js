@@ -142,10 +142,28 @@ export class Player {
       this.ctx.state.recordStat("noDamage", false);
       this.ctx.state.emit("damage", { amount, health: this.health });
     }
+    this._spawnPlayerBlood();
     if (this.health <= 0) {
       this.alive = false;
       this.ctx && this.ctx.onPlayerDeath();
     }
+  }
+
+  /**
+   * First-person blood burst when the player is hit. The player has no visible
+   * body, so we spray gore just in front of / below the camera where it reads as
+   * the player being wounded (pairs with the HUD red vignette). Short cooldown so
+   * rapid fire doesn't drown the screen.
+   */
+  _spawnPlayerBlood() {
+    if (!this.ctx || !this.ctx.juice) return;
+    const now = (typeof performance !== "undefined" ? performance.now() : Date.now());
+    if (now - (this._lastBloodFx || 0) < 220) return;
+    this._lastBloodFx = now;
+    this.camera.getWorldDirection(_tmp);
+    _wish.copy(this.camera.position).addScaledVector(_tmp, 0.85);
+    _wish.y -= 0.22; // slightly below the eye line so the player sees the gore
+    this.ctx.juice.spawnImpact(_wish, "blood");
   }
 
   reset(spawn, yaw = 0) {
@@ -367,7 +385,7 @@ export class Player {
       if (_tmp.dot(_forward) > cone) {
         door.kick();
         if (!kickPoint) kickPoint = door.center.clone();
-        this.ctx.score.add(150, "BREACH!");
+        // Breaching a door is neither an elimination nor a rescue — no points.
         this.ctx.weapon.kickFx(door.center);
         this.ctx.audio.kick();
         this.ctx.steamFirstKick();

@@ -31,13 +31,15 @@ export class Engine {
     // --- Scene ------------------------------------------------------------
     this.scene = new THREE.Scene();
 
-    // Grim, rain-soaked Belfast — flat desaturated grey, heavy haze.
-    const skyTop = new THREE.Color(0x595f64);
-    const skyBottom = new THREE.Color(0x868b8e);
-    this.scene.background = skyBottom.clone();
-    // Lighter haze than a tight street — the open grid needs the far blocks
-    // and the horizon hills to read through the rain.
-    this.scene.fog = new THREE.FogExp2(0x3c4042, 0.05); // claustrophobic PS1 mist (~18m)
+    // Overcast-Belfast grey veil: one flat grey for sky, fog and the far
+    // horizon so distance fades seamlessly — no hard skyline edge, no clear sky.
+    const skyTop = new THREE.Color(0x8a9094);
+    const skyBottom = new THREE.Color(0x8a9094);
+    this.scene.background = new THREE.Color(0x8a9094);
+    // Linear fog: clear out to ~12m, fully grey by 145m (just inside the 160
+    // camera far plane) so the whole world — including the skyline — dissolves
+    // into the same grey with no visible edge.
+    this.scene.fog = new THREE.Fog(0x8a9094, 12, 145);
 
     // --- Camera (the player's eyes) --------------------------------------
     this.camera = new THREE.PerspectiveCamera(

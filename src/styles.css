@@ -148,6 +148,63 @@ html, body {
   margin-top: 5px;
 }
 
+/* Operation code — monospace amber chip so the player can note it to skip back. */
+#hud-opcode {
+  display: inline-block;
+  margin-top: 8px;
+  padding: 2px 9px;
+  font-size: 12px;
+  font-weight: 700;
+  font-family: "Courier New", "Consolas", monospace;
+  letter-spacing: 0.18em;
+  color: var(--accent);
+  background: rgba(255, 122, 26, 0.08);
+  border: 1px solid rgba(255, 122, 26, 0.4);
+  border-radius: 3px;
+  text-shadow: 0 0 10px var(--accent-glow);
+}
+#hud-opcode:empty { display: none; }
+
+/* -- Safehouse floating interactable labels (HUB only) ----- */
+#hub-labels {
+  position: fixed;
+  inset: 0;
+  z-index: 25;          /* above the HUD/canvas, below the menu panel */
+  pointer-events: none; /* clicks must reach the canvas for raycasting */
+  display: none;        /* JS flips to block while in HUB */
+}
+
+.hub-label {
+  position: absolute;
+  transform: translate(-50%, -100%);
+  padding: 5px 12px;
+  white-space: nowrap;
+  font-family: "Arial Narrow", "Inter", system-ui, sans-serif;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--accent);
+  background: rgba(10, 11, 13, 0.82);
+  border: 1px solid rgba(255, 122, 26, 0.55);
+  border-radius: 3px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.7);
+  text-shadow: 0 0 8px var(--accent-glow);
+  transition: opacity 0.12s ease;
+}
+
+/* Small downward caret so the chip reads as anchored to its 3D object. */
+.hub-label::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: -5px;
+  transform: translateX(-50%);
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-top: 5px solid rgba(255, 122, 26, 0.55);
+}
+
 /* -- Crosshair --------------------------------------------- */
 /* Centered via translate; opacity driven by JS (0 in menu, 1 playing) */
 #crosshair {

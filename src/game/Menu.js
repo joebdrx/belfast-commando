@@ -2,6 +2,7 @@ import gameState from "./GameState.js";
 import UPGRADES from "../data/upgrades.json";
 import BOOTS from "../data/boots.json";
 import DIALOGUE from "../data/dialogue.json";
+import LEVELS from "../data/levels.json";
 
 /**
  * Menu
@@ -35,12 +36,15 @@ const BOOTS_BY_ID = Object.fromEntries(BOOTS.map((b) => [b.id, b]));
 
 export class Menu {
   constructor() {
-    /** @type {{onStartOperation?:Function,onUpgrades?:Function,onStoryLogs?:Function,onExit?:Function}} */
+    /** @type {{onStartOperation?:Function,onUpgrades?:Function,onStoryLogs?:Function,onExit?:Function,onCodeAccepted?:Function}} */
     this._handlers = {};
-    /** @type {{progression: any|null}} */
-    this._providers = { progression: null };
+    /** @type {{progression: any|null, levelManager: any|null}} */
+    this._providers = { progression: null, levelManager: null };
     /** Which view is showing: "main" | "upgrades" | "story". */
     this._view = "main";
+    /** Landline dial state. */
+    this._dialEntry = "";
+    this._dialCloseTimer = null;
 
     this._injectStyle();
     this._buildDom();
@@ -62,62 +66,80 @@ export class Menu {
     style.textContent = `
       .${PREFIX}root {
         position: fixed; inset: 0; z-index: 30;
-        display: flex; align-items: center; justify-content: center;
-        pointer-events: auto;
+        pointer-events: none; /* right side stays clickable → hub 3D shows through */
         font-family: "Arial Narrow", "Inter", system-ui, sans-serif;
         color: #f0ede8;
-        background:
-          radial-gradient(ellipse at center, rgba(8,10,13,0.62) 0%, rgba(3,4,6,0.9) 100%);
       }
       .${PREFIX}root.${PREFIX}hidden { display: none; }
-      .${PREFIX}card {
-        max-width: 640px; width: 92%;
-        max-height: 88vh; overflow-y: auto;
-        padding: 38px 46px;
-        background: rgba(14,16,18,0.94);
-        border: 1px solid rgba(255,122,26,0.28);
-        border-top: 2px solid #ff7a1a;
-        border-radius: 4px; text-align: center;
-        box-shadow: 0 0 80px rgba(0,0,0,0.85), inset 0 1px 0 rgba(255,255,255,0.04);
+      /* LEFT vertical command panel; the right ~60% is transparent so the hub
+         hero model reads behind it (CoD-lobby framing). */
+      .${PREFIX}panel {
+        pointer-events: auto;
+        position: absolute; top: 0; left: 0; bottom: 0;
+        width: 40%; min-width: 326px; max-width: 468px;
+        display: flex; flex-direction: column;
+        padding: 46px 40px 36px;
+        overflow-y: auto;
+        background: linear-gradient(100deg,
+          rgba(8,9,11,0.97) 0%, rgba(9,11,13,0.95) 68%, rgba(11,13,15,0.58) 100%);
+        border-right: 1px solid rgba(255,122,26,0.20);
+        box-shadow: 26px 0 70px rgba(0,0,0,0.6);
+      }
+      /* Far-left amber stencil stripe for the gritty operations-board look. */
+      .${PREFIX}panel::before {
+        content: ""; position: absolute; top: 0; left: 0; bottom: 0; width: 4px;
+        background: linear-gradient(#ff7a1a, rgba(255,122,26,0.15));
+      }
+      .${PREFIX}kicker {
+        font-size: 11px; font-weight: 800; letter-spacing: 0.34em;
+        text-transform: uppercase; color: rgba(255,122,26,0.85); margin-bottom: 6px;
       }
       .${PREFIX}title {
-        font-size: 34px; font-weight: 900; letter-spacing: 0.10em;
-        text-transform: uppercase; color: #ff7a1a; line-height: 1.05;
+        font-size: 30px; font-weight: 900; letter-spacing: 0.08em;
+        text-transform: uppercase; color: #ff7a1a; line-height: 1.04;
         text-shadow: 0 0 22px rgba(255,122,26,0.5), 0 2px 4px rgba(0,0,0,0.85);
-        margin-bottom: 8px;
+        margin-bottom: 10px;
       }
       .${PREFIX}rp {
-        font-size: 14px; font-weight: 800; letter-spacing: 0.16em;
+        font-size: 13px; font-weight: 800; letter-spacing: 0.16em;
         text-transform: uppercase; color: rgba(240,237,232,0.7);
-        margin-bottom: 24px;
+        margin-bottom: 22px;
+        padding-bottom: 18px; border-bottom: 1px solid rgba(255,255,255,0.08);
       }
-      .${PREFIX}rp b { color: #ff7a1a; font-size: 18px; }
+      .${PREFIX}rp b { color: #ff7a1a; font-size: 17px; }
+      .${PREFIX}body { display: flex; flex-direction: column; }
+      /* Main actions: a clean stacked list filling the panel width. */
       .${PREFIX}btnrow {
-        display: flex; flex-wrap: wrap; gap: 12px; justify-content: center;
+        display: flex; flex-direction: column; gap: 11px;
       }
       .${PREFIX}btn {
-        flex: 1 1 40%; min-width: 150px;
-        padding: 14px 18px;
+        width: 100%;
+        padding: 15px 18px; text-align: left;
         font-family: inherit; font-size: 15px; font-weight: 800;
         letter-spacing: 0.10em; text-transform: uppercase;
         color: #f0ede8; cursor: pointer;
-        background: rgba(255,255,255,0.05);
-        border: 1px solid rgba(255,122,26,0.35);
-        border-radius: 4px;
+        background: rgba(255,255,255,0.045);
+        border: 1px solid rgba(255,122,26,0.30);
+        border-left: 3px solid rgba(255,122,26,0.55);
+        border-radius: 3px;
         transition: background 0.14s ease, border-color 0.14s ease, transform 0.06s ease;
       }
-      .${PREFIX}btn:hover { background: rgba(255,122,26,0.18); border-color: #ff7a1a; }
-      .${PREFIX}btn:active { transform: translateY(1px); }
+      .${PREFIX}btn:hover {
+        background: rgba(255,122,26,0.18); border-color: #ff7a1a;
+        border-left-color: #ff7a1a;
+      }
+      .${PREFIX}btn:active { transform: translateX(2px); }
       .${PREFIX}btn:disabled {
         opacity: 0.4; cursor: not-allowed; border-color: rgba(255,255,255,0.14);
       }
-      .${PREFIX}btn:disabled:hover { background: rgba(255,255,255,0.05); }
+      .${PREFIX}btn:disabled:hover { background: rgba(255,255,255,0.045); }
       .${PREFIX}btn-sm {
-        flex: 0 0 auto; min-width: 0; padding: 8px 16px; font-size: 13px;
+        width: auto; flex: 0 0 auto; min-width: 0; padding: 8px 16px;
+        font-size: 13px; text-align: center;
       }
       .${PREFIX}sub-title {
-        font-size: 22px; font-weight: 900; letter-spacing: 0.10em;
-        text-transform: uppercase; color: #ff7a1a; margin-bottom: 18px;
+        font-size: 21px; font-weight: 900; letter-spacing: 0.08em;
+        text-transform: uppercase; color: #ff7a1a; margin-bottom: 16px;
       }
       .${PREFIX}list { display: flex; flex-direction: column; gap: 10px; text-align: left; }
       .${PREFIX}section-label {
@@ -175,6 +197,71 @@ export class Menu {
         font-size: 13px; color: rgba(240,237,232,0.5); line-height: 1.6; padding: 8px 0;
       }
       .${PREFIX}back { margin-top: 22px; }
+      .${PREFIX}item-meta.${PREFIX}locked b { color: #f85149; }
+
+      /* ---- Landline level-code dial (modal over everything) ---------------- */
+      .${PREFIX}dial {
+        position: fixed; inset: 0; z-index: 36;
+        pointer-events: auto;
+        display: flex; align-items: center; justify-content: center;
+        font-family: "Arial Narrow", "Inter", system-ui, sans-serif;
+        background: radial-gradient(ellipse at center, rgba(4,5,7,0.82) 0%, rgba(2,3,4,0.95) 100%);
+      }
+      .${PREFIX}dial.${PREFIX}hidden { display: none; }
+      .${PREFIX}dialcard {
+        position: relative;
+        width: 320px; max-width: 92%;
+        padding: 26px 26px 24px;
+        background: rgba(14,16,18,0.98);
+        border: 1px solid rgba(255,122,26,0.30);
+        border-top: 2px solid #ff7a1a;
+        border-radius: 6px; text-align: center;
+        box-shadow: 0 0 70px rgba(0,0,0,0.88), inset 0 1px 0 rgba(255,255,255,0.04);
+      }
+      .${PREFIX}dialtitle {
+        font-size: 18px; font-weight: 900; letter-spacing: 0.10em;
+        text-transform: uppercase; color: #ff7a1a; margin-bottom: 4px;
+      }
+      .${PREFIX}dialhint {
+        font-size: 11px; font-weight: 700; letter-spacing: 0.10em;
+        text-transform: uppercase; color: rgba(240,237,232,0.45); margin-bottom: 14px;
+      }
+      .${PREFIX}dialdisplay {
+        font-family: "Courier New", "Consolas", monospace;
+        font-size: 32px; font-weight: 700; letter-spacing: 0.42em;
+        color: #ffc566; padding: 10px 0 8px; min-height: 44px;
+        background: rgba(0,0,0,0.45);
+        border: 1px solid rgba(255,122,26,0.25); border-radius: 4px;
+        margin-bottom: 8px; text-indent: 0.42em;
+      }
+      .${PREFIX}dialstatus {
+        font-size: 11.5px; font-weight: 800; letter-spacing: 0.10em;
+        text-transform: uppercase; min-height: 16px; margin-bottom: 14px;
+        color: rgba(240,237,232,0.55);
+      }
+      .${PREFIX}dialstatus.ok { color: #3fb950; }
+      .${PREFIX}dialstatus.bad { color: #f85149; }
+      .${PREFIX}pad {
+        display: grid; grid-template-columns: repeat(3, 1fr); gap: 9px;
+      }
+      .${PREFIX}key {
+        padding: 14px 0;
+        font-family: "Courier New", "Consolas", monospace;
+        font-size: 19px; font-weight: 800; color: #f0ede8; cursor: pointer;
+        background: rgba(255,255,255,0.05);
+        border: 1px solid rgba(255,122,26,0.30);
+        border-radius: 4px;
+        transition: background 0.12s ease, border-color 0.12s ease, transform 0.05s ease;
+      }
+      .${PREFIX}key:hover { background: rgba(255,122,26,0.20); border-color: #ff7a1a; }
+      .${PREFIX}key:active { transform: translateY(1px); }
+      .${PREFIX}key-fn {
+        font-family: inherit; font-size: 13px; font-weight: 800;
+        letter-spacing: 0.08em; text-transform: uppercase;
+      }
+      .${PREFIX}key-enter { color: #0b0c0d; background: #ff7a1a; border-color: #ff7a1a; }
+      .${PREFIX}key-enter:hover { background: #ffa24d; }
+      .${PREFIX}dialclose { margin-top: 14px; }
     `;
     document.head.appendChild(style);
   }
@@ -187,25 +274,77 @@ export class Menu {
     return el;
   }
 
-  /** Build the root, card, title, RP readout, the main button row and the sub-view host. */
+  /** Build the root, left panel, title, RP readout, the action list and the sub-view host. */
   _buildDom() {
     this.root = this._el("div", `${PREFIX}root`);
 
-    this.card = this._el("div", `${PREFIX}card`);
-    this.root.appendChild(this.card);
+    // The left command panel; the right side of the root is transparent so the
+    // hub hero model renders behind the menu.
+    this.panel = this._el("div", `${PREFIX}panel`);
+    this.root.appendChild(this.panel);
 
-    this.title = this._el("div", `${PREFIX}title`, "Belfast Commando — Safehouse");
-    this.card.appendChild(this.title);
+    this.panel.appendChild(this._el("div", `${PREFIX}kicker`, "// Belfast Commando"));
+    this.title = this._el("div", `${PREFIX}title`, "Safehouse");
+    this.panel.appendChild(this.title);
 
     this.rpReadout = this._el("div", `${PREFIX}rp`);
-    this.card.appendChild(this.rpReadout);
+    this.panel.appendChild(this.rpReadout);
 
-    // Body host — swapped between the main buttons and the sub-panels.
+    // Body host — swapped between the main actions and the sub-panels.
     this.body = this._el("div", `${PREFIX}body`);
-    this.card.appendChild(this.body);
+    this.panel.appendChild(this.body);
 
     this._renderMain();
     document.body.appendChild(this.root);
+
+    // The landline level-code dial (independent modal, hidden until opened).
+    this._buildDialDom();
+  }
+
+  /** Build the number-pad dial modal (a separate root appended to the body). */
+  _buildDialDom() {
+    this.dialRoot = this._el("div", `${PREFIX}dial ${PREFIX}hidden`);
+    const card = this._el("div", `${PREFIX}dialcard`);
+    this.dialRoot.appendChild(card);
+
+    card.appendChild(this._el("div", `${PREFIX}dialtitle`, "Operation Line"));
+    card.appendChild(this._el("div", `${PREFIX}dialhint`, "Dial a 4-digit operation code"));
+
+    this.dialDisplay = this._el("div", `${PREFIX}dialdisplay`);
+    card.appendChild(this.dialDisplay);
+
+    this.dialStatus = this._el("div", `${PREFIX}dialstatus`);
+    card.appendChild(this.dialStatus);
+
+    const pad = this._el("div", `${PREFIX}pad`);
+    const keys = ["1", "2", "3", "4", "5", "6", "7", "8", "9"];
+    for (const k of keys) {
+      pad.appendChild(this._makeKey(k, () => this._dialPush(k)));
+    }
+    pad.appendChild(this._makeKey("CLR", () => this._dialClear(), "fn"));
+    pad.appendChild(this._makeKey("0", () => this._dialPush("0")));
+    pad.appendChild(this._makeKey("ENTER", () => this._dialSubmit(), "enter"));
+    card.appendChild(pad);
+
+    const closeRow = this._el("div", `${PREFIX}dialclose`);
+    closeRow.appendChild(this._makeButton("◂ Hang Up", () => this.closeDial(), true));
+    card.appendChild(closeRow);
+
+    // Physical-keyboard support while the dial is open (bound on open).
+    this._dialKeyHandler = (e) => this._onDialKey(e);
+
+    document.body.appendChild(this.dialRoot);
+  }
+
+  /** Build a keypad key. `kind` = "" | "fn" | "enter". */
+  _makeKey(label, onClick, kind = "") {
+    let cls = `${PREFIX}key`;
+    if (kind === "fn") cls += ` ${PREFIX}key-fn`;
+    else if (kind === "enter") cls += ` ${PREFIX}key-fn ${PREFIX}key-enter`;
+    const btn = this._el("button", cls, label);
+    btn.type = "button";
+    btn.addEventListener("click", onClick);
+    return btn;
   }
 
   // ---- views ---------------------------------------------------------------
@@ -224,7 +363,7 @@ export class Menu {
     row.appendChild(this._makeButton("Start Operation", () => {
       this._call("onStartOperation");
     }));
-    row.appendChild(this._makeButton("Upgrades", () => {
+    row.appendChild(this._makeButton("Arsenal & Upgrades", () => {
       this._call("onUpgrades");
       this._renderUpgrades();
     }));
@@ -238,12 +377,12 @@ export class Menu {
     this.body.appendChild(row);
   }
 
-  /** Upgrades + boots sub-panel. Degrades gracefully without a provider. */
+  /** Arsenal (weapons) + upgrades + boots sub-panel. Degrades gracefully without a provider. */
   _renderUpgrades() {
     this._view = "upgrades";
     this._clearBody();
 
-    this.body.appendChild(this._el("div", `${PREFIX}sub-title`, "Upgrades & Boots"));
+    this.body.appendChild(this._el("div", `${PREFIX}sub-title`, "Arsenal & Upgrades"));
 
     const prog = this._providers.progression;
     if (!prog || typeof prog.listUpgrades !== "function") {
@@ -258,6 +397,24 @@ export class Menu {
     }
 
     const rp = this._rp();
+
+    // --- Arsenal (weapons) ------------------------------------------------
+    if (typeof prog.listWeapons === "function") {
+      this.body.appendChild(this._el("div", `${PREFIX}section-label`, "Arsenal"));
+      // Transient buy-feedback line (e.g. "Need a prerequisite" / "Not enough RP").
+      this._arsenalMsg = this._el("div", `${PREFIX}item-meta`);
+      this._arsenalMsg.style.minHeight = "14px";
+      this._arsenalMsg.style.margin = "0 0 4px";
+      this.body.appendChild(this._arsenalMsg);
+
+      const weapons = this._safeArray(() => prog.listWeapons());
+      const nameById = Object.fromEntries(weapons.map((w) => [w.id, w.name]));
+      const wList = this._el("div", `${PREFIX}list`);
+      for (const w of weapons) {
+        wList.appendChild(this._weaponRow(w, prog, nameById));
+      }
+      this.body.appendChild(wList);
+    }
 
     // --- Upgrades ---------------------------------------------------------
     this.body.appendChild(this._el("div", `${PREFIX}section-label`, "Upgrades"));
@@ -381,6 +538,84 @@ export class Menu {
     return item;
   }
 
+  /**
+   * A single weapon row. OWNED → ✓ badge + disabled; locked (prereq unmet) →
+   * "Requires <prereq>" + disabled; affordable → a Buy button; else Buy disabled.
+   * @param {object} w a `prog.listWeapons()` entry.
+   * @param {object} prog the Progression provider.
+   * @param {Record<string,string>} nameById id → display name (for prereq labels).
+   */
+  _weaponRow(w, prog, nameById) {
+    const item = this._el("div", `${PREFIX}item`);
+
+    const main = this._el("div", `${PREFIX}item-main`);
+    const name = this._el("div", `${PREFIX}item-name`, w.name);
+    if (w.owned) {
+      name.appendChild(this._el("span", `${PREFIX}eq`, "✓ OWNED"));
+    }
+    main.appendChild(name);
+    main.appendChild(this._el("div", `${PREFIX}item-desc`, w.desc || ""));
+
+    const meta = this._el("div", `${PREFIX}item-meta`);
+    if (w.owned) {
+      meta.innerHTML = w.cost > 0 ? "In your locker" : "Standard issue";
+    } else if (w.locked) {
+      meta.classList.add(`${PREFIX}locked`);
+      const prereq = (w.requires && nameById[w.requires]) || w.requires || "a prior weapon";
+      meta.innerHTML = `Locked · Requires <b>${prereq}</b>`;
+    } else {
+      meta.innerHTML = `Cost <b>${w.cost} RP</b>`;
+    }
+    main.appendChild(meta);
+    item.appendChild(main);
+
+    let label;
+    let disabled;
+    if (w.owned) {
+      label = "Owned";
+      disabled = true;
+    } else if (w.locked) {
+      label = "Locked";
+      disabled = true;
+    } else {
+      label = "Buy";
+      disabled = !w.affordable;
+    }
+    const btn = this._makeButton(label, () => this._buyWeapon(prog, w.id), true);
+    btn.disabled = disabled;
+    item.appendChild(btn);
+    return item;
+  }
+
+  /**
+   * Attempt a weapon purchase. On success, refresh RP + the panel; on failure,
+   * surface the reason briefly in the arsenal message line.
+   */
+  _buyWeapon(prog, id) {
+    let res;
+    try {
+      res = prog.buyWeapon(id);
+    } catch (err) {
+      console.warn("[Menu] progression.buyWeapon threw:", err);
+      return;
+    }
+    if (res && res.ok) {
+      this._afterPurchase();
+    } else {
+      const reason = (res && res.reason) || "unknown";
+      const msg = {
+        broke: "Not enough Resistance Points",
+        locked: "Buy the prerequisite weapon first",
+        owned: "Already in your locker",
+        unknown: "Unavailable",
+      }[reason] || "Unavailable";
+      if (this._arsenalMsg) {
+        this._arsenalMsg.classList.add(`${PREFIX}locked`);
+        this._arsenalMsg.innerHTML = `⚠ <b>${msg}</b>`;
+      }
+    }
+  }
+
   /** A single story snippet: speaker, faction badge, lines. */
   _storyRow(snip) {
     const wrap = this._el("div", `${PREFIX}story`);
@@ -500,10 +735,10 @@ export class Menu {
     this.rpReadout.innerHTML = `Resistance Points: <b>${this._rp()}</b>`;
   }
 
-  /** Run a handler callback if the caller supplied one. */
-  _call(name) {
+  /** Run a handler callback if the caller supplied one (forwarding any args). */
+  _call(name, ...args) {
     const fn = this._handlers[name];
-    if (typeof fn === "function") fn();
+    if (typeof fn === "function") fn(...args);
   }
 
   /** Call a provider method defensively; returns its (truthy) result or false. */
@@ -535,6 +770,90 @@ export class Menu {
     this._renderUpgrades();
   }
 
+  // ---- landline level-code dial -------------------------------------------
+
+  /** Repaint the masked 4-slot display from the current entry. */
+  _renderDialDisplay() {
+    if (!this.dialDisplay) return;
+    const slots = (this._dialEntry + "————").slice(0, 4);
+    this.dialDisplay.textContent = slots.split("").join(" ");
+  }
+
+  /** Set the dial status line. `kind` = "" | "ok" | "bad". */
+  _setDialStatus(text, kind = "") {
+    if (!this.dialStatus) return;
+    this.dialStatus.textContent = text || "";
+    this.dialStatus.className = `${PREFIX}dialstatus${kind ? ` ${kind}` : ""}`;
+  }
+
+  /** Append a digit (max 4), clearing any prior result message. */
+  _dialPush(d) {
+    if (this._dialCloseTimer) return; // locked while a confirmation is animating
+    if (this._dialEntry.length >= 4) return;
+    this._dialEntry += d;
+    this._setDialStatus("");
+    this._renderDialDisplay();
+  }
+
+  /** Clear the entry. */
+  _dialClear() {
+    if (this._dialCloseTimer) return;
+    this._dialEntry = "";
+    this._setDialStatus("");
+    this._renderDialDisplay();
+  }
+
+  /** Validate the entered code against the LevelManager and confirm/deny. */
+  _dialSubmit() {
+    if (this._dialCloseTimer) return;
+    const code = this._dialEntry;
+    if (code.length < 4) {
+      this._setDialStatus("Enter all 4 digits", "bad");
+      return;
+    }
+    const lm = this._providers.levelManager;
+    const index = lm && typeof lm.indexForCode === "function" ? lm.indexForCode(code) : -1;
+    if (index >= 0) {
+      const name = this._levelName(index);
+      this._setDialStatus(`Code accepted — Operation ${name}`, "ok");
+      this._call("onCodeAccepted", index);
+      // Auto-close after the player reads the confirmation.
+      this._dialCloseTimer = setTimeout(() => {
+        this._dialCloseTimer = null;
+        this.closeDial();
+      }, 1200);
+    } else {
+      this._setDialStatus("Invalid code", "bad");
+    }
+  }
+
+  /** Display name for a campaign index (from levels.json). */
+  _levelName(index) {
+    const entry = LEVELS[index];
+    return (entry && entry.name) ? entry.name : `Sector ${index + 1}`;
+  }
+
+  /** Keyboard support for the open dial (digits / Backspace / Enter / Escape). */
+  _onDialKey(e) {
+    if (e.key >= "0" && e.key <= "9") {
+      this._dialPush(e.key);
+      e.preventDefault();
+    } else if (e.key === "Backspace") {
+      if (!this._dialCloseTimer) {
+        this._dialEntry = this._dialEntry.slice(0, -1);
+        this._setDialStatus("");
+        this._renderDialDisplay();
+      }
+      e.preventDefault();
+    } else if (e.key === "Enter") {
+      this._dialSubmit();
+      e.preventDefault();
+    } else if (e.key === "Escape") {
+      this.closeDial();
+      e.preventDefault();
+    }
+  }
+
   // ---- public API ----------------------------------------------------------
 
   /** Show the menu (resets to the main view) and make it interactive. */
@@ -544,9 +863,44 @@ export class Menu {
     this.root.classList.remove(`${PREFIX}hidden`);
   }
 
-  /** Hide the menu. */
+  /** Hide the menu (and any open dial). */
   hide() {
+    this.closeDial();
     this.root.classList.add(`${PREFIX}hidden`);
+  }
+
+  /** Open the Arsenal & Upgrades sub-panel directly (e.g. from the 3D crate). */
+  openUpgrades() {
+    this._renderUpgrades();
+  }
+
+  /** Open the landline level-code dial modal (e.g. from the 3D wall phone). */
+  openDial() {
+    if (!this.dialRoot) return;
+    if (this._dialCloseTimer) {
+      clearTimeout(this._dialCloseTimer);
+      this._dialCloseTimer = null;
+    }
+    this._dialEntry = "";
+    this._renderDialDisplay();
+    this._setDialStatus("");
+    this.dialRoot.classList.remove(`${PREFIX}hidden`);
+    if (typeof document !== "undefined") {
+      document.addEventListener("keydown", this._dialKeyHandler, true);
+    }
+  }
+
+  /** Close the dial modal and unbind its keyboard handler. */
+  closeDial() {
+    if (!this.dialRoot) return;
+    if (this._dialCloseTimer) {
+      clearTimeout(this._dialCloseTimer);
+      this._dialCloseTimer = null;
+    }
+    this.dialRoot.classList.add(`${PREFIX}hidden`);
+    if (typeof document !== "undefined") {
+      document.removeEventListener("keydown", this._dialKeyHandler, true);
+    }
   }
 
   /**
@@ -559,11 +913,13 @@ export class Menu {
 
   /**
    * Inject providers. `progression` is Agent A's Progression instance (or null
-   * for standalone tests). If the Upgrades panel is open, re-render it.
-   * @param {{progression?: any}} providers
+   * for standalone tests); `levelManager` powers the level-code dial. If the
+   * Upgrades panel is open, re-render it.
+   * @param {{progression?: any, levelManager?: any}} providers
    */
   setProviders(providers = {}) {
     if ("progression" in providers) this._providers.progression = providers.progression;
+    if ("levelManager" in providers) this._providers.levelManager = providers.levelManager;
     if (this._view === "upgrades") this._renderUpgrades();
   }
 
@@ -576,9 +932,11 @@ export class Menu {
 
   /** Tear down: remove the DOM, the style block, and the bus subscription. */
   dispose() {
+    this.closeDial();
     if (this._unsubCurrency) this._unsubCurrency();
     this._unsubCurrency = null;
     if (this.root && this.root.parentNode) this.root.parentNode.removeChild(this.root);
+    if (this.dialRoot && this.dialRoot.parentNode) this.dialRoot.parentNode.removeChild(this.dialRoot);
     const style = document.getElementById(`${PREFIX}style`);
     if (style && style.parentNode) style.parentNode.removeChild(style);
   }

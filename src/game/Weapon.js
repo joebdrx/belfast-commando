@@ -5,14 +5,16 @@ const _dir = new THREE.Vector3();
 const _box = new THREE.Vector3();
 const _hit = new THREE.Vector3();
 const _spread = new THREE.Vector3();
+const _splatLocal = new THREE.Vector3();
+const _splatLook = new THREE.Vector3();
 
 /** Weapon definitions — placeholder low-poly viewmodels, distinct feel. */
 const WEAPONS = [
   // vmRotY yaws the GLB so the barrel points forward (-Z). The two gun meshes
   // happen to face opposite directions, hence opposite signs.
-  { name: "Sidearm", model: "weapon_pistol", vmRotY: -Math.PI / 2, color: 0x2b2b2b, damage: 34, rpm: 360, auto: false, pellets: 1, spread: 0.004, size: [0.12, 0.16, 0.4], mag: 12, reloadTime: 1.1 },
-  { name: "SMG", model: "weapon_ak", vmRotY: Math.PI / 2, color: 0x3a3f44, damage: 18, rpm: 850, auto: true, pellets: 1, spread: 0.018, size: [0.1, 0.18, 0.55], mag: 30, reloadTime: 1.6 },
-  { name: "Boomstick", model: "weapon_shotgun", vmRotY: Math.PI / 2, color: 0x4a3520, damage: 16, rpm: 95, auto: false, pellets: 8, spread: 0.07, size: [0.16, 0.18, 0.6], mag: 6, reloadTime: 2.0 },
+  { name: "Sidearm", id: "pistol", model: "weapon_pistol", vmRotY: -Math.PI / 2, color: 0x2b2b2b, damage: 34, rpm: 360, auto: false, pellets: 1, spread: 0.004, size: [0.12, 0.16, 0.4], mag: 12, reloadTime: 1.1 },
+  { name: "SMG", id: "smg", model: "weapon_ak", vmRotY: Math.PI / 2, color: 0x3a3f44, damage: 18, rpm: 850, auto: true, pellets: 1, spread: 0.018, size: [0.1, 0.18, 0.55], mag: 30, reloadTime: 1.6 },
+  { name: "Boomstick", id: "boomstick", model: "weapon_shotgun", vmRotY: Math.PI / 2, color: 0x4a3520, damage: 16, rpm: 95, auto: false, pellets: 8, spread: 0.07, size: [0.16, 0.18, 0.6], mag: 6, reloadTime: 2.0 },
 ];
 
 // Shared viewmodel offset — seats the gun in the FP arms' grip. Pulled back
@@ -51,6 +53,11 @@ export class Weapon {
     this.cooldown = 0;
     this.triggerHeld = false;
     this.index = 0;
+
+    // Weapon ownership (upgrade gating). Persisted/driven by main.js via
+    // setOwned(progression.getOwnedWeapons()); defaults to pistol-only so the
+    // player can never select a weapon they have not unlocked yet.
+    this._owned = new Set(["pistol"]);
 
     // Magazine ammo per weapon (reserve is effectively infinite for the MVP).
     this.ammo = WEAPONS.map((w) => w.mag);
@@ -208,10 +215,12 @@ export class Weapon {
     };
     this._onKey = (e) => {
       if (!this.ctx || !this.ctx.active) return;
+      // setWeapon() gates on ownership, so number keys for unowned weapons are
+      // harmless no-ops. KeyQ cycles only through owned weapons.
       if (e.code === "Digit1") this.setWeapon(0);
       else if (e.code === "Digit2") this.setWeapon(1);
       else if (e.code === "Digit3") this.setWeapon(2);
-      else if (e.code === "KeyQ") this.setWeapon((this.index + 1) % WEAPONS.length);
+      else if (e.code === "KeyQ") this._cycleOwned();
       else if (e.code === "KeyR") this.reload();
     };
     window.addEventListener("mousedown", this._onDown);
@@ -225,6 +234,11 @@ export class Weapon {
 
   setWeapon(i) {
     if (i === this.index) return;
+    // Ownership gate: selecting an unowned weapon is a no-op (soft HUD denial).
+    if (!this._isOwned(i)) {
+      this.ctx && this.ctx.hud && this.ctx.hud.flashDenied && this.ctx.hud.flashDenied();
+      return;
+    }
     this.index = i;
     this.reloading = false;
     this.reloadTimer = 0;
@@ -234,6 +248,56 @@ export class Weapon {
       this.ctx.hud.setAmmo(this.ammo[this.index], this.current.mag, this.reloading);
       this.ctx.audio.switchWeapon();
     }
+  }
+
+  /** True if weapon slot `i` exists and its id is in the owned set. */
+  _isOwned(i) {
+    const w = WEAPONS[i];
+    return !!w && this._owned.has(w.id);
+  }
+
+  /**
+   * Replace the owned-weapon set from an array of stable ids
+   * (e.g. ["pistol","boomstick"]). "pistol" is always included as a floor so the
+   * player is never left without a weapon. Called by main.js from progression.
+   */
+  setOwned(ids) {
+    const set = new Set(Array.isArray(ids) ? ids : []);
+    set.add("pistol"); // floor — always own the sidearm
+    this._owned = set;
+    // If the currently equipped weapon was revoked, drop back to the pistol.
+    if (!this._isOwned(this.index)) this.setWeaponById("pistol");
+  }
+
+  /** Array of owned weapon ids. */
+  getOwnedIds() {
+    return [...this._owned];
+  }
+
+  /** Switch to the weapon with stable id `id`, only if it is owned. */
+  setWeaponById(id) {
+    const i = WEAPONS.findIndex((w) => w.id === id);
+    if (i < 0 || !this._isOwned(i)) return;
+    if (i === this.index) {
+      // Already equipped — still refresh the viewmodel/HUD on a forced re-equip
+      // (e.g. main.js calling setWeaponById("pistol") on a fresh op).
+      this._buildViewmodel();
+      if (this.ctx) {
+        this.ctx.hud.setWeapon(this.current.name);
+        this.ctx.hud.setAmmo(this.ammo[this.index], this.current.mag, this.reloading);
+      }
+      return;
+    }
+    this.setWeapon(i);
+  }
+
+  /** Cycle to the next OWNED weapon (Q). No-op if only one is owned. */
+  _cycleOwned() {
+    const owned = [];
+    for (let i = 0; i < WEAPONS.length; i++) if (this._isOwned(i)) owned.push(i);
+    if (owned.length <= 1) return;
+    const pos = owned.indexOf(this.index);
+    this.setWeapon(owned[(pos + 1) % owned.length]);
   }
 
   reload() {
@@ -270,7 +334,7 @@ export class Weapon {
     this._kick = 0.06; // viewmodel recoil
 
     this.ctx.audio.gunshot(w.name);
-    this.ctx.score.add(5, "", true); // small points + combo bump for shooting
+    // Firing alone scores nothing — points come only from kills / rescues.
 
     const colliders = this.ctx.level.getColliders();
     for (let p = 0; p < w.pellets; p++) {
@@ -338,7 +402,10 @@ export class Weapon {
       bestEnemy.takeDamage(w.damage, _dir, 3);
       this._spawnImpact(ePoint, 0xb01818, true);
       this._tracer(_origin, ePoint);
-      this.ctx.score.add(30, "HIT");
+      // Stick a small blood splat onto the enemy body so it rides/topples with
+      // the corpse. Outward normal ≈ toward the shooter (-_dir).
+      this._stickBlood(bestEnemy, ePoint, _box.copy(_dir).multiplyScalar(-1));
+      // Wounding without killing no longer scores — points come on kill only.
       this.ctx.state && this.ctx.state.emit("hit", { position: ePoint.clone(), amount: w.damage });
       if (this.ctx.juice) this.ctx.juice.spawnImpact(ePoint, "blood");
       if (wasAlive && bestEnemy.dead) {
@@ -378,8 +445,10 @@ export class Weapon {
     // they composite with normal alpha blending.
     const size = isBlood ? 0.55 : 0.32;
     const tex = isBlood ? this._bloodTex : this._holeTex;
+    // alphaTest discards the transparent (keyed-out) regions of the sprite so a
+    // black square / dark halo never shows around the hole or blood billboard.
     const mat = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.98, depthWrite: false, fog: false });
-    if (tex) mat.map = tex;
+    if (tex) { mat.map = tex; mat.alphaTest = 0.5; }
     else mat.color.set(color);
     const mesh = new THREE.Mesh(new THREE.PlaneGeometry(size, size), mat);
     mesh.position.copy(point);
@@ -401,6 +470,44 @@ export class Weapon {
       this.scene.add(speck);
       this._track(speck, 0.4, true);
     }
+  }
+
+  /**
+   * Parent a small blood splat onto an enemy's body so it rides the corpse and
+   * topples with it (instead of only dropping on the ground). Cheap + capped at
+   * 4 splats per enemy (tracked via an ad-hoc `_wpBloodCount` on the instance).
+   * Shares one geometry + material across all splats (no per-hit allocation,
+   * nothing to leak). `outwardNormal` points away from the body (toward shooter).
+   */
+  _stickBlood(enemy, worldPoint, outwardNormal) {
+    const g = enemy && enemy.group;
+    if (!g) return;
+    if ((enemy._wpBloodCount || 0) >= 4) return;
+    enemy._wpBloodCount = (enemy._wpBloodCount || 0) + 1;
+
+    if (!this._splatGeo) this._splatGeo = new THREE.CircleGeometry(1, 12);
+    if (!this._splatMat) {
+      this._splatMat = new THREE.MeshBasicMaterial({
+        color: this._bloodTex ? 0xffffff : 0x7a0a0a,
+        map: this._bloodTex || null,
+        transparent: true, opacity: 0.95, depthWrite: false,
+        side: THREE.DoubleSide, fog: false,
+      });
+      if (this._bloodTex) this._splatMat.alphaTest = 0.5;
+    }
+
+    const splat = new THREE.Mesh(this._splatGeo, this._splatMat);
+    g.updateWorldMatrix(true, false);
+    // Position in the enemy's local space at the hit point.
+    splat.position.copy(g.worldToLocal(_splatLocal.copy(worldPoint)));
+    // Orient the disc (+Z) to face outward along the surface normal.
+    g.worldToLocal(_splatLook.copy(worldPoint).add(outwardNormal));
+    splat.lookAt(_splatLook);
+    splat.rotateZ(Math.random() * Math.PI);
+    // Keep a roughly world-constant radius despite any group scale.
+    const ws = g.getWorldScale(_box).x || 1;
+    splat.scale.setScalar((0.09 + Math.random() * 0.08) / ws);
+    g.add(splat);
   }
 
   _track(mesh, life, gravity = false) {
@@ -509,7 +616,14 @@ export class Weapon {
     this.reloading = false;
     this.reloadTimer = 0;
     this.ammo = WEAPONS.map((w) => w.mag);
-    if (this.ctx) this.ctx.hud.setAmmo(this.ammo[this.index], this.current.mag, false);
+    // Each op starts on the pistol (ownership persists; main.js owns _owned).
+    const pistolIdx = WEAPONS.findIndex((w) => w.id === "pistol");
+    this.index = pistolIdx >= 0 ? pistolIdx : 0;
+    this._buildViewmodel();
+    if (this.ctx) {
+      this.ctx.hud.setWeapon(this.current.name);
+      this.ctx.hud.setAmmo(this.ammo[this.index], this.current.mag, false);
+    }
   }
 
   dispose() {
@@ -517,5 +631,7 @@ export class Weapon {
     window.removeEventListener("mouseup", this._onUp);
     window.removeEventListener("keydown", this._onKey);
     this.reset();
+    if (this._splatGeo) { this._splatGeo.dispose(); this._splatGeo = null; }
+    if (this._splatMat) { this._splatMat.dispose(); this._splatMat = null; }
   }
 }

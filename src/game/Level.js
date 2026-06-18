@@ -247,8 +247,9 @@ export class Level {
       placed++;
     }
 
-    // Burnt-out car roadblock at the cross-street intersection (cover + LOS).
+    // Burnt-out car roadblocks at the two cross-street intersections (cover + LOS).
     this._buildCar(PITCH_X / 2, 0);
+    this._buildCar(-PITCH_X / 2, 0);
 
     // --- Street enemies patrolling the open grid. -------------------------
     const streetEnemies = 12 + this.index * 3;
@@ -658,17 +659,16 @@ export class Level {
 
   /**
    * City skyline backdrop ringed around the map edges (Belfast city model).
-   * Skybox-style: its materials are FOG-EXEMPT so the skyline reads as a distant
-   * horizon behind the claustrophobic street fog (which otherwise hides anything
-   * past ~25m). Each copy faces the map centre; sunk slightly to hide its base.
+   * FOG-AFFECTED so the distant skyline dissolves into the uniform grey veil —
+   * no hard horizon edge. Each copy faces the map centre; sunk slightly to hide
+   * its base.
    */
   _buildSkyline() {
     if (!this.assets) return; // each copy is a getModel probe; absent slug → no-op
     // Distant HORIZON ring: pushed far past the playable grid so it can never
     // interfere with the walkable area. Multiple copies of the same city model
-    // evenly ring the horizon; each is fog-exempt (skybox-style) so it shows
-    // behind the claustrophobic street fog, and frustum-culled so only the few
-    // in view ever render.
+    // evenly ring the horizon; each is fog-affected so it fades into the grey,
+    // and frustum-culled so only the few in view ever render.
     const RX = this.GRID_HALF_X + 150; // ≈181
     const RZ = this.GRID_HALF_Z + 150; // ≈211
     const COPIES = 8;
@@ -684,34 +684,35 @@ export class Level {
       m.traverse((o) => {
         if (!o.material) return;
         const mats = Array.isArray(o.material) ? o.material : [o.material];
-        mats.forEach((mat) => { mat.fog = false; mat.needsUpdate = true; });
+        mats.forEach((mat) => { mat.fog = true; mat.needsUpdate = true; });
       });
       this.group.add(m);
     }
   }
 
   /**
-   * Solid building wall around the whole map edge: a closed rectangle of collider
-   * walls (the actual barrier that keeps the player in the playable area) clad with
-   * exterior-only building models (no interiors/doors) facing inward, all around.
+   * Belfast peace-wall boundary: a closed rectangle of VISIBLE ~5m cement slabs
+   * (the actual barrier that contains the player) crowned with razor barbwire,
+   * backed by recessed exterior building models that tower above the wall.
    */
   _buildBoundary() {
     const BX = this.GRID_HALF_X + 12; // ~43 — just past the outer blocks
     const BZ = this.GRID_HALF_Z + 12; // ~73 — past the spawn approach (z≈68)
-    const H = this.WALL_H;
-    const wall = this._materials.brick;
-    // Closed collider rectangle — the actual barrier (also LOS blockers). The
-    // meshes are made INVISIBLE: the recessed building facades below ARE the
-    // visible boundary ("just a facade on the outer walls"); this collider just
-    // stops the player ~at the facades. A visible brick wall here would sit in
-    // FRONT of the recessed buildings and occlude them.
-    const walls = [
-      this._box(2 * BX, H, 1.5, wall, 0, H / 2, -BZ, { los: true }),
-      this._box(2 * BX, H, 1.5, wall, 0, H / 2, BZ, { los: true }),
-      this._box(1.5, H, 2 * BZ, wall, -BX, H / 2, 0, { los: true }),
-      this._box(1.5, H, 2 * BZ, wall, BX, H / 2, 0, { los: true }),
-    ];
-    walls.forEach((w) => { w.visible = false; });
+    const WH = 5; // visible cement wall height — buildings still tower above it
+    const T = 0.6; // slab thickness
+    const wall = this._materials.concrete;
+    // Closed rectangle of visible concrete slabs, flush on each boundary plane.
+    // These ARE the barrier (colliders + LOS blockers): a 5m wall is far taller
+    // than the 1.7m player, so containment is preserved. Slabs span the full
+    // boundary length so there is no gap. The recessed facades below sit ~0.6m
+    // inside the plane (the slab's inner face is ~0.3m inside) → no coplanar
+    // faces, so no z-fighting; the taller buildings read clearly above the wall.
+    this._box(2 * BX, WH, T, wall, 0, WH / 2, -BZ, { los: true });
+    this._box(2 * BX, WH, T, wall, 0, WH / 2, BZ, { los: true });
+    this._box(T, WH, 2 * BZ, wall, -BX, WH / 2, 0, { los: true });
+    this._box(T, WH, 2 * BZ, wall, BX, WH / 2, 0, { los: true });
+    // Razor / concertina barbwire crowning the wall tops.
+    this._buildBarbwire(BX, BZ, WH);
     // Clad with exterior building models — RECESSED so they read as facades on
     // the barrier. Each model's body is pushed fully OUTWARD past the wall so
     // only its front face shows; nothing protrudes inward for the player to clip
@@ -746,6 +747,69 @@ export class Level {
       clad(-BX, z, Math.PI / 2, "x", -1); // west wall: facade faces +X
       clad(BX, z, -Math.PI / 2, "x", 1); // east wall: facade faces -X
     }
+  }
+
+  /**
+   * Cheap concertina razor-wire crowning the cement boundary walls. Two
+   * InstancedMeshes (one draw call each): low-poly torus "coils" strung along
+   * each wall top, plus thin angled support posts leaning outward over the edge.
+   * Purely decorative — no colliders.
+   */
+  _buildBarbwire(BX, BZ, topY) {
+    const mat = new THREE.MeshStandardMaterial({ color: 0x2a2c2e, metalness: 0.6, roughness: 0.5 });
+    // Each run: `axis` is the direction the wall (and the wire) runs along.
+    const runs = [
+      { axis: "x", fixed: -BZ, from: -BX, to: BX },
+      { axis: "x", fixed: BZ, from: -BX, to: BX },
+      { axis: "z", fixed: -BX, from: -BZ, to: BZ },
+      { axis: "z", fixed: BX, from: -BZ, to: BZ },
+    ];
+    const COIL_STEP = 0.9;
+    const POST_STEP = 4.5;
+    // Count instances up front so each InstancedMesh is exactly sized.
+    let coilN = 0;
+    let postN = 0;
+    for (const r of runs) {
+      const len = r.to - r.from;
+      coilN += Math.max(1, Math.floor(len / COIL_STEP)) + 1;
+      postN += Math.max(1, Math.floor(len / POST_STEP)) + 1;
+    }
+    const coils = new THREE.InstancedMesh(new THREE.TorusGeometry(0.34, 0.035, 5, 8), mat, coilN);
+    const posts = new THREE.InstancedMesh(new THREE.BoxGeometry(0.06, 0.95, 0.06), mat, postN);
+    const d = new THREE.Object3D();
+    const coilY = topY + 0.34; // coil rests on the wall top
+    let ci = 0;
+    let pi = 0;
+    for (const r of runs) {
+      const len = r.to - r.from;
+      const along = r.axis;
+      const outward = r.fixed < 0 ? -1 : 1; // away from the map centre
+      const nCoil = Math.max(1, Math.floor(len / COIL_STEP));
+      for (let i = 0; i <= nCoil; i++) {
+        const t = r.from + (len * i) / nCoil;
+        d.position.set(along === "x" ? t : r.fixed, coilY, along === "x" ? r.fixed : t);
+        // Orient the coil so its axis follows the run (concertina look).
+        d.rotation.set(0, along === "x" ? Math.PI / 2 : 0, 0);
+        d.updateMatrix();
+        coils.setMatrixAt(ci++, d.matrix);
+      }
+      const nPost = Math.max(1, Math.floor(len / POST_STEP));
+      for (let i = 0; i <= nPost; i++) {
+        const t = r.from + (len * i) / nPost;
+        d.position.set(along === "x" ? t : r.fixed, topY + 0.45, along === "x" ? r.fixed : t);
+        // Lean the post outward over the wall edge.
+        if (along === "x") d.rotation.set(outward * 0.4, 0, 0);
+        else d.rotation.set(0, 0, -outward * 0.4);
+        d.updateMatrix();
+        posts.setMatrixAt(pi++, d.matrix);
+      }
+    }
+    coils.instanceMatrix.needsUpdate = true;
+    posts.instanceMatrix.needsUpdate = true;
+    coils.frustumCulled = false;
+    posts.frustumCulled = false;
+    this.group.add(coils);
+    this.group.add(posts);
   }
 
   /** True when (x,z) is in a street lane, not inside a building footprint. */
@@ -835,8 +899,32 @@ export class Level {
       }
     };
 
-    // Phone booth on a corner pavement.
-    place("prop_phone_booth", -this.PITCH_X / 2 + 1.2, this.GRID_HALF_Z - 6, 0, [0.5, 0.5, 2.4]);
+    // Phone booth standing ON the pavement apron at the east edge of the
+    // cx=-24 block (apron x∈[-32.5,-15.5]; building face at x=-17), facing the
+    // street. x=-16.2 sits in the ~1.5m pavement strip, clear of the building.
+    place("prop_phone_booth", -16.2, 52, -Math.PI / 2, [0.5, 0.5, 2.4]);
+
+    // Heavier, collidable street furniture for cover + a populated feel. Each
+    // sits on a pavement edge (just off a building face) or in an open lane,
+    // with a footprint collider [hw(x), hd(z), h(y)] hugging the model. Traffic
+    // cones stay collider-free (footprint null). Positions are hand-placed and
+    // verified against the block/apron spans so nothing clips a building.
+    const furniture = [
+      ["prop_wheelie_bin", -16.2, 24.0, -Math.PI / 2, [0.34, 0.34, 1.0]],
+      ["prop_wheelie_bin", -16.2, 25.3, -Math.PI / 2, [0.34, 0.34, 1.0]],
+      ["prop_wheelie_bin", 8.0, -22.0, Math.PI / 2, [0.34, 0.34, 1.0]],
+      ["prop_wheelie_bin", -8.0, 40.0, -Math.PI / 2, [0.34, 0.34, 1.0]],
+      ["prop_bicycle", -16.3, -20.0, 0, [0.26, 0.9, 1.0]],
+      ["prop_bicycle", 16.3, 30.0, 0, [0.26, 0.9, 1.0]],
+      ["crate_supply", -12.0, 14.0, 0.3, [0.55, 0.55, 1.1]],
+      ["crate_supply", 12.0, -14.0, -0.4, [0.55, 0.55, 1.1]],
+      ["sandbag_barricade", -12.0, 48.0, 0, [0.9, 0.55, 1.0]],
+      ["sandbag_barricade", 12.0, 18.0, Math.PI / 2, [0.55, 0.9, 1.0]],
+      ["prop_traffic_cone", -12.0, 11.0, 0, null],
+      ["prop_traffic_cone", -12.0, 17.0, 0, null],
+      ["prop_traffic_cone", 12.0, -11.0, 0, null],
+    ];
+    for (const [slug, fx, fz, fry, fp] of furniture) place(slug, fx, fz, fry, fp);
 
     // Sandbag barricades as occasional street cover.
     for (let i = 0; i < 2 + this.index; i++) {
@@ -968,11 +1056,10 @@ export class Level {
       model.position.set(x, 0, z);
       model.rotation.y = 0; // broadside across the street (roadblock; length runs along X)
       this.group.add(model);
-      // Model-independent collider + LOS footprint (cover), matching the broadside footprint.
-      const box = new THREE.Box3(
-        new THREE.Vector3(x - 2.1, 0, z - 1.0),
-        new THREE.Vector3(x + 2.1, 1.5, z + 1.0),
-      );
+      // Tight collider + LOS box fitted to the actual (normalised) model rather
+      // than a hardcoded oversized AABB — prop_car is height-fit to 1.5m.
+      model.updateMatrixWorld(true);
+      const box = new THREE.Box3().setFromObject(model).expandByScalar(0.05);
       this.colliders.push(box);
       this.losBlockers.push(box);
     } else {

@@ -45,10 +45,11 @@ function freshProgression() {
     resistancePoints: 0, // currency ("RP")
     upgrades: {}, // { upgradeId: level }
     boots: { owned: ["standard"], equipped: "standard" },
+    weapons: { owned: ["pistol"] }, // one-time weapon unlocks (pistol always owned)
     unlockedLevels: 1, // highest campaign index reachable (1-based count)
     achievements: {}, // { achievementId: true }
     settings: { sensitivity: 0.0022, quality: "high", muted: false },
-    version: 1,
+    version: 2,
   };
 }
 
