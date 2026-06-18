@@ -142,6 +142,11 @@ export class Level {
       paint: new THREE.MeshStandardMaterial({ color: 0xeae6da, roughness: 0.55 }),
       hill: new THREE.MeshStandardMaterial({ color: 0x3a4138, roughness: 1.0 }),
       ceiling: new THREE.MeshStandardMaterial({ color: 0x4a4d4f, roughness: 0.95 }),
+      // Domestic interior surfaces — warm plaster walls + a wood floor so the
+      // low-ceiling rooms read as lived-in apartments, not bare brick halls.
+      apartmentWall: new THREE.MeshStandardMaterial({ color: 0xbcae97, roughness: 0.97, metalness: 0 }),
+      apartmentFloor: new THREE.MeshStandardMaterial({ color: 0x5a3f28, roughness: 0.7, metalness: 0 }),
+      apartmentCeiling: new THREE.MeshStandardMaterial({ color: 0xd8d2c4, roughness: 0.96 }),
       // Grimy tenement photo clad onto the long side walls (null → plain brick).
       sideHouse: assets && assets.getHouseSideTexture && assets.getHouseSideTexture()
         ? new THREE.MeshStandardMaterial({ map: assets.getHouseSideTexture(), roughness: 0.92, metalness: 0 })
@@ -151,7 +156,8 @@ export class Level {
     // Grid geometry shared across builders. Buildings are tall, long terraces:
     // narrow frontage (X) and a long run (Z), so they line the north–south
     // streets the player walks down.
-    this.WALL_H = 15; // 3× the original 5m
+    this.WALL_H = 15; // 3× the original 5m — the tall EXTERIOR brick shell height
+    this.CEIL_H = 3.2; // low apartment ceiling INSIDE the shell (decoupled from WALL_H)
     this.BLOCK_W = 14; // frontage width (X)
     this.BLOCK_L = 56; // 4× the original 14m run (Z)
     this.STREET = 10; // lane width between blocks
@@ -346,10 +352,10 @@ export class Level {
     const halfW = this.BLOCK_W / 2; // X half (frontage)
     const halfL = this.BLOCK_L / 2; // Z half (run)
     const t = 0.6;
-    const wallH = this.WALL_H;
+    const wallH = this.WALL_H; // tall exterior brick shell (cladding + roof)
+    const ceilH = this.CEIL_H; // low interior apartment ceiling
     const doorW = 1.7;
-    const brick = this._materials.brick;
-    const brickDark = this._materials.brickDark;
+    const wall = this._materials.apartmentWall; // interior plaster room walls
 
     // Subdivide the long run (Z) into N small rooms; doors face the inner street.
     const N = 7;
@@ -368,18 +374,24 @@ export class Level {
     this.group.add(pave);
     const f = new THREE.Mesh(
       new THREE.PlaneGeometry(this.BLOCK_W - 0.4, this.BLOCK_L - 0.4),
-      this._materials.concrete,
+      this._materials.apartmentFloor,
     );
     f.rotation.x = -Math.PI / 2;
     f.position.set(cx, 0.13, cz);
     this.group.add(f);
 
+    // Interior room shell rises only to the low apartment ceiling (CEIL_H); the
+    // tall brick exterior is the separate cladding below. The door opening matches
+    // the 2.6m kickable door, with a short lintel up to the ceiling.
+    const DOOR_OPEN = 2.6;
+    const lintelH = Math.max(0.1, ceilH - DOOR_OPEN);
+
     // End walls (short, N & S) + solid back long wall + room-dividing cross walls.
-    this._box(this.BLOCK_W, wallH, t, brick, cx, wallH / 2, cz - halfL, { los: true });
-    this._box(this.BLOCK_W, wallH, t, brick, cx, wallH / 2, cz + halfL, { los: true });
-    this._box(t, wallH, this.BLOCK_L, brick, backWallX, wallH / 2, cz, { los: true });
+    this._box(this.BLOCK_W, ceilH, t, wall, cx, ceilH / 2, cz - halfL, { los: true });
+    this._box(this.BLOCK_W, ceilH, t, wall, cx, ceilH / 2, cz + halfL, { los: true });
+    this._box(t, ceilH, this.BLOCK_L, wall, backWallX, ceilH / 2, cz, { los: true });
     for (let i = 1; i < N; i++) {
-      this._box(this.BLOCK_W, wallH, t, brickDark, cx, wallH / 2, cz - halfL + i * roomLen, { los: true });
+      this._box(this.BLOCK_W, ceilH, t, wall, cx, ceilH / 2, cz - halfL + i * roomLen, { los: true });
     }
 
     // Door long wall: solid segments between the per-room doorways, plus lintels.
@@ -388,10 +400,10 @@ export class Level {
       const segEnd = i < N ? roomZ(i) - doorW / 2 : cz + halfL;
       const segLen = segEnd - segStart;
       if (segLen > 0.02) {
-        this._box(t, wallH, segLen, brick, doorWallX, wallH / 2, (segStart + segEnd) / 2, { los: true });
+        this._box(t, ceilH, segLen, wall, doorWallX, ceilH / 2, (segStart + segEnd) / 2, { los: true });
       }
       if (i < N) {
-        this._box(t, wallH - 2.7, doorW, brickDark, doorWallX, 2.7 + (wallH - 2.7) / 2, roomZ(i), { collider: false });
+        this._box(t, lintelH, doorW, wall, doorWallX, DOOR_OPEN + lintelH / 2, roomZ(i), { collider: false });
         segStart = roomZ(i) + doorW / 2;
       }
     }
@@ -410,12 +422,13 @@ export class Level {
       this.losBlockers.push(door._closedBox);
     }
 
-    // Ceiling, pitched roof + chimneys.
+    // Low apartment ceiling caps the playable room; the pitched roof + chimneys
+    // sit up at the tall exterior shell height (the dead space between is hidden).
     const ceil = new THREE.Mesh(
       new THREE.BoxGeometry(this.BLOCK_W, t, this.BLOCK_L),
-      this._materials.ceiling,
+      this._materials.apartmentCeiling,
     );
-    ceil.position.set(cx, wallH + t / 2 - 0.05, cz);
+    ceil.position.set(cx, ceilH + t / 2 - 0.05, cz);
     this.group.add(ceil);
     this._buildRoof(cx, cz);
     this._buildChimney(cx, cz);
