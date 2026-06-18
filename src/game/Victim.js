@@ -6,6 +6,10 @@ const INTERACT_RADIUS = 3.5;
 const FLEE_SPEED = 6;
 /** Despawn when this far from the player (AND behind/peripheral camera). */
 const DESPAWN_DIST = 28;
+/** Hard fallback: despawn after this long fleeing even if cornered/in-view. */
+const FLEE_TIMEOUT = 12;
+/** Collision half-width used against level colliders while fleeing. */
+const RADIUS = 0.4;
 
 // Module-scope temps — never allocate on the hot path.
 const _tmp = new THREE.Vector3();
@@ -15,34 +19,46 @@ const _fwd = new THREE.Vector3();
  * Victim
  * ------
  * A rescuable civilian held captive by enemies. The player rescues them by
- * approaching within INTERACT_RADIUS and pressing E.
+ * approaching within INTERACT_RADIUS and pressing E; she thanks the player and
+ * RUNS away (rigged run animation), colliding with buildings + the boundary
+ * walls (so she stays in the map and never phases through geometry), then
+ * despawns once she is far and out of the player's view.
  *
  * IMPORTANT: Victims are stored in `level.victims`, never in `level.enemies`.
- * The weapon raycast and kick loop only iterate `level.enemies`, so victims
- * are inherently immune to player fire — no `takeDamage` method exists here.
+ * The weapon raycast and kick loop only iterate `level.enemies`, so victims are
+ * inherently immune to player fire — no `takeDamage` method exists here.
  */
 export class Victim {
   /**
    * @param {THREE.Vector3} position  World-space spawn position (y=0).
-   * @param {{ model?: THREE.Object3D }} [opts]
+   * @param {{ rig?: {object3D:THREE.Object3D, clips:object}, model?: THREE.Object3D }} [opts]
    */
   constructor(position, opts = {}) {
     this.group = new THREE.Group();
     this.group.position.copy(position);
-    // Slight random yaw so victims face varied directions.
-    this.group.rotation.y = Math.random() * Math.PI * 2;
+    this.group.rotation.y = Math.random() * Math.PI * 2; // varied facing
 
     this.rescued = false;
-    /** Whether this victim currently owns the interact prompt on the HUD. @private */
-    this._promptActive = false;
-    /** Whether the victim is currently fleeing after rescue. @private */
-    this._fleeing = false;
-    /** Flee direction (world XZ, normalised). @private */
-    this._fleeDir = new THREE.Vector3();
-    /** Set true once the victim has despawned off-screen; Level checks this. */
     this.removed = false;
+    this._promptActive = false;
+    this._fleeing = false;
+    this._fleeTime = 0;
+    this._fleeDir = new THREE.Vector3();
 
-    if (opts.model) {
+    // Animation (rigged victim) state.
+    this.mixer = null;
+    this.actions = null;
+    this._anim = null;
+
+    if (opts.rig) {
+      this.group.add(opts.rig.object3D);
+      this.mixer = new THREE.AnimationMixer(opts.rig.object3D);
+      this.actions = {};
+      for (const [name, clip] of Object.entries(opts.rig.clips || {})) {
+        this.actions[name] = this.mixer.clipAction(clip);
+      }
+      this._setAnim("walk"); // gentle idle-ish motion while captive (no T-pose)
+    } else if (opts.model) {
       this.group.add(opts.model);
     } else {
       // Fallback: visible capsule so the victim shows without the GLB.
@@ -60,45 +76,80 @@ export class Victim {
     return this.group.position;
   }
 
+  /** Crossfade to a named clip (walk/run); falls back to whatever exists. */
+  _setAnim(name) {
+    if (!this.actions || this._anim === name) return;
+    const next = this.actions[name] || this.actions.walk || this.actions.run;
+    if (!next) return;
+    next.reset();
+    next.enabled = true;
+    next.setEffectiveWeight(1);
+    next.fadeIn(0.2);
+    next.play();
+    if (this._anim && this.actions[this._anim] && this.actions[this._anim] !== next) {
+      this.actions[this._anim].fadeOut(0.2);
+    }
+    this._anim = name;
+  }
+
+  /** True if a horizontal point would intersect a (non-flat) level collider. */
+  _blocked(ctx, x, z) {
+    const cols = ctx.level && ctx.level.getColliders ? ctx.level.getColliders() : null;
+    if (!cols) return false;
+    for (const b of cols) {
+      if (b.max.y < 0.2) continue; // flat ground slabs — ignore
+      if (x > b.min.x - RADIUS && x < b.max.x + RADIUS && z > b.min.z - RADIUS && z < b.max.z + RADIUS) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   /**
-   * Per-frame update. Handles interact prompt, E-press rescue, flee, and despawn.
+   * Per-frame update: animation, interact prompt, E-press rescue, then flee +
+   * collide + despawn.
    * @param {number} dt
-   * @param {{ level: object, player: { position: THREE.Vector3, keys: object },
-   *           state?: object, score?: object, hud?: object, camera: THREE.Camera }} ctx
+   * @param {object} ctx { level, player:{position,keys}, state?, score?, hud?, camera }
    */
   update(dt, ctx) {
     if (this.removed) return;
+    if (this.mixer) this.mixer.update(dt);
 
-    // --- Post-rescue: flee and despawn when far + out of view ---------------
+    // --- Post-rescue: RUN away, colliding with buildings + boundary walls. ---
     if (this._fleeing) {
-      this.group.position.addScaledVector(this._fleeDir, FLEE_SPEED * dt);
-      this.group.rotation.y = Math.atan2(this._fleeDir.x, this._fleeDir.z);
-
-      // Play run/walk clip if the victim model has a mixer (defensive guard).
-      if (this.mixer && this.actions) {
-        const clip = this.actions.run || this.actions.walk;
-        if (clip && !clip.isRunning()) { clip.reset(); clip.play(); }
+      this._setAnim("run");
+      this._fleeTime += dt;
+      const p = this.group.position;
+      const sx = this._fleeDir.x * FLEE_SPEED * dt;
+      const sz = this._fleeDir.z * FLEE_SPEED * dt;
+      const px = p.x, pz = p.z;
+      p.x += sx; if (this._blocked(ctx, p.x, p.z)) p.x = px; // resolve X
+      p.z += sz; if (this._blocked(ctx, p.x, p.z)) p.z = pz; // resolve Z
+      if (p.x === px && p.z === pz) {
+        // Fully blocked (corner) — turn 90° and try to slide along next frame.
+        const a = Math.atan2(this._fleeDir.x, this._fleeDir.z) + Math.PI / 2;
+        this._fleeDir.set(Math.sin(a), 0, Math.cos(a));
+      } else {
+        this.group.rotation.y = Math.atan2(this._fleeDir.x, this._fleeDir.z);
       }
 
-      // Despawn: far AND behind/peripheral camera (dot < 0.25).
-      if (this.group.position.distanceToSquared(ctx.player.position) > DESPAWN_DIST * DESPAWN_DIST) {
+      // Despawn: far + behind/peripheral camera, OR after a hard timeout.
+      let gone = this._fleeTime > FLEE_TIMEOUT;
+      if (!gone && p.distanceToSquared(ctx.player.position) > DESPAWN_DIST * DESPAWN_DIST) {
         ctx.camera.getWorldDirection(_fwd);
-        _tmp.copy(this.group.position).sub(ctx.camera.position).normalize();
-        if (_fwd.dot(_tmp) < 0.25) {
-          if (this._promptActive && ctx.hud) {
-            ctx.hud.setInteractPrompt(null);
-            this._promptActive = false;
-          }
-          this.removed = true;
-        }
+        _tmp.copy(p).sub(ctx.camera.position).normalize();
+        if (_fwd.dot(_tmp) < 0.25) gone = true;
+      }
+      if (gone) {
+        if (this._promptActive && ctx.hud) { ctx.hud.setInteractPrompt(null); this._promptActive = false; }
+        this.removed = true;
       }
       return;
     }
 
-    // --- Pre-rescue: interact prompt + E-press rescue -----------------------
+    // --- Pre-rescue: interact prompt + E-press rescue. ----------------------
     const dist = _tmp.copy(ctx.player.position).distanceTo(this.group.position);
     const inRange = dist < INTERACT_RADIUS;
-
     if (inRange && !this._promptActive) {
       this._promptActive = true;
       if (ctx.hud) ctx.hud.setInteractPrompt("Press E to free the civilian");
@@ -106,46 +157,27 @@ export class Victim {
       this._promptActive = false;
       if (ctx.hud) ctx.hud.setInteractPrompt(null);
     }
-
-    if (inRange && ctx.player.keys && ctx.player.keys["KeyE"]) {
-      this._rescue(ctx);
-    }
+    if (inRange && ctx.player.keys && ctx.player.keys["KeyE"]) this._rescue(ctx);
   }
 
-  /**
-   * Trigger the rescue sequence: rewards, dialogue, begin fleeing.
-   * @private
-   */
+  /** Trigger the rescue: rewards, dialogue, begin fleeing. @private */
   _rescue(ctx) {
     this.rescued = true;
-
-    // Clear interact prompt.
-    if (this._promptActive && ctx.hud) {
-      ctx.hud.setInteractPrompt(null);
-      this._promptActive = false;
-    }
-
-    // Rewards.
+    if (this._promptActive && ctx.hud) { ctx.hud.setInteractPrompt(null); this._promptActive = false; }
     if (ctx.state) {
       if (ctx.state.addCurrency) ctx.state.addCurrency(15);
       if (ctx.state.emit) ctx.state.emit("victimRescued", { position: this.group.position.clone() });
     }
     if (ctx.score) ctx.score.add(500, "CIVILIAN SAVED!");
-
-    // Thanks dialogue (Belfast civilian flavour).
     if (ctx.hud) ctx.hud.showDialogue("Thank you! God bless ye — now get them out of the Falls!");
-
-    // Pick flee direction: away from the player in XZ.
     this._fleeDir.copy(this.group.position).sub(ctx.player.position).setY(0);
     if (this._fleeDir.lengthSq() < 0.0001) this._fleeDir.set(0, 0, -1);
     this._fleeDir.normalize();
     this._fleeing = true;
+    this._fleeTime = 0;
   }
 
-  /**
-   * Remove the victim from the scene and free GPU resources.
-   * @param {THREE.Scene} [_scene]  (unused — caller removes from level.group)
-   */
+  /** Remove the victim's GPU resources. @param {THREE.Scene} [_scene] */
   dispose(_scene) {
     this.group.traverse((o) => {
       if (o.geometry) o.geometry.dispose();

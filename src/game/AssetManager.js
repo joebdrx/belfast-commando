@@ -47,7 +47,6 @@ const MODEL_DEFS = {
   enemy_soldier:    { size: 1.85, fit: "height", anchor: "bottom", rotY: Math.PI, darken: 0.75 },
   enemy_variant:    { size: 1.85, fit: "height", anchor: "bottom", rotY: Math.PI, darken: 0.75 },
   invader:          { size: 1.85, fit: "height", anchor: "bottom", rotY: Math.PI, darken: 0.75 },
-  enemy_victim:     { size: 1.75, fit: "height", anchor: "bottom", rotY: Math.PI },
   player_fighter:   { size: 1.85, fit: "height", anchor: "bottom", rotY: Math.PI },
   // first-person viewmodels — centred, scaled by their longest axis
   weapon_ak:        { size: 0.62, fit: "max", anchor: "center", rotY: 0 },
@@ -182,7 +181,7 @@ export class AssetManager {
     // Environment map, 3D models, 2D sprites, and the rigged enemy run alongside.
     const envJob = scene ? this._loadEnvironment(scene) : Promise.resolve();
     const skyJob = scene ? this._loadSky(scene) : Promise.resolve();
-    await Promise.all([...jobs, envJob, skyJob, this.loadModels(), this.loadSprites(), this.loadMurals(), this._loadRiggedEnemy(), this._loadArchetypeRigs(), this.captureFacades(), this.loadFace(), this.loadHouseSide()]);
+    await Promise.all([...jobs, envJob, skyJob, this.loadModels(), this.loadSprites(), this.loadMurals(), this._loadRiggedEnemy(), this._loadArchetypeRigs(), this._loadVictimRig(), this.captureFacades(), this.loadFace(), this.loadHouseSide()]);
   }
 
   /** Load the photo face that gets billboarded onto each enemy's head. */
@@ -408,40 +407,57 @@ export class AssetManager {
    * clip on the same skeleton. Height is measured WITH the walk clip applied
    * (the rig's bind-pose bbox is tiny — see _loadRiggedEnemy).
    */
+  /**
+   * Load one rigged character: a base GLB (walk clip = animations[0]) + an armature
+   * run clip on the same skeleton. Returns {scene, clips:{walk,run}, height} with
+   * height measured WITH the walk clip applied (bind-pose bbox is tiny).
+   */
+  async _loadRig(meshSlug, runSlug, darken = 0.85) {
+    const base = await this.gltfLoader.loadAsync(`${BASE}models/${meshSlug}.glb`);
+    const clips = {};
+    if (base.animations[0]) clips.walk = base.animations[0];
+    if (runSlug) {
+      const run = await this.gltfLoader.loadAsync(`${BASE}models/${runSlug}.glb`).catch(() => null);
+      if (run && run.animations[0]) clips.run = run.animations[0];
+    }
+    base.scene.traverse((o) => {
+      if (o.isMesh) o.frustumCulled = false; // skinned bounds animate; avoid pop-out
+      const mats = o.material ? (Array.isArray(o.material) ? o.material : [o.material]) : [];
+      for (const m of mats) {
+        if (!m) continue;
+        if (m.metalness !== undefined) m.metalness = 0;
+        if (m.color && darken !== 1) m.color.multiplyScalar(darken);
+        m.needsUpdate = true;
+      }
+    });
+    let height = 1.7;
+    if (clips.walk) {
+      const tmp = new THREE.AnimationMixer(base.scene);
+      tmp.clipAction(clips.walk).play();
+      tmp.update(0.2);
+      base.scene.updateMatrixWorld(true);
+      height = new THREE.Box3().setFromObject(base.scene).getSize(new THREE.Vector3()).y || 1.7;
+      tmp.stopAllAction();
+    }
+    return { scene: base.scene, clips, height };
+  }
+
   async _loadArchetypeRigs() {
     this._rigs = {};
     const ARCHES = ["grunt", "gunner", "breacher", "enforcer"];
     await Promise.all(ARCHES.map(async (arch) => {
-      try {
-        const base = await this.gltfLoader.loadAsync(`${BASE}models/enemy_${arch}.glb`);
-        const clips = {};
-        if (base.animations[0]) clips.walk = base.animations[0];
-        const run = await this.gltfLoader.loadAsync(`${BASE}models/anim_${arch}_run.glb`).catch(() => null);
-        if (run && run.animations[0]) clips.run = run.animations[0];
-        base.scene.traverse((o) => {
-          if (o.isMesh) o.frustumCulled = false; // skinned bounds animate; avoid pop-out
-          const mats = o.material ? (Array.isArray(o.material) ? o.material : [o.material]) : [];
-          for (const m of mats) {
-            if (!m) continue;
-            if (m.metalness !== undefined) m.metalness = 0;
-            if (m.color) m.color.multiplyScalar(0.85); // mild grimming; keep the model's detail
-            m.needsUpdate = true;
-          }
-        });
-        let height = 1.7;
-        if (clips.walk) {
-          const tmp = new THREE.AnimationMixer(base.scene);
-          tmp.clipAction(clips.walk).play();
-          tmp.update(0.2);
-          base.scene.updateMatrixWorld(true);
-          height = new THREE.Box3().setFromObject(base.scene).getSize(new THREE.Vector3()).y || 1.7;
-          tmp.stopAllAction();
-        }
-        this._rigs[arch] = { scene: base.scene, clips, height };
-      } catch {
-        /* missing → getRiggedEnemy falls back to the generic rig */
-      }
+      try { this._rigs[arch] = await this._loadRig(`enemy_${arch}`, `anim_${arch}_run`); }
+      catch { /* missing → getRiggedEnemy falls back to the generic rig */ }
     }));
+    // Grunt variety: a grunt spawns as a random pick from these distinct rigs
+    // (stabber + invader2 + invader1) so the swarm doesn't look uniform.
+    this._gruntVariants = [this._rigs.grunt, this._rigs.gunner, this._rigs.breacher].filter(Boolean);
+  }
+
+  /** The rescuable civilian's rigged, animated model (walk + run clips). */
+  async _loadVictimRig() {
+    try { this._victimRig = await this._loadRig("enemy_victim", "anim_victim_run", 1.0); }
+    catch { this._victimRig = null; }
   }
 
   /** A fresh clone of the rigged character for use as first-person arms,
@@ -463,8 +479,18 @@ export class AssetManager {
    * have their own heads, so they do NOT get the shared photo face.
    */
   getRiggedEnemy(archetype) {
-    const distinct = !!(archetype && this._rigs && this._rigs[archetype]);
-    const rig = distinct ? this._rigs[archetype] : this._riggedEnemy;
+    let rig = null;
+    let distinct = false;
+    if (archetype === "grunt" && this._gruntVariants && this._gruntVariants.length) {
+      // Grunts pick a random distinct rig (stabber / invader2 / invader1) for variety.
+      rig = this._gruntVariants[Math.floor(Math.random() * this._gruntVariants.length)];
+      distinct = true;
+    } else if (archetype && this._rigs && this._rigs[archetype]) {
+      rig = this._rigs[archetype];
+      distinct = true;
+    } else {
+      rig = this._riggedEnemy;
+    }
     if (!rig) return null;
     const inner = cloneSkeleton(rig.scene);
     // The rig's natural front is +Z, which is what Enemy's facing math
@@ -475,6 +501,18 @@ export class AssetManager {
     // Scale by the measured animated height (NOT the misleading geometry bbox).
     wrap.scale.setScalar(1.85 / (rig.height || 1.7));
     if (!distinct) this._attachFace(wrap); // only the generic invader wears the photo face
+    return { object3D: wrap, clips: rig.clips };
+  }
+
+  /** A fresh animated victim instance: normalised Object3D + walk/run clips. */
+  getVictimRig() {
+    const rig = this._victimRig;
+    if (!rig) return null;
+    const inner = cloneSkeleton(rig.scene);
+    inner.rotation.y = 0;
+    const wrap = new THREE.Group();
+    wrap.add(inner);
+    wrap.scale.setScalar(1.7 / (rig.height || 1.7)); // civilian ~1.7m
     return { object3D: wrap, clips: rig.clips };
   }
 

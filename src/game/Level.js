@@ -284,10 +284,12 @@ export class Level {
   _spawnVictims(rng) {
     const { PITCH_X, PITCH_Z } = this;
 
-    // Helper: add a victim at (vx, vz).
+    // Helper: add a victim at (vx, vz). Prefer the rigged (animated) victim so
+    // she runs rather than slides; fall back to a static model, then a capsule.
     const addVictim = (vx, vz) => {
-      const model = this.assets && this.assets.getModel("enemy_victim");
-      const v = new Victim(new THREE.Vector3(vx, 0, vz), { model });
+      const rig = this.assets && this.assets.getVictimRig && this.assets.getVictimRig();
+      const opts = rig ? { rig } : { model: this.assets && this.assets.getModel("enemy_victim") };
+      const v = new Victim(new THREE.Vector3(vx, 0, vz), opts);
       this.group.add(v.group);
       this.victims.push(v);
       return v;
