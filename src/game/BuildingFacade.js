@@ -20,7 +20,7 @@
  * @returns {{cols:number, rows:number, positions:Array<{u:number,v:number,w:number,h:number}>}}
  */
 export function planWindows(faceW, faceH, opts = {}) {
-  const { storeyH = 3, colW = 2.2, margin = 0.6, doorClear = true, doorHalf = 0.7 } = opts;
+  const { storeyH = 3, colW = 2.2, margin = 0.6, doorClear = true, doorHalf = 0.7, minRow = 0 } = opts;
   const rows = Math.max(0, Math.floor(faceH / storeyH));
   const usableW = faceW - 2 * margin;
   const cols = usableW >= colW ? Math.floor(usableW / colW) : 0;
@@ -30,7 +30,8 @@ export function planWindows(faceW, faceH, opts = {}) {
   const colSpacing = usableW / cols; // even spacing of column centres
   const winW = colW * 0.55;          // fixed window size → doubling width adds columns
   const winH = storeyH * 0.5;
-  for (let r = 0; r < rows; r++) {
+  // minRow skips lower storeys (e.g. a wall whose ground floor has real doors).
+  for (let r = Math.max(0, minRow); r < rows; r++) {
     const v = r * storeyH + storeyH * 0.55; // centre height within the storey
     for (let c = 0; c < cols; c++) {
       const u = -usableW / 2 + colSpacing * (c + 0.5);
@@ -72,7 +73,7 @@ export function buildFacade(THREE, materials, face, opts = {}) {
   const doorMat = materials.door || new THREE.MeshStandardMaterial({ color: 0x4a3422, roughness: 0.85 });
   const roofMat = materials.roof || new THREE.MeshStandardMaterial({ color: 0x33373b, roughness: 0.9 });
 
-  const door = planDoor(width, height, opts);
+  const door = opts.noDoor ? null : planDoor(width, height, opts);
   const win = planWindows(width, height, { ...opts, doorClear: !!door });
 
   // Windows — share two geometries by size; ~1 in 4 lit (deterministic by cell).
@@ -98,10 +99,13 @@ export function buildFacade(THREE, materials, face, opts = {}) {
   }
 
   // Parapet roof cap — a thin lip along the top edge to kill the bare wall top.
-  const capH = 0.45;
-  const cap = new THREE.Mesh(new THREE.BoxGeometry(width + 0.2, capH, 0.6), roofMat);
-  cap.position.set(0, height - capH / 2, OUT);
-  group.add(cap);
+  // Skipped for walls that already have a pitched roof above them.
+  if (!opts.noRoofCap) {
+    const capH = 0.45;
+    const cap = new THREE.Mesh(new THREE.BoxGeometry(width + 0.2, capH, 0.6), roofMat);
+    cap.position.set(0, height - capH / 2, OUT);
+    group.add(cap);
+  }
 
   return group;
 }

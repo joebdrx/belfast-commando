@@ -3,6 +3,7 @@ import { Enemy } from "./Enemy.js";
 import { EnemyDirector } from "./EnemyDirector.js";
 import { footprintCollider, blockPlan } from "./BuildingLayout.js";
 import { Victim } from "./Victim.js";
+import { buildFacade } from "./BuildingFacade.js";
 
 const _ray = new THREE.Ray();
 const _dir = new THREE.Vector3();
@@ -133,6 +134,9 @@ export class Level {
       pavement: this._mat("pavement", 0x6e706d, 0.92),
       // Flat architectural materials (windows, kerbs, paint, hills, ceilings).
       glass: new THREE.MeshStandardMaterial({ color: 0x121a1f, roughness: 0.16, metalness: 0.2, envMapIntensity: 1.6 }),
+      // A faintly-lit window variant — a deterministic ~1/4 of facade windows use
+      // this so terraces read as inhabited rather than uniformly dark.
+      glassLit: new THREE.MeshStandardMaterial({ color: 0x2a2410, emissive: 0xffb347, emissiveIntensity: 0.5, roughness: 0.3, metalness: 0.1 }),
       frame: new THREE.MeshStandardMaterial({ color: 0xb6bbbd, roughness: 0.7 }),
       kerb: new THREE.MeshStandardMaterial({ color: 0x8b8e8b, roughness: 0.92 }),
       paint: new THREE.MeshStandardMaterial({ color: 0xeae6da, roughness: 0.55 }),
@@ -436,6 +440,14 @@ export class Level {
     this._brickWall(cx, wallH / 2, cz - halfL - 0.32, Math.PI, this.BLOCK_W, wallH); // north end faces -Z
     this._brickWall(cx, wallH / 2, cz + halfL + 0.32, 0, this.BLOCK_W, wallH); // south end faces +Z
 
+    // Facade detailing (windows/door) so the brick shell reads as a real terrace.
+    // These buildings have a pitched roof, so no parapet cap. The door wall keeps
+    // its ground floor clear (the kickable doors live there) — windows above only.
+    this._addFacade(doorWallX + doorSide * 0.32, cz, doorRotY, this.BLOCK_L, wallH, { minRow: 1, noDoor: true, noRoofCap: true });
+    this._addFacade(backWallX - doorSide * 0.32, cz, backRotY, this.BLOCK_L, wallH, { noRoofCap: true });
+    this._addFacade(cx, cz - halfL - 0.33, Math.PI, this.BLOCK_W, wallH, { noRoofCap: true });
+    this._addFacade(cx, cz + halfL + 0.33, 0, this.BLOCK_W, wallH, { noRoofCap: true });
+
     // Garrison `enemyCount` distinct random rooms (released when their door breaks).
     const order = [];
     for (let i = 0; i < N; i++) order.push(i);
@@ -530,6 +542,13 @@ export class Level {
     // Brick BACK + SIDE walls so walking around the block reveals no bare faces
     // (the tiled models are essentially front facades). Front stays open.
     this._cladModelBlockShell(cx, cz, frontSign);
+
+    // Window grid + parapet roof cap across the model block FRONT: punches crisp
+    // windows onto the building fronts and caps the bare top edge the GLB models
+    // leave (the flat roofline visible in the audit). No door (models carry their
+    // own ground-floor detail). The cap sits at the block's nominal WALL_H height.
+    const frontX = cx + frontSign * (this.BLOCK_W / 2);
+    this._addFacade(frontX + frontSign * 0.06, cz, frontSign * Math.PI / 2, this.BLOCK_L, this.WALL_H, { noDoor: true });
 
     // One clean footprint collider + LOS blocker for the whole block.
     const box = footprintCollider(cx, cz, this.BLOCK_W, this.WALL_H, this.BLOCK_L);
@@ -656,6 +675,24 @@ export class Level {
     mesh.rotation.y = rotY;
     this.group.add(mesh);
     return mesh;
+  }
+
+  /**
+   * Stamp a proportionate facade (window grid + optional door + roof cap) onto a
+   * wall face so buildings read as real. `(x, z)` is the wall's ground-line
+   * centre, `rotY` orients it outward (same convention as _brickWall), `w`/`h`
+   * are the face size. `opts` flows to BuildingFacade (e.g. `{ doorClear:true }`
+   * to skip the door for walls that already have kickable doors).
+   */
+  _addFacade(x, z, rotY, w, h, opts = {}) {
+    const group = buildFacade(THREE, {
+      glass: this._materials.glass,
+      glassLit: this._materials.glassLit,
+      door: this._materials.door,
+      roof: this._materials.roof,
+    }, { width: w, height: h, orientationY: rotY, center: { x, y: 0, z } }, opts);
+    this.group.add(group);
+    return group;
   }
 
   /** Pitched gable roof, ridge running along Z (the long axis) over the terrace. */
@@ -1170,7 +1207,7 @@ export class Level {
     // ALL enemies use the rigged + animated invader; fall back to the static
     // invader GLB, then placeholder geometry.
     if (this.assets) {
-      opts = { ...opts, flashTex: this.assets.getSprite("muzzle_flash") };
+      opts = { ...opts };
       const rigged = this.assets.getRiggedEnemy(opts.archetype);
       if (rigged) {
         opts.rigged = rigged;
@@ -1178,14 +1215,14 @@ export class Level {
         const model = this.assets.getModel("invader");
         if (model) opts.model = model;
       }
-      // Arm every enemy: ranged → pistol; everyone else → a blade to lunge with.
-      const ranged = opts.archetype === "gunner";
-      const wslug = ranged ? "weapon_pistol"
-        : opts.archetype === "enforcer" ? "enemy_machete"
+      // Arm every enemy with a blade to lunge with — no archetype is ranged, so
+      // a pistol is never assigned. Enforcer swings a machete; grunt mixes
+      // knife/machete; the lighter gunner/breacher rush in with a knife.
+      const wslug = opts.archetype === "enforcer" ? "enemy_machete"
         : opts.archetype === "grunt" ? (Math.random() < 0.5 ? "enemy_knife" : "enemy_machete")
         : "enemy_knife";
       const wmodel = this.assets.getModel(wslug);
-      if (wmodel) opts.weapon = { object3D: wmodel, kind: ranged ? "pistol" : "blade" };
+      if (wmodel) opts.weapon = { object3D: wmodel, kind: "blade" };
     }
     const e = new Enemy(pos, opts);
     this.group.add(e.group);
