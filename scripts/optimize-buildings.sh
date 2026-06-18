@@ -17,7 +17,6 @@ mkdir -p "$OUT"
 # bldg_skyline is the city backdrop ringed around the map edges (not a block).
 declare -A SRC=(
   [bldg_terrace]="old_building.glb"
-  [bldg_collapsed]="collapsed_uk_terraced_house.glb"
   [bldg_shop]="angers_shop_2_france.glb"
   [bldg_church]="angers_shop_2_france.glb"
   [bldg_skyline]="belfast_city.glb"

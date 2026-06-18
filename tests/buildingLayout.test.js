@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import * as THREE from "three";
-import { footprintCollider, tileSpec, blockPlan, INTERIOR_BLOCKS } from "../src/game/BuildingLayout.js";
+import { footprintCollider, tileSpec, blockPlan, INTERIOR_BLOCKS, MODEL_TEMPLATES } from "../src/game/BuildingLayout.js";
 
 describe("footprintCollider", () => {
   it("is an axis-aligned box centred on the block, full height", () => {
@@ -29,27 +29,33 @@ describe("tileSpec", () => {
 });
 
 describe("blockPlan / INTERIOR_BLOCKS", () => {
-  it("marks exactly 2 interior blocks across the 3x2 grid", () => {
+  it("the destroyed building is gone from the template rotation", () => {
+    expect(MODEL_TEMPLATES).not.toContain("bldg_collapsed");
+    expect(MODEL_TEMPLATES).toEqual(["bldg_terrace", "bldg_shop", "bldg_church"]);
+  });
+  it("never plans a bldg_collapsed model on any block, any sector", () => {
+    for (let index = 0; index < 8; index++)
+      for (let c = 0; c < 3; c++) for (let r = 0; r < 2; r++) {
+        const p = blockPlan(c, r, index);
+        if (p.kind === "model") expect(p.template).not.toBe("bldg_collapsed");
+      }
+  });
+  it("keeps the 2 fixed interiors plus the in-place collapsed→interior infill", () => {
+    // 2 anchored interiors are always present...
+    expect(INTERIOR_BLOCKS.length).toBe(2);
+    for (const b of INTERIOR_BLOCKS) expect(blockPlan(b.col, b.row, 0).kind).toBe("interior");
+    // ...and the former-collapsed slot becomes a breachable interior in its place,
+    // so a typical sector has more interiors than just the two anchors.
     let interiors = 0;
     for (let c = 0; c < 3; c++) for (let r = 0; r < 2; r++)
       if (blockPlan(c, r, 0).kind === "interior") interiors++;
-    expect(interiors).toBe(2);
-    expect(INTERIOR_BLOCKS.length).toBe(2);
+    expect(interiors).toBeGreaterThanOrEqual(2);
   });
-  it("model blocks reference a known template slug", () => {
-    const slugs = new Set(["bldg_terrace","bldg_collapsed","bldg_shop","bldg_church"]);
+  it("model blocks reference one of the three known templates", () => {
+    const slugs = new Set(["bldg_terrace", "bldg_shop", "bldg_church"]);
     for (let c = 0; c < 3; c++) for (let r = 0; r < 2; r++) {
       const p = blockPlan(c, r, 0);
       if (p.kind === "model") expect(slugs.has(p.template)).toBe(true);
     }
-  });
-  it("alternates templates across model blocks (variety, not all the same)", () => {
-    const used = [];
-    for (let c = 0; c < 3; c++) for (let r = 0; r < 2; r++) {
-      const p = blockPlan(c, r, 0);
-      if (p.kind === "model") used.push(p.template);
-    }
-    expect(used.length).toBe(4);                  // 6 blocks - 2 interiors
-    expect(new Set(used).size).toBeGreaterThanOrEqual(3); // alternation, not monotemplate
   });
 });

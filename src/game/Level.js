@@ -494,9 +494,9 @@ export class Level {
       return { run: Math.max(2, rotated ? s.x : s.z), front: Math.max(2, rotated ? s.z : s.x) };
     };
 
-    // Per-block tile pattern: mostly mid-size houses (terrace/shop) with an
-    // occasional different building (collapsed) and a sparing church landmark.
-    // Varies by grid position + sector index so adjacent blocks read differently.
+    // Per-block tile pattern: mostly mid-size houses (terrace/shop) alternating
+    // down the row, with a sparing church landmark. Varies by grid position +
+    // sector index so adjacent blocks read differently.
     const pickSlug = this._terracePattern(slug, cx, cz);
 
     // Build the tile list, measuring EACH model's own depth and clamping it to a
@@ -534,7 +534,7 @@ export class Level {
       if (rotated) { m.scale.x *= runScale; m.scale.z *= frontScale; }
       else { m.scale.z *= runScale; m.scale.x *= frontScale; }
       m.position.set(cx, 0, cursor + sRun / 2);
-      this._brightenBuildingModel(m, t.slug); // lift the over-dark bldg_collapsed
+      this._brightenBuildingModel(m); // lift any over-dark baked material
       this.group.add(m);
       cursor += sRun + (i < n - 1 ? GAP : 0);
     }
@@ -557,11 +557,10 @@ export class Level {
   }
 
   /**
-   * Per-block terrace pattern (a function of the tile index). Favours the two
-   * mid-size houses (terrace/shop), drops in `bldg_collapsed` as occasional
-   * variety every third tile, and uses the large `bldg_church` only as a single
-   * landmark at the head of church-assigned blocks. Seeded by grid position +
-   * sector index so neighbouring blocks alternate differently.
+   * Per-block terrace pattern (a function of the tile index). Alternates the two
+   * mid-size houses (terrace/shop) down the row, and uses the large `bldg_church`
+   * only as a single landmark at the head of church-assigned blocks. Seeded by
+   * grid position + sector index so neighbouring blocks alternate differently.
    */
   _terracePattern(primary, cx, cz) {
     const col = cx < -0.5 ? 0 : cx > 0.5 ? 2 : 1;
@@ -570,13 +569,10 @@ export class Level {
     const mids = ["bldg_terrace", "bldg_shop"];
     const base = mids[seed % 2];
     const alt = mids[(seed + 1) % 2];
-    const vphase = seed % 3;
     const churchBlock = primary === "bldg_church";
     return (i) => {
       if (churchBlock && i === 0) return "bldg_church"; // one landmark per church block
-      const j = i + vphase;
-      if (j % 3 === 2) return "bldg_collapsed";          // occasional different building
-      return (j % 2 === 0) ? base : alt;                 // otherwise alternate the houses
+      return (i % 2 === 0) ? base : alt;                // alternate the two houses
     };
   }
 
@@ -599,16 +595,12 @@ export class Level {
   }
 
   /**
-   * Detect and lift the one over-dark building model. `bldg_collapsed` bakes a
-   * charred near-black "Black" material (confirmed via gltf-transform inspect:
-   * white baseColorFactor but a very dark diffuse texture); the others render at
-   * normal brightness. We brighten by NAME/colour (the charred surface) plus a
-   * gentle, capped lift across the rest of the collapsed model — never touching
-   * the other three. Idempotent via a userData flag (model materials are shared
-   * across getModel clones, so this runs once per material).
+   * Lift any over-dark baked building material so it doesn't read as near-black
+   * at distance — detect a charred/near-black surface by name or colour and warm
+   * it with a flat emissive floor. Idempotent via a userData flag (model
+   * materials are shared across getModel clones, so this runs once per material).
    */
-  _brightenBuildingModel(root, slug) {
-    const darkModel = slug === "bldg_collapsed";
+  _brightenBuildingModel(root) {
     root.traverse((o) => {
       if (!o.isMesh || !o.material) return;
       const mats = Array.isArray(o.material) ? o.material : [o.material];
@@ -617,18 +609,9 @@ export class Level {
         const maxc = Math.max(m.color.r, m.color.g, m.color.b);
         const charred = /black|char|burn|soot|coal|ash/i.test(m.name || "");
         if (charred || maxc < 0.3) {
-          // Charred near-black surface → warm it and add a flat emissive floor so
-          // it stops reading as pure black (texture stays dark; emissive lifts it).
           m.color.setRGB(1.0, 0.84, 0.72);
           if (m.emissive) m.emissive.setHex(0x3a2a1e);
           m.emissiveIntensity = 1.0;
-          m.userData._bcLit = true;
-          m.needsUpdate = true;
-        } else if (darkModel) {
-          // Rest of the (uniformly dim) collapsed model → gentle capped lift.
-          m.color.setRGB(Math.min(1.35, m.color.r * 1.3), Math.min(1.35, m.color.g * 1.3), Math.min(1.35, m.color.b * 1.3));
-          if (m.emissive) m.emissive.setHex(0x1a130d);
-          m.emissiveIntensity = 0.8;
           m.userData._bcLit = true;
           m.needsUpdate = true;
         }
@@ -895,7 +878,7 @@ export class Level {
     // only its front face shows; nothing protrudes inward for the player to clip
     // through. Spaced tightly so the facades read as a continuous street wall.
     if (!this.assets) return;
-    const TPL = ["bldg_terrace", "bldg_collapsed", "bldg_shop", "bldg_church"];
+    const TPL = ["bldg_terrace", "bldg_shop", "bldg_church"];
     let n = 0;
     const _box = new THREE.Box3();
     // out = outward sign on `axis`; barrier = wall coordinate. Place the model,
@@ -914,7 +897,7 @@ export class Level {
       const wallC = axis === "x" ? BX : BZ;
       const target = (out > 0 ? wallC : -wallC) - out * 0.6;
       m.position[axis] += target - innerFace;
-      this._brightenBuildingModel(m, slug); // lift the over-dark bldg_collapsed here too
+      this._brightenBuildingModel(m); // lift any over-dark baked material
       this.group.add(m);
     };
     const STEP = 11;

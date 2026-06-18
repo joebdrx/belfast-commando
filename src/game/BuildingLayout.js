@@ -37,20 +37,32 @@ export const INTERIOR_BLOCKS = [
 /**
  * Building templates assigned to exterior (model) blocks, in alternation order.
  * Distinct buildings on adjacent blocks for visual variety (no repeats per row).
+ * The destroyed building (`bldg_collapsed`) was removed — its slot in the
+ * rotation is now a breachable INTERIOR building (see `blockPlan`).
  */
-export const MODEL_TEMPLATES = ["bldg_terrace", "bldg_collapsed", "bldg_shop", "bldg_church"];
+export const MODEL_TEMPLATES = ["bldg_terrace", "bldg_shop", "bldg_church"];
+
+/**
+ * Rotation slot that used to render `bldg_collapsed`. It now plans as an interior
+ * building, so the destroyed building is replaced in place by an enterable one.
+ */
+const COLLAPSED_SLOT = 1;
+// 4-slot rotation → slot 1 is the interior infill; the other 3 map to the 3 templates.
+const SLOT_TO_TEMPLATE = [0, null, 1, 2];
 
 /**
  * Plan for one grid block. `kind:"interior"` keeps the procedural room; else a
- * building-model template tiled into a terrace. Exterior blocks ALTERNATE
- * templates by grid position, rotated by the sector `index` so the arrangement
- * varies per sector (and never repeats the same building on neighbouring cells).
+ * building-model template tiled into a terrace. Exterior blocks rotate through a
+ * 4-slot pattern by grid position + sector `index`; the slot that previously
+ * placed the destroyed building now yields an interior building in its place, so
+ * each sector has the two anchored interiors plus one rotating breachable one.
  */
 export function blockPlan(col, row, index) {
   if (INTERIOR_BLOCKS.some((b) => b.col === col && b.row === row)) {
     return { kind: "interior" };
   }
   const pos = col * 2 + row; // 0..5 across the 3×2 grid
-  const template = MODEL_TEMPLATES[(pos + index) % MODEL_TEMPLATES.length];
-  return { kind: "model", template };
+  const slot = (pos + index) % 4;
+  if (slot === COLLAPSED_SLOT) return { kind: "interior" };
+  return { kind: "model", template: MODEL_TEMPLATES[SLOT_TO_TEMPLATE[slot]] };
 }

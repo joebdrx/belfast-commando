@@ -81,7 +81,6 @@ const MODEL_DEFS = {
   // Belfast exterior building templates (optimized from asset-reference via
   // scripts/optimize-buildings.sh). Provisional; tuned from the in-game audit.
   bldg_terrace:     { size: 12, fit: "height", anchor: "bottom", rotY: 0 },
-  bldg_collapsed:   { size: 11, fit: "height", anchor: "bottom", rotY: 0 },
   bldg_shop:        { size: 10, fit: "height", anchor: "bottom", rotY: 0 },
   bldg_church:      { size: 17, fit: "height", anchor: "bottom", rotY: 0 }, // landmark; taller (spire)
   // City backdrop ringed around the map edges as a skyline (not a block). ~130m
