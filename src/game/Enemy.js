@@ -146,6 +146,25 @@ export class Enemy {
       this.radius *= arch.scale;
       this.height *= arch.scale;
     }
+
+    // Per-archetype colour tint so the types read at a glance: gunner steel-blue,
+    // breacher volatile-orange, enforcer dark-iron (also big), grunt rusty. The
+    // rigged model materials are shared across enemy clones, so clone each
+    // material before tinting (otherwise one enemy's tint bleeds onto all). The
+    // muzzle-flash quad is left untouched.
+    if (arch.tint) {
+      const tint = new THREE.Color(arch.tint);
+      this.group.traverse((o) => {
+        if (!o.material || o === this.flash) return;
+        const tintMat = (m) => {
+          const c = m.clone();
+          if (c.color) c.color.copy(tint);
+          if (m === this._bodyMat) this._bodyMat = c; // keep hit-flash on the live material
+          return c;
+        };
+        o.material = Array.isArray(o.material) ? o.material.map(tintMat) : tintMat(o.material);
+      });
+    }
   }
 
   get position() {
