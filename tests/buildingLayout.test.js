@@ -37,10 +37,19 @@ describe("blockPlan / INTERIOR_BLOCKS", () => {
     expect(INTERIOR_BLOCKS.length).toBe(2);
   });
   it("model blocks reference a known template slug", () => {
-    const slugs = new Set(["bldg_terrace","bldg_collapsed","bldg_shop","bldg_pub"]);
+    const slugs = new Set(["bldg_terrace","bldg_collapsed","bldg_shop","bldg_street"]);
     for (let c = 0; c < 3; c++) for (let r = 0; r < 2; r++) {
       const p = blockPlan(c, r, 0);
       if (p.kind === "model") expect(slugs.has(p.template)).toBe(true);
     }
+  });
+  it("alternates templates across model blocks (variety, not all the same)", () => {
+    const used = [];
+    for (let c = 0; c < 3; c++) for (let r = 0; r < 2; r++) {
+      const p = blockPlan(c, r, 0);
+      if (p.kind === "model") used.push(p.template);
+    }
+    expect(used.length).toBe(4);                  // 6 blocks - 2 interiors
+    expect(new Set(used).size).toBeGreaterThanOrEqual(3); // alternation, not monotemplate
   });
 });

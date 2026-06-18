@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { Enemy } from "./Enemy.js";
 import { EnemyDirector } from "./EnemyDirector.js";
-import { footprintCollider, tileSpec, blockPlan } from "./BuildingLayout.js";
+import { footprintCollider, blockPlan } from "./BuildingLayout.js";
 
 const _ray = new THREE.Ray();
 const _dir = new THREE.Vector3();
@@ -404,15 +404,27 @@ export class Level {
 
     // Face the model's front toward the inner street (east blocks face -X, etc.).
     const faceY = cx < 0 ? Math.PI / 2 : cx > 0 ? -Math.PI / 2 : 0;
+    const rotated = Math.abs(Math.sin(faceY)) > 0.5; // ±90° → local X runs along world Z
 
-    // Measure the template's depth (Z) once to tile copies down the run.
+    // Measure the template's footprint (before rotating). Map its axes to the
+    // block's long run (Z) and frontage depth (X) given the facing rotation.
     const size = new THREE.Box3().setFromObject(tpl).getSize(new THREE.Vector3());
-    const depth = Math.max(2, Math.min(size.z, size.x)); // narrow axis = frontage depth
-    const { offsets } = tileSpec(this.BLOCK_L, depth, 0.3);
-    for (const dz of offsets) {
-      const m = this.assets.getModel(slug); // fresh clone per copy
+    const naturalRun = Math.max(2, rotated ? size.x : size.z);
+    const naturalFront = Math.max(2, rotated ? size.z : size.x);
+
+    // Tile copies to FILL the full block length edge-to-edge (no centred gaps),
+    // and scale each copy so it fills the BLOCK_W × seg footprint — the building
+    // reaches the boundary box on every side, matching the footprint collider.
+    const count = Math.max(1, Math.round(this.BLOCK_L / naturalRun));
+    const seg = this.BLOCK_L / count;
+    const runScale = seg / naturalRun;
+    const frontScale = this.BLOCK_W / naturalFront;
+    for (let i = 0; i < count; i++) {
+      const m = i === 0 ? tpl : this.assets.getModel(slug); // reuse the probe as copy 0
       m.rotation.y = faceY;
-      m.position.set(cx, 0, cz + dz);
+      if (rotated) { m.scale.x *= runScale; m.scale.z *= frontScale; }
+      else { m.scale.z *= runScale; m.scale.x *= frontScale; }
+      m.position.set(cx, 0, cz - this.BLOCK_L / 2 + seg * (i + 0.5));
       this.group.add(m);
     }
 
@@ -564,15 +576,43 @@ export class Level {
 
   /** Distant hazy hills ringing the quarter, far off on the horizon. */
   _buildBackdrop() {
-    const baseR = Math.max(this.GRID_HALF_X, this.GRID_HALF_Z) + 62; // beyond the buildings
-    const n = 22;
+    // The Belfast city skyline (below) is the backdrop now; a couple of faint,
+    // far hills behind it just fill the lowest horizon gaps between city copies.
+    const baseR = Math.max(this.GRID_HALF_X, this.GRID_HALF_Z) + 150; // well beyond the skyline
+    const n = 10;
     for (let i = 0; i < n; i++) {
       const a = (i / n) * Math.PI * 2;
-      const r = baseR + (i % 3) * 12;
-      const hill = new THREE.Mesh(new THREE.SphereGeometry(30, 12, 8), this._materials.hill);
-      hill.scale.set(2.2, 0.6 + (i % 4) * 0.12, 1);
-      hill.position.set(Math.cos(a) * r, -14, Math.sin(a) * r);
+      const hill = new THREE.Mesh(new THREE.SphereGeometry(30, 10, 6), this._materials.hill);
+      hill.scale.set(2.6, 0.5, 1);
+      hill.position.set(Math.cos(a) * baseR, -16, Math.sin(a) * baseR);
       this.group.add(hill);
+    }
+    this._buildSkyline();
+  }
+
+  /**
+   * City skyline backdrop ringed around the map edges (Belfast city model).
+   * Skybox-style: its materials are FOG-EXEMPT so the skyline reads as a distant
+   * horizon behind the claustrophobic street fog (which otherwise hides anything
+   * past ~25m). Each copy faces the map centre; sunk slightly to hide its base.
+   */
+  _buildSkyline() {
+    if (!this.assets) return; // each copy is a getModel probe; absent slug → no-op
+    // Skyline is ~130m wide (±65); ring it so its near edge clears the grid edge.
+    const RX = this.GRID_HALF_X + 75; // ≈106 → near edge ≈41 (> GRID_HALF_X 31)
+    const RZ = this.GRID_HALF_Z + 75; // ≈136 → near edge ≈71 (> GRID_HALF_Z 61)
+    const spots = [[0, RZ], [0, -RZ], [RX, 0], [-RX, 0]]; // N, S, E, W
+    for (const [px, pz] of spots) {
+      const m = this.assets.getModel("bldg_skyline");
+      if (!m) continue;
+      m.position.set(px, -4, pz);
+      m.rotation.y = Math.atan2(-px, -pz); // city facade faces the map centre
+      m.traverse((o) => {
+        if (!o.material) return;
+        const mats = Array.isArray(o.material) ? o.material : [o.material];
+        mats.forEach((mat) => { mat.fog = false; mat.needsUpdate = true; });
+      });
+      this.group.add(m);
     }
   }
 

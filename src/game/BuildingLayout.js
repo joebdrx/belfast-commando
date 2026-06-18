@@ -35,18 +35,22 @@ export const INTERIOR_BLOCKS = [
 ];
 
 /**
+ * Building templates assigned to exterior (model) blocks, in alternation order.
+ * Distinct buildings on adjacent blocks for visual variety (no repeats per row).
+ */
+export const MODEL_TEMPLATES = ["bldg_terrace", "bldg_collapsed", "bldg_shop", "bldg_street"];
+
+/**
  * Plan for one grid block. `kind:"interior"` keeps the procedural room; else a
- * building-model template tiled into a terrace. `index` is the sector index so
- * the mix can vary per sector (kept simple here; landmarks at the corners).
+ * building-model template tiled into a terrace. Exterior blocks ALTERNATE
+ * templates by grid position, rotated by the sector `index` so the arrangement
+ * varies per sector (and never repeats the same building on neighbouring cells).
  */
 export function blockPlan(col, row, index) {
   if (INTERIOR_BLOCKS.some((b) => b.col === col && b.row === row)) {
     return { kind: "interior" };
   }
-  // Corners get landmarks (shop / collapsed); the rest are terraces. Pub appears
-  // from sector 2 onward as a feature block.
-  if (col === 0 && row === 0) return { kind: "model", template: "bldg_shop" };
-  if (col === 2 && row === 1) return { kind: "model", template: "bldg_collapsed" };
-  if (col === 1 && row === 0 && index >= 2) return { kind: "model", template: "bldg_pub" };
-  return { kind: "model", template: "bldg_terrace" };
+  const pos = col * 2 + row; // 0..5 across the 3×2 grid
+  const template = MODEL_TEMPLATES[(pos + index) % MODEL_TEMPLATES.length];
+  return { kind: "model", template };
 }
