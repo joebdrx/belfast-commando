@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { Enemy } from "./Enemy.js";
 import { EnemyDirector } from "./EnemyDirector.js";
+import { footprintCollider, tileSpec, blockPlan } from "./BuildingLayout.js";
 
 const _ray = new THREE.Ray();
 const _dir = new THREE.Vector3();
@@ -207,12 +208,17 @@ export class Level {
     // --- 3×3 terraced blocks: enclosed rooms with kickable doors. ---------
     // Roughly half the blocks hide an invader; the rest are empty rooms to
     // breach. Street enemies (added below) guarantee a fight regardless.
-    for (const cz of COORDS_Z) {
-      for (const cx of COORDS_X) {
-        const enemyCount = 2 + (rng() < 0.5 ? 1 : 0); // 2–3 occupied rooms per building
-        this._buildBlock(cx, cz, enemyCount, rng);
-      }
-    }
+    COORDS_Z.forEach((cz, row) => {
+      COORDS_X.forEach((cx, col) => {
+        const plan = blockPlan(col, row, this.index);
+        if (plan.kind === "interior") {
+          const enemyCount = 2 + (rng() < 0.5 ? 1 : 0);
+          this._buildBlock(cx, cz, enemyCount, rng);
+        } else {
+          this._buildModelBlock(cx, cz, plan.template, rng);
+        }
+      });
+    });
 
     // --- Street network paint + far horizon. ------------------------------
     this._buildRoadPaint();
@@ -376,6 +382,44 @@ export class Level {
     for (let k = 0; k < Math.min(enemyCount, N); k++) {
       this._addEnemy(new THREE.Vector3(cx, 0, roomZ(order[k])), {});
     }
+  }
+
+  /**
+   * Exterior-only block: a building-model template tiled into a terraced row
+   * down the block's long (Z) run, plus ONE footprint collider matching the
+   * block (never the model mesh — keeps the street grid walkable). Falls back to
+   * the procedural block if the template model isn't available.
+   */
+  _buildModelBlock(cx, cz, slug, rng) {
+    const tpl = this.assets && this.assets.getModel(slug);
+    if (!tpl) { this._buildBlock(cx, cz, 0, rng); return; } // safe fallback
+
+    // Pavement apron (matches the interior blocks' look; walk-over, no collider).
+    const pave = new THREE.Mesh(
+      new THREE.BoxGeometry(this.BLOCK_W + 3, 0.12, this.BLOCK_L + 3),
+      this._materials.pavement,
+    );
+    pave.position.set(cx, 0.06, cz);
+    this.group.add(pave);
+
+    // Face the model's front toward the inner street (east blocks face -X, etc.).
+    const faceY = cx < 0 ? Math.PI / 2 : cx > 0 ? -Math.PI / 2 : 0;
+
+    // Measure the template's depth (Z) once to tile copies down the run.
+    const size = new THREE.Box3().setFromObject(tpl).getSize(new THREE.Vector3());
+    const depth = Math.max(2, Math.min(size.z, size.x)); // narrow axis = frontage depth
+    const { offsets } = tileSpec(this.BLOCK_L, depth, 0.3);
+    for (const dz of offsets) {
+      const m = this.assets.getModel(slug); // fresh clone per copy
+      m.rotation.y = faceY;
+      m.position.set(cx, 0, cz + dz);
+      this.group.add(m);
+    }
+
+    // One clean footprint collider + LOS blocker for the whole block.
+    const box = footprintCollider(cx, cz, this.BLOCK_W, this.WALL_H, this.BLOCK_L);
+    this.colliders.push(box);
+    this.losBlockers.push(box);
   }
 
   /**
