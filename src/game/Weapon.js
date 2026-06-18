@@ -17,6 +17,20 @@ const WEAPONS = [
   { name: "Boomstick", id: "boomstick", model: "weapon_shotgun", vmRotY: Math.PI / 2, color: 0x4a3520, damage: 16, rpm: 95, auto: false, pellets: 8, spread: 0.07, size: [0.16, 0.18, 0.6], mag: 6, reloadTime: 2.0 },
 ];
 
+/**
+ * Step through an array of OWNED weapon indices in `dir` (+1 next / -1 prev),
+ * wrapping at both ends. If `current` isn't in the owned set, a forward step
+ * lands on the first owned slot (and a backward step on the last). Pure helper
+ * shared by the Q key and the scroll wheel; exported for unit testing.
+ * @returns {number} the next owned weapon index (or `current` if none owned)
+ */
+export function nextOwnedIndex(current, ownedIndices, dir = 1) {
+  const n = ownedIndices.length;
+  if (n === 0) return current;
+  const pos = ownedIndices.indexOf(current); // -1 when current is unowned
+  return ownedIndices[(pos + dir + n) % n];
+}
+
 // Shared viewmodel offset — seats the gun in the FP arms' grip. Pulled back
 // toward the player (z -0.5 -> -0.42) so the weapon reads as held closer in.
 const VM = { pos: [0.13, -0.2, -0.42] };
@@ -53,6 +67,7 @@ export class Weapon {
     this.cooldown = 0;
     this.triggerHeld = false;
     this.index = 0;
+    this._wheelAcc = 0; // accumulated scroll delta for notch-stepped weapon switching
 
     // Weapon ownership (upgrade gating). Persisted/driven by main.js via
     // setOwned(progression.getOwnedWeapons()); defaults to pistol-only so the
@@ -223,9 +238,21 @@ export class Weapon {
       else if (e.code === "KeyQ") this._cycleOwned();
       else if (e.code === "KeyR") this.reload();
     };
+    // Scroll wheel switches weapons: up (deltaY<0) = next, down = previous.
+    // Accumulate delta and step once per ~one notch so a fast flick doesn't skip
+    // weapons. preventDefault stops the page from scrolling under the canvas.
+    this._onWheel = (e) => {
+      if (!this.ctx || !this.ctx.active) return;
+      e.preventDefault();
+      const NOTCH = 50;
+      this._wheelAcc += e.deltaY;
+      while (this._wheelAcc <= -NOTCH) { this._wheelAcc += NOTCH; this._cycleOwned(1); }
+      while (this._wheelAcc >= NOTCH) { this._wheelAcc -= NOTCH; this._cycleOwned(-1); }
+    };
     window.addEventListener("mousedown", this._onDown);
     window.addEventListener("mouseup", this._onUp);
     window.addEventListener("keydown", this._onKey);
+    window.addEventListener("wheel", this._onWheel, { passive: false });
   }
 
   _canAct() {
@@ -291,13 +318,21 @@ export class Weapon {
     this.setWeapon(i);
   }
 
-  /** Cycle to the next OWNED weapon (Q). No-op if only one is owned. */
-  _cycleOwned() {
+  /** Owned weapon indices, in slot order. */
+  _ownedIndices() {
     const owned = [];
     for (let i = 0; i < WEAPONS.length; i++) if (this._isOwned(i)) owned.push(i);
+    return owned;
+  }
+
+  /**
+   * Cycle through OWNED weapons (Q key / scroll wheel). `dir` +1 = next,
+   * -1 = previous. No-op if one or zero weapons are owned.
+   */
+  _cycleOwned(dir = 1) {
+    const owned = this._ownedIndices();
     if (owned.length <= 1) return;
-    const pos = owned.indexOf(this.index);
-    this.setWeapon(owned[(pos + 1) % owned.length]);
+    this.setWeapon(nextOwnedIndex(this.index, owned, dir));
   }
 
   reload() {
@@ -630,6 +665,7 @@ export class Weapon {
     window.removeEventListener("mousedown", this._onDown);
     window.removeEventListener("mouseup", this._onUp);
     window.removeEventListener("keydown", this._onKey);
+    window.removeEventListener("wheel", this._onWheel);
     this.reset();
     if (this._splatGeo) { this._splatGeo.dispose(); this._splatGeo = null; }
     if (this._splatMat) { this._splatMat.dispose(); this._splatMat = null; }
