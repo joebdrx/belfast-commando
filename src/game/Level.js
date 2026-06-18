@@ -403,7 +403,9 @@ export class Level {
     this.group.add(pave);
 
     // Face the model's front toward the inner street (east blocks face -X, etc.).
-    const faceY = cx < 0 ? Math.PI / 2 : cx > 0 ? -Math.PI / 2 : 0;
+    // The middle column (cx≈0) is rotated 90° ("horizontal") so its buildings
+    // run across rather than straight down the central lane.
+    const faceY = cx < -0.5 ? Math.PI / 2 : cx > 0.5 ? -Math.PI / 2 : Math.PI / 2;
     const rotated = Math.abs(Math.sin(faceY)) > 0.5; // ±90° → local X runs along world Z
 
     // Measure the template's footprint (before rotating). Map its axes to the
@@ -598,14 +600,21 @@ export class Level {
    */
   _buildSkyline() {
     if (!this.assets) return; // each copy is a getModel probe; absent slug → no-op
-    // Skyline is ~130m wide (±65); ring it so its near edge clears the grid edge.
-    const RX = this.GRID_HALF_X + 75; // ≈106 → near edge ≈41 (> GRID_HALF_X 31)
-    const RZ = this.GRID_HALF_Z + 75; // ≈136 → near edge ≈71 (> GRID_HALF_Z 61)
-    const spots = [[0, RZ], [0, -RZ], [RX, 0], [-RX, 0]]; // N, S, E, W
-    for (const [px, pz] of spots) {
+    // Distant HORIZON ring: pushed far past the playable grid so it can never
+    // interfere with the walkable area. Multiple copies of the same city model
+    // evenly ring the horizon; each is fog-exempt (skybox-style) so it shows
+    // behind the claustrophobic street fog, and frustum-culled so only the few
+    // in view ever render.
+    const RX = this.GRID_HALF_X + 150; // ≈181
+    const RZ = this.GRID_HALF_Z + 150; // ≈211
+    const COPIES = 8;
+    for (let i = 0; i < COPIES; i++) {
+      const a = (i / COPIES) * Math.PI * 2;
+      const px = Math.cos(a) * RX;
+      const pz = Math.sin(a) * RZ;
       const m = this.assets.getModel("bldg_skyline");
       if (!m) continue;
-      m.position.set(px, -4, pz);
+      m.position.set(px, -12, pz); // sunk so the city's pale base/plaza tucks below ground
       m.rotation.y = Math.atan2(-px, -pz); // city facade faces the map centre
       m.traverse((o) => {
         if (!o.material) return;

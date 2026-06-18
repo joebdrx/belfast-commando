@@ -38,7 +38,7 @@ export const INTERIOR_BLOCKS = [
  * Building templates assigned to exterior (model) blocks, in alternation order.
  * Distinct buildings on adjacent blocks for visual variety (no repeats per row).
  */
-export const MODEL_TEMPLATES = ["bldg_terrace", "bldg_collapsed", "bldg_shop", "bldg_street"];
+export const MODEL_TEMPLATES = ["bldg_terrace", "bldg_collapsed", "bldg_shop", "bldg_church"];
 
 /**
  * Plan for one grid block. `kind:"interior"` keeps the procedural room; else a

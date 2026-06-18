@@ -37,7 +37,7 @@ describe("blockPlan / INTERIOR_BLOCKS", () => {
     expect(INTERIOR_BLOCKS.length).toBe(2);
   });
   it("model blocks reference a known template slug", () => {
-    const slugs = new Set(["bldg_terrace","bldg_collapsed","bldg_shop","bldg_street"]);
+    const slugs = new Set(["bldg_terrace","bldg_collapsed","bldg_shop","bldg_church"]);
     for (let c = 0; c < 3; c++) for (let r = 0; r < 2; r++) {
       const p = blockPlan(c, r, 0);
       if (p.kind === "model") expect(slugs.has(p.template)).toBe(true);

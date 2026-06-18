@@ -70,7 +70,7 @@ const MODEL_DEFS = {
   bldg_terrace:     { size: 12, fit: "height", anchor: "bottom", rotY: 0 },
   bldg_collapsed:   { size: 11, fit: "height", anchor: "bottom", rotY: 0 },
   bldg_shop:        { size: 10, fit: "height", anchor: "bottom", rotY: 0 },
-  bldg_street:      { size: 12, fit: "height", anchor: "bottom", rotY: 0 },
+  bldg_church:      { size: 17, fit: "height", anchor: "bottom", rotY: 0 }, // landmark; taller (spire)
   // City backdrop ringed around the map edges as a skyline (not a block). ~130m
   // wide (±65), so it can ring JUST beyond the grid edge without overlapping the
   // playable streets. Placed + fog-exempted by Level._buildSkyline.
