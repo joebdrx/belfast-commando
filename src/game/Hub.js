@@ -595,11 +595,18 @@ export class Hub {
     this._phoneIsModel = true;
   }
 
-  /** Procedural wall-phone fixture (fallback): cradle + keypad + handset + cord. */
+  /**
+   * Procedural wall-phone fixture (fallback): cradle + keypad + handset + cord.
+   * Built into a scaled sub-group so it matches the enlarged GLB (~0.85m tall),
+   * keeping the GLB path's scaling independent of the group transform.
+   */
   _buildPhoneFallback(phone) {
+    const fb = new THREE.Group();
+    fb.scale.setScalar(1.85); // 0.46m cradle → ~0.85m, matching MODEL_DEFS size
+    phone.add(fb);
     const bodyMat = new THREE.MeshStandardMaterial({ color: 0x141414, roughness: 0.6 });
     const cradle = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.46, 0.16), bodyMat);
-    phone.add(cradle);
+    fb.add(cradle);
 
     // A faint amber keypad face so the phone reads as "interactive".
     const keypadMat = new THREE.MeshStandardMaterial({
@@ -610,19 +617,19 @@ export class Hub {
     });
     const keypad = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.26, 0.03), keypadMat);
     keypad.position.set(0, -0.02, 0.09);
-    phone.add(keypad);
+    fb.add(keypad);
 
     // Handset sitting on top of the cradle.
     const handset = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.07, 0.08), bodyMat);
     handset.position.set(0, 0.27, 0.06);
-    phone.add(handset);
+    fb.add(handset);
 
     // Coiled cord (a thin torus knot stand-in) dangling below.
     const cordMat = new THREE.MeshStandardMaterial({ color: 0x0c0c0c, roughness: 0.9 });
     const cord = new THREE.Mesh(new THREE.TorusGeometry(0.08, 0.018, 6, 14), cordMat);
     cord.position.set(0.1, -0.3, 0.05);
     cord.rotation.x = Math.PI / 2;
-    phone.add(cord);
+    fb.add(cord);
   }
 
   /**

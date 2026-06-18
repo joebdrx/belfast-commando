@@ -73,10 +73,11 @@ const MODEL_DEFS = {
   prop_bicycle:     { size: 1.1, fit: "height", anchor: "bottom", rotY: 0 },
   prop_car:         { size: 1.5, fit: "height", anchor: "bottom", rotY: 0 },
   // Wall-mounted landline phone for the safehouse (HUB). The source is modelled
-  // lying flat (thin Y axis), so scale by its longest axis to ~0.3m and let
-  // Hub._buildPhone stand it upright + face it into the room. Centre-anchored so
-  // it pivots about its own middle when Hub rotates it onto the wall.
-  landline_phone:   { size: 0.3, fit: "max", anchor: "center", rotY: 0 },
+  // lying flat (thin Y axis), so scale by its longest axis to ~0.85m (a real
+  // wall phone, proportionate to the room) and let Hub._buildPhone stand it
+  // upright + face it into the room. Centre-anchored so it pivots about its own
+  // middle when Hub rotates it onto the wall.
+  landline_phone:   { size: 0.85, fit: "max", anchor: "center", rotY: 0 },
   // Belfast exterior building templates (optimized from asset-reference via
   // scripts/optimize-buildings.sh). Provisional; tuned from the in-game audit.
   bldg_terrace:     { size: 12, fit: "height", anchor: "bottom", rotY: 0 },
