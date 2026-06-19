@@ -157,7 +157,7 @@ export class Level {
     // Grid geometry shared across builders. Buildings are tall, long terraces:
     // narrow frontage (X) and a long run (Z), so they line the north–south
     // streets the player walks down.
-    this.WALL_H = 15; // 3× the original 5m — the tall EXTERIOR brick shell height
+    this.WALL_H = 11; // exterior brick shell height (lowered from 15 — less towering)
     this.CEIL_H = 3.2; // low apartment ceiling INSIDE the shell (decoupled from WALL_H)
     this.BLOCK_W = 14; // frontage width (X)
     this.BLOCK_L = 56; // 4× the original 14m run (Z)
@@ -503,14 +503,18 @@ export class Level {
   }
 
   /**
-   * Exterior-only block: a building-model template tiled into a terraced row
-   * down the block's long (Z) run, plus ONE footprint collider matching the
-   * block (never the model mesh — keeps the street grid walkable). Falls back to
-   * the procedural block if the template model isn't available.
+   * Exterior block: a SOLID brick terrace building. The old approach tiled GLB
+   * models with gaps + non-uniform scaling, which read as a hollow, stretched,
+   * gap-riddled mass (black voids between tiles, no texture coverage). Instead we
+   * build a closed brick box — four continuous proportionate-UV brick faces + a
+   * solid roof slab + a street-facing window/door facade — so every block reads
+   * as one solid, fully-textured structure at the lowered WALL_H. One footprint
+   * collider keeps the street grid walkable.
    */
   _buildModelBlock(cx, cz, slug, rng) {
-    const probe = this.assets && this.assets.getModel(slug);
-    if (!probe) { this._buildBlock(cx, cz, 0, rng); return; } // safe fallback
+    const halfW = this.BLOCK_W / 2;
+    const halfL = this.BLOCK_L / 2;
+    const h = this.WALL_H;
 
     // Pavement apron (matches the interior blocks' look; walk-over, no collider).
     const pave = new THREE.Mesh(
@@ -520,120 +524,35 @@ export class Level {
     pave.position.set(cx, 0.06, cz);
     this.group.add(pave);
 
-    // Face the model's front toward the inner street (east blocks face -X, etc.).
-    // The middle column (cx≈0) is rotated 90° ("horizontal") so its buildings
-    // run across rather than straight down the central lane.
-    const faceY = cx < -0.5 ? Math.PI / 2 : cx > 0.5 ? -Math.PI / 2 : Math.PI / 2;
-    const rotated = Math.abs(Math.sin(faceY)) > 0.5; // ±90° → local X runs along world Z
-    const frontSign = Math.sign(Math.sin(faceY)) || 1; // +1 → facades face +X; -1 → -X
-
-    // Measure ANY model's footprint (before rotating) and map its axes to the
-    // block's long run (Z) and frontage depth (X). Generalised from the old
-    // single-template probe so each placed model is measured individually —
-    // models have DIFFERENT depths, so a single tile step would overlap/gap.
-    const measure = (m) => {
-      const s = new THREE.Box3().setFromObject(m).getSize(new THREE.Vector3());
-      return { run: Math.max(2, rotated ? s.x : s.z), front: Math.max(2, rotated ? s.z : s.x) };
-    };
-
-    // Per-block tile pattern: mostly mid-size houses (terrace/shop) alternating
-    // down the row, with a sparing church landmark. Varies by grid position +
-    // sector index so adjacent blocks read differently.
-    const pickSlug = this._terracePattern(slug, cx, cz);
-
-    // Build the tile list, measuring EACH model's own depth and clamping it to a
-    // mid-size band so no single model dominates the terrace. Greedily fill the
-    // block length; we then uniformly normalise so tiles fill it edge-to-edge.
-    const RUN_MIN = 7, RUN_MAX = 13, GAP = 0.45;
-    const tiles = [];
-    let acc = 0;
-    for (let i = 0; tiles.length < 12; i++) {
-      const tslug = pickSlug(i);
-      let m = this.assets.getModel(tslug) || this.assets.getModel(slug) || probe;
-      const dim = measure(m); // measured BEFORE any rotation/scale is applied
-      const eff = Math.min(RUN_MAX, Math.max(RUN_MIN, dim.run));
-      const add = eff + (tiles.length ? GAP : 0);
-      if (tiles.length && acc + add > this.BLOCK_L + 1.0) break;
-      tiles.push({ slug: tslug, model: m, run: dim.run, front: dim.front, eff });
-      acc += add;
-      if (acc >= this.BLOCK_L - 0.5) break;
-    }
-    if (!tiles.length) { const d = measure(probe); tiles.push({ slug, model: probe, run: d.run, front: d.front, eff: d.run }); }
-
-    // Normalise so the row fills the block edge-to-edge (no centred gaps, matches
-    // the footprint collider). Each tile advances the Z cursor by ITS OWN depth.
-    const n = tiles.length;
-    const sumEff = tiles.reduce((a, t) => a + t.eff, 0) || 1;
-    const k = (this.BLOCK_L - GAP * (n - 1)) / sumEff;
-    let cursor = cz - this.BLOCK_L / 2;
-    for (let i = 0; i < n; i++) {
-      const t = tiles[i];
-      const sRun = t.eff * k;                  // this tile's final run depth (Z)
-      const runScale = sRun / t.run;           // per-model scale from its measured depth
-      const frontScale = this.BLOCK_W / t.front;
-      const m = t.model;
-      m.rotation.y = faceY;
-      if (rotated) { m.scale.x *= runScale; m.scale.z *= frontScale; }
-      else { m.scale.z *= runScale; m.scale.x *= frontScale; }
-      m.position.set(cx, 0, cursor + sRun / 2);
-      this._brightenBuildingModel(m); // lift any over-dark baked material
-      this.group.add(m);
-      cursor += sRun + (i < n - 1 ? GAP : 0);
-    }
-
-    // Brick BACK + SIDE walls so walking around the block reveals no bare faces
-    // (the tiled models are essentially front facades). Front stays open.
-    this._cladModelBlockShell(cx, cz, frontSign);
-
-    // Window grid + parapet roof cap across the model block FRONT: punches crisp
-    // windows onto the building fronts and caps the bare top edge the GLB models
-    // leave (the flat roofline visible in the audit). No door (models carry their
-    // own ground-floor detail). The cap sits at the block's nominal WALL_H height.
-    const frontX = cx + frontSign * (this.BLOCK_W / 2);
-    this._addFacade(frontX + frontSign * 0.06, cz, frontSign * Math.PI / 2, this.BLOCK_L, this.WALL_H, { noDoor: true });
-
-    // One clean footprint collider + LOS blocker for the whole block.
-    const box = footprintCollider(cx, cz, this.BLOCK_W, this.WALL_H, this.BLOCK_L);
-    this.colliders.push(box);
-    this.losBlockers.push(box);
-  }
-
-  /**
-   * Per-block terrace pattern (a function of the tile index). Alternates the two
-   * mid-size houses (terrace/shop) down the row, and uses the large `bldg_church`
-   * only as a single landmark at the head of church-assigned blocks. Seeded by
-   * grid position + sector index so neighbouring blocks alternate differently.
-   */
-  _terracePattern(primary, cx, cz) {
-    const col = cx < -0.5 ? 0 : cx > 0.5 ? 2 : 1;
-    const row = cz < 0 ? 0 : 1;
-    const seed = col * 2 + row + (this.index | 0);
-    const mids = ["bldg_terrace", "bldg_shop"];
-    const base = mids[seed % 2];
-    const alt = mids[(seed + 1) % 2];
-    const churchBlock = primary === "bldg_church";
-    return (i) => {
-      if (churchBlock && i === 0) return "bldg_church"; // one landmark per church block
-      return (i % 2 === 0) ? base : alt;                // alternate the two houses
-    };
-  }
-
-  /**
-   * Wrap a model block's footprint with BRICK walls on the BACK long face and
-   * the two SHORT end faces, leaving the street-facing front (where the model
-   * facades sit) open. Sized to BLOCK_W × WALL_H × BLOCK_L, nudged just outside
-   * the footprint so they never z-fight the model or clip the street.
-   */
-  _cladModelBlockShell(cx, cz, frontSign) {
-    const halfW = this.BLOCK_W / 2;
-    const halfL = this.BLOCK_L / 2;
-    const h = this.WALL_H;
-    // Back long wall — opposite the facades, facing outward (-frontSign·X).
+    // Street-facing side: east column faces -X, west +X, middle +X. frontSign is
+    // the outward X direction of the front face.
+    const frontSign = cx > 0.5 ? -1 : 1;
+    const frontX = cx + frontSign * halfW;
     const backX = cx - frontSign * halfW;
+
+    // Four CONTINUOUS brick faces (proportionate UVs via _brickWall → no stretch),
+    // each one panel spanning the whole face so there are no gaps/voids anywhere.
+    this._brickWall(frontX + frontSign * 0.05, h / 2, cz, frontSign * Math.PI / 2, this.BLOCK_L, h);
     this._brickWall(backX - frontSign * 0.05, h / 2, cz, -frontSign * Math.PI / 2, this.BLOCK_L, h);
-    // Two end walls, facing outward along ∓Z.
     this._brickWall(cx, h / 2, cz - halfL - 0.05, Math.PI, this.BLOCK_W, h);
     this._brickWall(cx, h / 2, cz + halfL + 0.05, 0, this.BLOCK_W, h);
+
+    // Solid roof slab caps the top (no open/black top edge).
+    const roof = new THREE.Mesh(
+      new THREE.BoxGeometry(this.BLOCK_W + 0.5, 0.5, this.BLOCK_L + 0.5),
+      this._materials.roof,
+    );
+    roof.position.set(cx, h + 0.2, cz);
+    this.group.add(roof);
+
+    // Street-facing facade: window grid + ground door (parapet cap skipped — the
+    // roof slab already caps it). Sits just in front of the brick face.
+    this._addFacade(frontX + frontSign * 0.12, cz, frontSign * Math.PI / 2, this.BLOCK_L, h, { noRoofCap: true });
+
+    // One clean footprint collider + LOS blocker for the whole block.
+    const box = footprintCollider(cx, cz, this.BLOCK_W, h, this.BLOCK_L);
+    this.colliders.push(box);
+    this.losBlockers.push(box);
   }
 
   /**
@@ -1244,10 +1163,13 @@ export class Level {
       }
       // Arm every enemy with a blade to lunge with — no archetype is ranged, so a
       // pistol is never assigned. Enforcer swings a machete; everyone else rushes
-      // in with a knife.
-      const wslug = opts.archetype === "enforcer" ? "enemy_machete" : "enemy_knife";
-      const wmodel = this.assets.getModel(wslug);
-      if (wmodel) opts.weapon = { object3D: wmodel, kind: "blade" };
+      // in with a knife. EXCEPTION: a rig whose weapon is baked into the mesh (the
+      // grrom-2 cleaver grunt) gets no separate blade.
+      if (!(rigged && rigged.builtInWeapon)) {
+        const wslug = opts.archetype === "enforcer" ? "enemy_machete" : "enemy_knife";
+        const wmodel = this.assets.getModel(wslug);
+        if (wmodel) opts.weapon = { object3D: wmodel, kind: "blade" };
+      }
     }
     const e = new Enemy(pos, opts);
     this.group.add(e.group);
