@@ -120,11 +120,12 @@ export class LoadingScreen {
       const v = document.createElement("video");
       v.className = `${PREFIX}video`;
       v.src = `${BASE}${video}`;
-      v.autoplay = true; v.loop = videoLoop; v.muted = true;
+      v.loop = videoLoop;
+      v.muted = true; v.setAttribute("muted", ""); // attribute too → reliable muted autoplay
+      v.autoplay = true; v.preload = "auto";
       v.playsInline = true; v.setAttribute("playsinline", "");
-      v.play && v.play().catch(() => {});
-      root.appendChild(v);
-      this._video = v;
+      root.appendChild(v); // append BEFORE play (a detached video advances its
+      this._video = v;     // clock without rendering → flashes only the end frame)
       this._layers = [];
     } else {
       this._layers = slides.map((src, i) => {
@@ -156,6 +157,15 @@ export class LoadingScreen {
     document.body.appendChild(root);
     this._root = root;
 
+    // Start the video now it's in the document (retry on canplay in case the first
+    // play() is rejected while still buffering).
+    if (this._video) {
+      const v = this._video;
+      const kick = () => { try { v.play(); } catch (_) { /* ignore */ } };
+      kick();
+      v.addEventListener("canplay", kick, { once: true });
+    }
+
     // Auto-advance through ALL slides while we wait (looping), so a long load keeps
     // scanning art. No slide is reserved as a finale — finish() fades from whatever
     // happens to be showing.
@@ -185,29 +195,32 @@ export class LoadingScreen {
     this._finishing = true;
     return new Promise((resolve) => {
       let done = false;
+      let safety = null;
       const fadeOut = () => {
         if (done) return;
         done = true;
+        if (safety) { clearTimeout(safety); safety = null; }
         if (this._timer) { clearInterval(this._timer); this._timer = null; }
         if (this._root) this._root.classList.add(`${PREFIX}out`);
         setTimeout(() => { this._teardown(false); resolve(); }, 750);
       };
 
-      // A non-looping video plays ENTIRELY before we fade (operation loader).
+      // A non-looping video plays ENTIRELY before we fade (operation loader). Wait
+      // for the REAL 'ended' event — never a duration guess: v.duration is usually
+      // still unknown when finish() runs (the clip hasn't loaded), which faded it
+      // out far too early. 'error' + a generous safety net cover playback failure.
       if (this._video && !this._video.loop) {
         const v = this._video;
         if (v.ended) { fadeOut(); return; }
         v.addEventListener("ended", fadeOut, { once: true });
-        // Fallback in case 'ended' never fires (decode error / src cleared).
-        const dur = isFinite(v.duration) && v.duration > 0 ? v.duration : 4.5;
-        const leftMs = Math.max(300, (dur - (v.currentTime || 0)) * 1000 + 400);
-        setTimeout(fadeOut, leftMs);
+        v.addEventListener("error", fadeOut, { once: true });
+        safety = setTimeout(fadeOut, 15000);
         return;
       }
 
       // Slides / looping video: honour the minimum, then fade from whatever shows.
       const remaining = Math.max(0, this._minMs - (performance.now() - this._startAt));
-      setTimeout(fadeOut, remaining);
+      safety = setTimeout(fadeOut, remaining);
     });
   }
 

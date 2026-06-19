@@ -677,7 +677,11 @@ class Game {
 
     this.hud.update(dt);
     this.engine.update(dt);
-    this.engine.render(this.phase === "HUB" ? this.hub.scene : null);
+    // While the operation loading screen is up it fully covers the canvas, so skip
+    // the heavy 3D render — that frees the main thread for smooth video playback.
+    if (!this._loadingActive) {
+      this.engine.render(this.phase === "HUB" ? this.hub.scene : null);
+    }
   }
 
   _update(dt) {
