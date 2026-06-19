@@ -30,20 +30,19 @@ import LEVELS from "../data/levels.json";
 
 const PREFIX = "bc-menu-";
 
-const BASE = import.meta.env.BASE_URL || "/";
-
 /**
- * Desktop (Tauri) build download. `baseUrl` is where the native installers live —
- * by default served from `public/downloads/` (run `npm run tauri build` and drop
- * the bundles there, see public/downloads/README.md). Point it at a GitHub
- * Release URL instead to host them externally. Filenames follow Tauri's default
- * bundle naming for productName `belfast-commando` v0.1.0.
+ * Desktop (Tauri) build download. The native installers are published to the
+ * repo's GitHub Releases by the `release` CI workflow (.github/workflows/release.yml);
+ * `releases/latest/download/<asset>` always resolves to the newest release.
+ * Filenames follow Tauri's default bundle naming for productName
+ * `belfast-commando` v0.1.0 — bump the version here when tauri.conf.json changes.
  */
 const DESKTOP_BUILD = {
-  baseUrl: `${BASE}downloads/`,
+  baseUrl: "https://github.com/joebdrx/belfast-commando/releases/latest/download/",
+  releasesPage: "https://github.com/joebdrx/belfast-commando/releases/latest",
   assets: {
     windows: "belfast-commando_0.1.0_x64-setup.exe",
-    macos: "belfast-commando_0.1.0_x64.dmg",
+    macos: "belfast-commando_0.1.0_universal.dmg",
     linux: "belfast-commando_0.1.0_amd64.AppImage",
   },
   labels: { windows: "Windows (.exe)", macos: "macOS (.dmg)", linux: "Linux (.AppImage)" },
@@ -445,13 +444,18 @@ export class Menu {
     return "linux";
   }
 
-  /** Trigger a download of the native build for the given (or detected) OS. */
+  /**
+   * Trigger a download of the native build for the given (or detected) OS. The
+   * GitHub Release asset is served with an attachment disposition, so it downloads
+   * directly; opened in a new tab so it never navigates the game away.
+   */
   _downloadDesktop(os = this._detectOS()) {
     const file = DESKTOP_BUILD.assets[os] || DESKTOP_BUILD.assets.linux;
     const a = this._el("a");
     a.href = `${DESKTOP_BUILD.baseUrl}${file}`;
     a.setAttribute("download", file);
-    a.rel = "noopener";
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
     document.body.appendChild(a);
     a.click();
     a.remove();
