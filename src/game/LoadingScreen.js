@@ -22,7 +22,6 @@ export class LoadingScreen {
     this._layers = [];
     this._video = null;
     this._timer = null;
-    this._coverIndex = 0;
     this._startAt = 0;
     this._minMs = 0;
     this._finishing = false;
@@ -104,24 +103,24 @@ export class LoadingScreen {
    * served base). The last slide is treated as the cover (the finale). `minMs` is
    * the minimum time the overlay stays up before finish() is allowed to fade it.
    */
-  show(slides = [], { minMs = 2600, logo = null, video = null } = {}) {
+  show(slides = [], { minMs = 2600, logo = null, video = null, videoLoop = true } = {}) {
     if (this._root) this._teardown(true);
     this._finishing = false;
     this._video = null;
     this._startAt = performance.now();
     this._minMs = minMs;
-    this._coverIndex = Math.max(0, slides.length - 1);
 
     const root = document.createElement("div");
     root.className = `${PREFIX}root`;
 
     if (video) {
-      // Looping muted video background (autoplays — muted, so the browser allows
-      // it even without a gesture; the game music plays underneath).
+      // Muted video background (autoplays — muted, so the browser allows it even
+      // without a gesture; game music plays underneath). videoLoop:false plays it
+      // through once (finish() then waits for it to end).
       const v = document.createElement("video");
       v.className = `${PREFIX}video`;
       v.src = `${BASE}${video}`;
-      v.autoplay = true; v.loop = true; v.muted = true;
+      v.autoplay = true; v.loop = videoLoop; v.muted = true;
       v.playsInline = true; v.setAttribute("playsinline", "");
       v.play && v.play().catch(() => {});
       root.appendChild(v);
@@ -157,16 +156,17 @@ export class LoadingScreen {
     document.body.appendChild(root);
     this._root = root;
 
-    // Auto-advance through the non-cover slides while we wait (loop), so a long
-    // load keeps scanning art rather than freezing on one image.
-    if (this._coverIndex > 0) {
+    // Auto-advance through ALL slides while we wait (looping), so a long load keeps
+    // scanning art. No slide is reserved as a finale — finish() fades from whatever
+    // happens to be showing.
+    const n = this._layers.length;
+    if (n > 1) {
       let i = 0;
       const SLIDE_MS = 3200;
       this._timer = setInterval(() => {
         if (this._finishing) return;
-        const next = (i + 1) % this._coverIndex; // cycle 0..coverIndex-1
-        this._showLayer(next);
-        i = next;
+        i = (i + 1) % n;
+        this._showLayer(i);
       }, SLIDE_MS);
     }
   }
@@ -183,17 +183,31 @@ export class LoadingScreen {
   finish() {
     if (!this._root || this._finishing) return Promise.resolve();
     this._finishing = true;
-    const COVER_HOLD = 1300;
-    const remaining = Math.max(0, this._minMs - (performance.now() - this._startAt));
     return new Promise((resolve) => {
-      setTimeout(() => {
+      let done = false;
+      const fadeOut = () => {
+        if (done) return;
+        done = true;
         if (this._timer) { clearInterval(this._timer); this._timer = null; }
-        this._showLayer(this._coverIndex); // crossfade to the cover finale
-        setTimeout(() => {
-          if (this._root) this._root.classList.add(`${PREFIX}out`);
-          setTimeout(() => { this._teardown(false); resolve(); }, 750);
-        }, COVER_HOLD);
-      }, remaining);
+        if (this._root) this._root.classList.add(`${PREFIX}out`);
+        setTimeout(() => { this._teardown(false); resolve(); }, 750);
+      };
+
+      // A non-looping video plays ENTIRELY before we fade (operation loader).
+      if (this._video && !this._video.loop) {
+        const v = this._video;
+        if (v.ended) { fadeOut(); return; }
+        v.addEventListener("ended", fadeOut, { once: true });
+        // Fallback in case 'ended' never fires (decode error / src cleared).
+        const dur = isFinite(v.duration) && v.duration > 0 ? v.duration : 4.5;
+        const leftMs = Math.max(300, (dur - (v.currentTime || 0)) * 1000 + 400);
+        setTimeout(fadeOut, leftMs);
+        return;
+      }
+
+      // Slides / looping video: honour the minimum, then fade from whatever shows.
+      const remaining = Math.max(0, this._minMs - (performance.now() - this._startAt));
+      setTimeout(fadeOut, remaining);
     });
   }
 
