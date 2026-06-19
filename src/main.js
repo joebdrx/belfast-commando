@@ -129,8 +129,11 @@ class Game {
     this.decals.attach();
     // Drive the HUD distortion from the adrenaline event.
     this.state.on("adrenaline", ({ active }) => this.hud.setAdrenaline(active));
-    // Player kill bark (sampled voice, throttled + random) on every elimination.
-    this.state.on("kill", () => this.audio.killBark());
+    // Player kill bark + a messy splat on every elimination (splat positional).
+    this.state.on("kill", (e) => {
+      this.audio.killBark();
+      this.audio.splat(e && e.position, this.player.position);
+    });
     // Honor the persisted FX toggle (default on).
     const adrFx = this.state.getProgression().settings;
     if (adrFx && adrFx.adrenalineFx === false) this.hud.setAdrenalineFxEnabled(false);

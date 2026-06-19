@@ -30,6 +30,11 @@ const SAMPLES = {
   // HTMLAudioElement instead (see MUSIC_LOOPS) to avoid huge in-memory PCM.
   music_drum: "sfx/music/drum.mp3",
   music_whistle: "sfx/music/whistle.mp3",
+  // Event SFX (Urban Jungle sound pack).
+  splat: "sfx/messy-splat.ogg",                  // messy enemy-kill splat
+  door_kick: "sfx/door-kick.ogg",                // kicking a door open
+  rescue_jingle: "sfx/rescue-civilian-jingle.ogg", // civilian rescued
+  victim_scream: "sfx/woman-screaming.ogg",      // looped while a victim is captive
 };
 // Long looping ambiences — streamed (HTMLAudioElement), not decoded to PCM.
 const MUSIC_LOOPS = {
@@ -309,15 +314,16 @@ export class Audio {
     // Sampled gunfire: Boomstick → shotgun; everything else (pistol AND SMG) →
     // the pistol report, fired on every shot.
     const key = weapon === "Boomstick" ? "gun_shotgun" : "gun_pistol";
-    if (this._playBuffer(key, { gain: weapon === "Boomstick" ? 0.9 : 0.7 })) return;
-    // Fallback: synth report.
+    // Gunshots turned down 25% (0.9→0.675, 0.7→0.525).
+    if (this._playBuffer(key, { gain: weapon === "Boomstick" ? 0.675 : 0.525 })) return;
+    // Fallback: synth report (also -25%).
     const dur = weapon === "Boomstick" ? 0.28 : 0.12;
     const noise = this._noise(dur);
     const lp = this.ctx.createBiquadFilter();
     lp.type = "lowpass";
     lp.frequency.setValueAtTime(weapon === "Boomstick" ? 1800 : 3200, this._now());
     noise.connect(lp);
-    this._env(lp, weapon === "Boomstick" ? 0.9 : 0.55, 0.001, dur);
+    this._env(lp, weapon === "Boomstick" ? 0.675 : 0.41, 0.001, dur);
     noise.start();
     noise.stop(this._now() + dur + 0.02);
     // Low thump body
@@ -373,6 +379,53 @@ export class Audio {
     // (killBark), fired from the "kill" bus event in main.js.
     this._tone(330, 0.06, 0.25, "triangle");
     this._tone(160, 0.1, 0.4, "sine", 70);
+  }
+
+  /** Messy splat on an enemy kill (sampled). Positional if pos/listener given. */
+  splat(pos = null, listenerPos = null) {
+    if (!this._ok()) return;
+    this._playBuffer("splat", { gain: 0.9, pos, listenerPos });
+  }
+
+  /** Door-kick thump (sampled), falling back to the synth boot thud. */
+  doorKick() {
+    if (!this._ok()) return;
+    if (this._playBuffer("door_kick", { gain: 0.95 })) return;
+    this.kick();
+  }
+
+  /** Celebratory jingle when a civilian is rescued (sampled). */
+  rescueJingle() {
+    if (!this._ok()) return;
+    this._playBuffer("rescue_jingle", { gain: 0.85 });
+  }
+
+  /**
+   * Start a looping sample (e.g. a captive victim's scream). Returns a small
+   * controller `{ setVolume(v), stop() }`, or null if audio/buffer isn't ready —
+   * the caller retries next frame. The loop routes through `master`, so mute
+   * silences it too.
+   */
+  startLoop(key, { gain = 0.5 } = {}) {
+    if (!this._ok() || !this.buffers[key]) return null;
+    const src = this.ctx.createBufferSource();
+    src.buffer = this.buffers[key];
+    src.loop = true;
+    const g = this.ctx.createGain();
+    g.gain.value = gain;
+    src.connect(g);
+    g.connect(this.master);
+    src.start();
+    let stopped = false;
+    return {
+      setVolume: (v) => { if (!stopped) { try { g.gain.value = Math.max(0, v); } catch (_) { /* gone */ } } },
+      stop: () => {
+        if (stopped) return;
+        stopped = true;
+        try { src.stop(); } catch (_) { /* already stopped */ }
+        try { g.disconnect(); } catch (_) { /* gone */ }
+      },
+    };
   }
 
   enemyShot(enemyPos, listenerPos) {

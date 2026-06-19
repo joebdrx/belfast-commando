@@ -45,6 +45,7 @@ export class Victim {
     this._fleeing = false;
     this._fleeTime = 0;
     this._fleeDir = new THREE.Vector3();
+    this._scream = null; // looping distress-scream controller while captive
 
     // Animation (rigged victim) state.
     this.mixer = null;
@@ -148,6 +149,18 @@ export class Victim {
       return;
     }
 
+    // --- Pre-rescue: captive. Loop her distress scream, attenuated by distance
+    // (starts as soon as the sample is decoded; retried each frame until ready). --
+    if (ctx.audio) {
+      if (!this._scream && ctx.audio.startLoop) {
+        this._scream = ctx.audio.startLoop("victim_scream", { gain: 0.001 });
+      }
+      if (this._scream) {
+        const d = this.group.position.distanceTo(ctx.player.position);
+        this._scream.setVolume(Math.max(0.06, Math.min(0.7, 10 / (d + 6))));
+      }
+    }
+
     // --- Pre-rescue: interact prompt + E-press rescue. ----------------------
     const dist = _tmp.copy(ctx.player.position).distanceTo(this.group.position);
     const inRange = dist < INTERACT_RADIUS;
@@ -161,9 +174,16 @@ export class Victim {
     if (inRange && ctx.player.keys && ctx.player.keys["KeyE"]) this._rescue(ctx);
   }
 
+  /** Stop the looping distress scream if it's playing. @private */
+  _stopScream() {
+    if (this._scream) { this._scream.stop(); this._scream = null; }
+  }
+
   /** Trigger the rescue: rewards, dialogue, begin fleeing. @private */
   _rescue(ctx) {
     this.rescued = true;
+    this._stopScream(); // she's safe now — the screaming stops
+    if (ctx.audio && ctx.audio.rescueJingle) ctx.audio.rescueJingle();
     if (this._promptActive && ctx.hud) { ctx.hud.setInteractPrompt(null); this._promptActive = false; }
     if (ctx.state) {
       if (ctx.state.addCurrency) ctx.state.addCurrency(15);
@@ -180,6 +200,7 @@ export class Victim {
 
   /** Remove the victim's GPU resources. @param {THREE.Scene} [_scene] */
   dispose(_scene) {
+    this._stopScream(); // never leave a captive scream looping after teardown
     this.group.traverse((o) => {
       if (o.geometry) o.geometry.dispose();
       if (o.material) {

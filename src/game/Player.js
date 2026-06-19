@@ -412,7 +412,7 @@ export class Player {
         if (!kickPoint) kickPoint = door.center.clone();
         // Breaching a door is neither an elimination nor a rescue — no points.
         this.ctx.weapon.kickFx(door.center);
-        this.ctx.audio.kick();
+        this.ctx.audio.doorKick();
         this.ctx.steamFirstKick();
         // Bus event (position-carrying) for floating text + door-breach stat.
         this.ctx.state && this.ctx.state.emit("breach", { position: door.center.clone() });
