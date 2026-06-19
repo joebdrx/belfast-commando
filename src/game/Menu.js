@@ -32,21 +32,11 @@ const PREFIX = "bc-menu-";
 
 /**
  * Desktop (Tauri) build download. The native installers are published to the
- * repo's GitHub Releases by the `release` CI workflow (.github/workflows/release.yml);
- * `releases/latest/download/<asset>` always resolves to the newest release.
- * Filenames follow Tauri's default bundle naming for productName
- * `belfast-commando` v0.1.0 — bump the version here when tauri.conf.json changes.
+ * repo's GitHub Releases by the `release` CI workflow (.github/workflows/release.yml).
+ * The menu button opens the Releases page so the player can grab the installer for
+ * their OS (Windows .exe / macOS .dmg / Linux .AppImage).
  */
-const DESKTOP_BUILD = {
-  baseUrl: "https://github.com/joebdrx/belfast-commando/releases/latest/download/",
-  releasesPage: "https://github.com/joebdrx/belfast-commando/releases/latest",
-  assets: {
-    windows: "belfast-commando_0.1.0_x64-setup.exe",
-    macos: "belfast-commando_0.1.0_universal.dmg",
-    linux: "belfast-commando_0.1.0_amd64.AppImage",
-  },
-  labels: { windows: "Windows (.exe)", macos: "macOS (.dmg)", linux: "Linux (.AppImage)" },
-};
+const DESKTOP_RELEASES_URL = "https://github.com/joebdrx/belfast-commando/releases";
 
 /** Static lookups so the Upgrades panel can backfill any field the provider omits. */
 const UPGRADES_BY_ID = Object.fromEntries(UPGRADES.map((u) => [u.id, u]));
@@ -170,8 +160,6 @@ export class Menu {
         margin-top: 8px; font-size: 12px; letter-spacing: 0.04em;
         color: rgba(240,237,232,0.55);
       }
-      .${PREFIX}dllink { color: #8fd6a4; text-decoration: none; border-bottom: 1px dotted rgba(143,214,164,0.5); }
-      .${PREFIX}dllink:hover { color: #b6ecc4; }
       .${PREFIX}list { display: flex; flex-direction: column; gap: 10px; text-align: left; }
       .${PREFIX}section-label {
         font-size: 12px; font-weight: 800; letter-spacing: 0.18em;
@@ -408,25 +396,16 @@ export class Menu {
     this.body.appendChild(row);
 
     // Desktop (Tauri) build download — shown only in the BROWSER (it's pointless
-    // inside the native app). Auto-targets the visitor's OS; other platforms below.
+    // inside the native app). Opens the GitHub Releases page in a new tab.
     if (!this._inTauri()) {
-      const os = this._detectOS();
       const dlRow = this._el("div", `${PREFIX}btnrow`);
-      const dl = this._makeButton(`⬇ Download Desktop Version — ${DESKTOP_BUILD.labels[os]}`, () => this._downloadDesktop());
+      const dl = this._makeButton("⬇ Download Desktop Version", () => this._openReleases());
       dl.classList.add(`${PREFIX}dl`);
       dlRow.appendChild(dl);
       this.body.appendChild(dlRow);
 
       const sub = this._el("div", `${PREFIX}dlsub`);
-      sub.appendChild(this._el("span", null, "Other platforms: "));
-      const others = Object.keys(DESKTOP_BUILD.assets).filter((k) => k !== os);
-      others.forEach((k, i) => {
-        const a = this._el("a", `${PREFIX}dllink`, DESKTOP_BUILD.labels[k]);
-        a.href = `${DESKTOP_BUILD.baseUrl}${DESKTOP_BUILD.assets[k]}`;
-        a.setAttribute("download", DESKTOP_BUILD.assets[k]);
-        sub.appendChild(a);
-        if (i < others.length - 1) sub.appendChild(this._el("span", null, " · "));
-      });
+      sub.appendChild(this._el("span", null, "Native builds for Windows, macOS & Linux on GitHub Releases."));
       this.body.appendChild(sub);
     }
   }
@@ -436,29 +415,9 @@ export class Menu {
     return typeof window !== "undefined" && ("__TAURI_INTERNALS__" in window || "__TAURI__" in window);
   }
 
-  /** Best-guess the visitor's OS for the default download target. */
-  _detectOS() {
-    const ua = `${navigator.userAgent || ""} ${navigator.platform || ""}`;
-    if (/Win/i.test(ua)) return "windows";
-    if (/Mac|iPhone|iPad|iPod/i.test(ua)) return "macos";
-    return "linux";
-  }
-
-  /**
-   * Trigger a download of the native build for the given (or detected) OS. The
-   * GitHub Release asset is served with an attachment disposition, so it downloads
-   * directly; opened in a new tab so it never navigates the game away.
-   */
-  _downloadDesktop(os = this._detectOS()) {
-    const file = DESKTOP_BUILD.assets[os] || DESKTOP_BUILD.assets.linux;
-    const a = this._el("a");
-    a.href = `${DESKTOP_BUILD.baseUrl}${file}`;
-    a.setAttribute("download", file);
-    a.target = "_blank";
-    a.rel = "noopener noreferrer";
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
+  /** Open the GitHub Releases page (new tab) so the player picks their installer. */
+  _openReleases() {
+    window.open(DESKTOP_RELEASES_URL, "_blank", "noopener,noreferrer");
   }
 
   /** Arsenal (weapons) + upgrades + boots sub-panel. Degrades gracefully without a provider. */
