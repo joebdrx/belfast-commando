@@ -1,10 +1,46 @@
+const BASE = import.meta.env.BASE_URL || "/";
+
+/**
+ * Sampled SFX (public/sfx/). Guns + explosion replace the synth versions; the
+ * voice clips are Belfast/satire barks for the player + enemies. Each logical
+ * key maps to one served MP3; decoded into AudioBuffers on init().
+ */
+const SAMPLES = {
+  // weapons / explosion
+  gun_pistol: "sfx/guns/pistol.mp3",
+  gun_smg: "sfx/guns/smg.mp3",
+  gun_shotgun: "sfx/guns/shotgun.mp3",
+  reload: "sfx/guns/reload.mp3",
+  explosion: "sfx/guns/explosion.mp3",
+  // player voice barks
+  p_getdafout: "sfx/player/getdafout.mp3",
+  p_lookatallthese: "sfx/player/lookatallthese.mp3",
+  p_gaesinireland: "sfx/player/gaesinireland.mp3",
+  // enemy taunts (aggro / attacking)
+  e_coconut: "sfx/enemy/coconut.mp3",
+  e_nobossinafrica: "sfx/enemy/nobossinafrica.mp3",
+  e_rpndiskewl: "sfx/enemy/rpndiskewl.mp3",
+  e_ihearurarases: "sfx/enemy/ihearurarases.mp3",
+  e_uaregae: "sfx/enemy/uaregae.mp3",
+  // enemy pain (taking damage / dying)
+  e_bloodyfu: "sfx/enemy/bloodyfu.mp3",
+  e_sopainful: "sfx/enemy/sopainful.mp3",
+  e_notbrping: "sfx/enemy/notbrping.mp3",
+};
+// Bark pools. Player kill bark favours "get da f out"; enemies split into
+// taunts (when they spot/attack) and pain cries (when hit/killed).
+const KILL_BARKS = ["p_getdafout", "p_getdafout", "p_gaesinireland"];
+const ENEMY_TAUNTS = ["e_coconut", "e_nobossinafrica", "e_rpndiskewl", "e_ihearurarases", "e_uaregae"];
+const ENEMY_PAIN = ["e_bloodyfu", "e_sopainful", "e_notbrping"];
+
 /**
  * Audio
  * -----
- * Zero-asset sound: everything is synthesized with the Web Audio API, so the
- * MVP ships no binary files. Gunshots, kick thuds, hits and UI blips are
- * procedural. Optional "voice lines" use the browser SpeechSynthesis API for
- * placeholder Belfast banter (best-effort; silently skipped if unavailable).
+ * Synthesized Web Audio for impacts/UI blips, PLUS sampled MP3s (public/sfx/)
+ * for gunfire, explosions and the player/enemy voice barks. Samples decode on
+ * init(); until ready (or if a file 404s) the procedural fallbacks play, so
+ * audio never blocks gameplay. Voice barks are throttled + randomised so they
+ * punctuate the action instead of spamming it.
  */
 export class Audio {
   constructor() {
@@ -13,6 +49,13 @@ export class Audio {
     this.enabled = true;
     this.voiceEnabled = true;
     this._lastVoice = 0;
+    /** @type {Object<string, AudioBuffer>} decoded sample buffers by key. */
+    this.buffers = {};
+    this._samplesLoaded = false;
+    // Separate cooldowns so a player bark and an enemy bark can still overlap,
+    // but multiple enemies (or rapid kills) don't stack into noise.
+    this._playerVoiceAt = 0;
+    this._enemyVoiceAt = 0;
   }
 
   /** Must be called from a user gesture (Start click) to satisfy autoplay. */
@@ -30,6 +73,90 @@ export class Audio {
     this.master = this.ctx.createGain();
     this.master.gain.value = 0.5;
     this.master.connect(this.ctx.destination);
+    this._loadSamples();
+  }
+
+  /** Fetch + decode every MP3 in SAMPLES into this.buffers (best-effort). */
+  async _loadSamples() {
+    if (this._samplesLoaded || !this.ctx) return;
+    this._samplesLoaded = true;
+    await Promise.all(
+      Object.entries(SAMPLES).map(async ([key, rel]) => {
+        try {
+          const res = await fetch(`${BASE}${rel}`);
+          if (!res.ok) return;
+          const arr = await res.arrayBuffer();
+          this.buffers[key] = await this.ctx.decodeAudioData(arr);
+        } catch (_) {
+          /* missing/undecodable → synth fallback */
+        }
+      }),
+    );
+  }
+
+  /**
+   * Play a decoded sample. Returns true if it played, false if the buffer isn't
+   * ready (so callers can fall back to a synth). `pos`+`listenerPos` give crude
+   * distance attenuation; otherwise `gain` is used flat.
+   */
+  _playBuffer(key, { gain = 0.8, pos = null, listenerPos = null, rate = 1 } = {}) {
+    if (!this._ok() || !this.buffers[key]) return false;
+    let vol = gain;
+    if (pos && listenerPos) {
+      const d = pos.distanceTo(listenerPos);
+      vol = Math.max(0.05, Math.min(gain, (gain * 10) / (d + 8)));
+    }
+    const src = this.ctx.createBufferSource();
+    src.buffer = this.buffers[key];
+    src.playbackRate.value = rate;
+    const g = this.ctx.createGain();
+    g.gain.value = vol;
+    src.connect(g);
+    g.connect(this.master);
+    src.start();
+    src.onended = () => { try { g.disconnect(); } catch (_) { /* gone */ } };
+    return true;
+  }
+
+  /**
+   * Play a randomised voice bark from `pool`, gated by a shared cooldown +
+   * probability so barks punctuate rather than spam. `player` picks which
+   * cooldown channel; positional args attenuate enemy barks.
+   */
+  _bark(pool, { player = false, chance = 1, cooldown = 3, gain = 0.9, pos = null, listenerPos = null } = {}) {
+    if (!this._ok()) return;
+    const now = this._now();
+    const last = player ? this._playerVoiceAt : this._enemyVoiceAt;
+    if (now - last < cooldown) return;
+    if (Math.random() > chance) return;
+    const key = pool[(Math.random() * pool.length) | 0];
+    if (!this._playBuffer(key, { gain, pos, listenerPos })) return; // not loaded yet
+    if (player) this._playerVoiceAt = now; else this._enemyVoiceAt = now;
+  }
+
+  /** Player bark after an elimination (random, throttled). */
+  killBark() {
+    this._bark(KILL_BARKS, { player: true, chance: 0.4, cooldown: 3.5, gain: 0.95 });
+  }
+
+  /** Player one-liner as an operation begins ("look at all these…"). */
+  levelStartBark() {
+    this._bark(Math.random() < 0.75 ? ["p_lookatallthese"] : ["p_gaesinireland"], {
+      player: true,
+      chance: 1,
+      cooldown: 0,
+      gain: 0.95,
+    });
+  }
+
+  /** Enemy taunt when it spots/charges/attacks the player (positional). */
+  enemyTaunt(pos, listenerPos) {
+    this._bark(ENEMY_TAUNTS, { chance: 0.5, cooldown: 2.2, gain: 0.85, pos, listenerPos });
+  }
+
+  /** Enemy pain cry when hit or killed (positional). */
+  enemyPain(pos, listenerPos) {
+    this._bark(ENEMY_PAIN, { chance: 0.55, cooldown: 1.6, gain: 0.85, pos, listenerPos });
   }
 
   setMuted(muted) {
@@ -74,6 +201,10 @@ export class Audio {
 
   gunshot(weapon = "Sidearm") {
     if (!this._ok()) return;
+    // Sampled gunfire per weapon (SMG / Boomstick-shotgun / Sidearm-pistol).
+    const key = weapon === "SMG" ? "gun_smg" : weapon === "Boomstick" ? "gun_shotgun" : "gun_pistol";
+    if (this._playBuffer(key, { gain: weapon === "Boomstick" ? 0.9 : 0.7 })) return;
+    // Fallback: synth report.
     const dur = weapon === "Boomstick" ? 0.28 : 0.12;
     const noise = this._noise(dur);
     const lp = this.ctx.createBiquadFilter();
@@ -132,9 +263,10 @@ export class Audio {
 
   kill() {
     if (!this._ok()) return;
+    // Confirmation sting only — the spoken kill bark is the sampled player voice
+    // (killBark), fired from the "kill" bus event in main.js.
     this._tone(330, 0.06, 0.25, "triangle");
     this._tone(160, 0.1, 0.4, "sine", 70);
-    this.voice(["Down ye go!", "Get in!", "That's yer lot!", "Wise up!"]);
   }
 
   enemyShot(enemyPos, listenerPos) {
@@ -203,9 +335,10 @@ export class Audio {
     this._tone(520, 0.02, 0.08, "square");
   }
 
-  /** Magazine reload — two mechanical clicks (mag out, mag in). */
+  /** Magazine reload — sampled, else two mechanical clicks (mag out, mag in). */
   reload() {
     if (!this._ok()) return;
+    if (this._playBuffer("reload", { gain: 0.7 })) return;
     this._click(0);
     this._click(0.18);
   }
@@ -233,9 +366,10 @@ export class Audio {
     setTimeout(() => { try { g.disconnect(); } catch (_) {} }, (delay + 0.1) * 1000 + 60);
   }
 
-  /** Barrel explosion — low boom + noise blast. */
+  /** Barrel/breacher explosion — sampled boom, else synth boom + noise blast. */
   explosion(pos, listenerPos) {
     if (!this._ok()) return;
+    if (this._playBuffer("explosion", { gain: 0.95, pos, listenerPos })) return;
     let vol = 0.9;
     if (pos && listenerPos) vol = Math.max(0.2, Math.min(0.95, 14 / (pos.distanceTo(listenerPos) + 6)));
     // Low boom sweep

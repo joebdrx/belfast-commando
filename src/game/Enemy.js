@@ -269,6 +269,11 @@ export class Enemy {
       this._bodyMat.emissiveIntensity = 0.9;
       this._hitFlash = 0.08;
     }
+    // Pain cry (sampled, throttled + random across all enemies).
+    const c = this._ctx;
+    if (c && c.audio && c.audio.enemyPain && c.camera) {
+      c.audio.enemyPain(this.group.position, c.camera.position);
+    }
     if (this.health <= 0) this._die(dir);
   }
 
@@ -320,6 +325,7 @@ export class Enemy {
    * @param {object} ctx { camera, player, level }
    */
   update(dt, ctx) {
+    this._ctx = ctx; // stash for takeDamage (which has no ctx of its own)
     EnemyBehavior.tickAnim(this, dt);
     // Apply + decay knockback (slides the corpse/enemy back).
     if (this.knock.lengthSq() > 0.0001) {
@@ -460,6 +466,8 @@ export class Enemy {
       }
     }
     ctx.audio.enemyMelee(this.group.position, ctx.camera.position);
+    // Taunt as they swing (sampled, throttled + random so it's not every enemy).
+    if (ctx.audio.enemyTaunt) ctx.audio.enemyTaunt(this.group.position, ctx.camera.position);
     if (telegraph) return; // wind-up swing only — never deals damage
     _flat.copy(ctx.player.position).sub(this.group.position).setY(0);
     if (_flat.length() <= this.meleeRange + 0.5) {

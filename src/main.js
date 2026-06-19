@@ -129,6 +129,8 @@ class Game {
     this.decals.attach();
     // Drive the HUD distortion from the adrenaline event.
     this.state.on("adrenaline", ({ active }) => this.hud.setAdrenaline(active));
+    // Player kill bark (sampled voice, throttled + random) on every elimination.
+    this.state.on("kill", () => this.audio.killBark());
     // Honor the persisted FX toggle (default on).
     const adrFx = this.state.getProgression().settings;
     if (adrFx && adrFx.adrenalineFx === false) this.hud.setAdrenalineFxEnabled(false);
@@ -333,7 +335,7 @@ class Game {
     this.paused = false;
     this.state.setPhase("LEVEL");
     this._requestLock();
-    this.audio.voice(["Right lads, let's go!", "Forward, Belfast!", "Boots on, move!"]);
+    this.audio.levelStartBark(); // sampled "look at all these…" one-liner
   }
 
   /** Extraction reached — the sector is won. */
