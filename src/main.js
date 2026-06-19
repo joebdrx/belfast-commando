@@ -22,6 +22,17 @@ import { Modifiers } from "./game/Modifiers.js";
 import { Achievements } from "./game/Achievements.js";
 import { Abilities } from "./game/Abilities.js";
 import { Decals } from "./game/Decals.js";
+import { LoadingScreen } from "./game/LoadingScreen.js";
+
+// GTA-style loading slides — promo art that slow-scans, ending on the cover.
+const LOADING_SLIDES = [
+  "loading/deheader.jpg",
+  "loading/skewl-stabber.jpg",
+  "loading/grrom-1.jpg",
+  "loading/stab-man-fat.jpg",
+  "loading/survivor.jpg",
+  "loading/cover.jpg",
+];
 
 const MAX_DT = 0.05;
 
@@ -58,6 +69,11 @@ const CONTROLS_HTML = `
  */
 class Game {
   constructor() {
+    // Pre-menu loading screen up FIRST so it covers the whole boot + asset stream.
+    this.loading = new LoadingScreen();
+    this.loading.show(LOADING_SLIDES, { minMs: 2800 });
+    this._loadingActive = false; // gates LEVEL input while a loading screen is up
+
     this.engine = new Engine(document.getElementById("app"));
     this.dom = this.engine.renderer.domElement;
 
@@ -214,6 +230,10 @@ class Game {
       .catch((e) => {
         console.warn("[assets]", e);
         this._assetsReady = true; // let the player in on the fallback grid
+      })
+      .finally(() => {
+        // Pan to the cover, hold, then fade the loading screen to reveal the menu.
+        this.loading.finish();
       });
 
     this._bindUI();
@@ -266,7 +286,16 @@ class Game {
       this._pendingSkipIndex != null && this._pendingSkipIndex >= 0 ? this._pendingSkipIndex : 0;
     this._pendingSkipIndex = null; // consume the skip
     this.state.startRun({ levelIndex: index });
+    // Loading screen (the cover) covers the sector build; input stays gated until
+    // it fades. Pointer lock is still requested now (inside this click gesture).
+    this._loadingActive = true;
+    this.loading.show(["loading/cover.jpg"], { minMs: 2800 });
     this._loadLevel(index);
+    this.loading.finish().then(() => {
+      this._loadingActive = false;
+      // Re-evaluate input gating now the overlay is gone (no pointerlock event fires).
+      this.ctx.active = this.phase === "LEVEL" && !this.paused && document.pointerLockElement === this.dom;
+    });
   }
 
   /** Build + deploy into a campaign sector (LEVEL phase). */
@@ -489,7 +518,7 @@ class Game {
           this.pauseMenu.hide();
         }
       }
-      this.ctx.active = this.phase === "LEVEL" && !this.paused && locked;
+      this.ctx.active = this.phase === "LEVEL" && !this.paused && locked && !this._loadingActive;
     });
 
     window.addEventListener("keydown", (e) => {
