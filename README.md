@@ -72,36 +72,6 @@ sudo apt install libwebkit2gtk-4.1-dev libsoup-3.0-dev build-essential \
   curl wget file libxdo-dev libssl-dev libgtk-3-dev librsvg2-dev
 ```
 
-## Steamworks integration
-
-Steam support is **feature-gated and OFF by default** so the app always compiles
-without the Steam SDK. The Rust commands (`unlock_achievement`,
-`update_leaderboard`, `steam_status`) exist in every build; with the feature off
-they return a graceful stub.
-
-Enable the real integration with the `steam` Cargo feature:
-
-```bash
-# from src-tauri/
-cargo build --features steam
-# or via tauri:
-npm run tauri build -- --features steam
-```
-
-When enabled, the app initialises the Steam client in the Tauri `setup` hook and
-**fails gracefully** (logs a warning, no panic) if the Steam client isn't running.
-Replace the placeholder `STEAM_APP_ID` (480 = Spacewar) and
-`STEAM_LEADERBOARD_NAME` in `src-tauri/src/lib.rs` with your registered AppID and
-leaderboard once you have them from the Steamworks partner portal.
-
-The frontend calls Steam through `src/utils/steam.js`:
-
-```js
-import { Steam } from "./utils/steam.js";
-await Steam.unlock("ACH_FIRST_KICK");
-await Steam.submitScore(score);
-```
-
 ## Status
 
 MVP scaffold: fluid FPS movement + kicking, hitscan gunplay with juice, kickable
