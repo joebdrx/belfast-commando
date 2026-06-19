@@ -112,10 +112,7 @@ export class Player {
     };
     this._onMouseMove = (e) => {
       if (document.pointerLockElement !== this.dom) return;
-      this.yaw -= e.movementX * this.sensitivity;
-      this.pitch -= e.movementY * this.sensitivity;
-      const lim = Math.PI / 2 - 0.02;
-      this.pitch = Math.max(-lim, Math.min(lim, this.pitch));
+      this.applyLook(e.movementX, e.movementY);
     };
     // Clear all held keys when focus/pointer-lock is lost, so movement keys
     // never get "stuck" (and never block look) after tabbing away.
@@ -134,6 +131,19 @@ export class Player {
 
   get locked() {
     return document.pointerLockElement === this.dom;
+  }
+
+  /**
+   * Rotate the view by a pointer/touch delta (in pixels). `sens` defaults to the
+   * mouse sensitivity; the on-screen touch look-pad passes its own. Pitch is
+   * clamped so the camera never flips. Shared by mouse-look and touch-look so the
+   * clamp lives in exactly one place.
+   */
+  applyLook(dx, dy, sens = this.sensitivity) {
+    this.yaw -= dx * sens;
+    this.pitch -= dy * sens;
+    const lim = Math.PI / 2 - 0.02;
+    this.pitch = Math.max(-lim, Math.min(lim, this.pitch));
   }
 
   /** Eye/aim position — used by weapon ray + enemy targeting. */
