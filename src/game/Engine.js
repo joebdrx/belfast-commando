@@ -25,21 +25,21 @@ export class Engine {
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 0.92; // grim, low-key Belfast light
+    this.renderer.toneMappingExposure = 0.82; // low-key night exposure
     mount.appendChild(this.renderer.domElement);
 
     // --- Scene ------------------------------------------------------------
     this.scene = new THREE.Scene();
 
-    // Overcast-Belfast grey veil: one flat grey for sky, fog and the far
-    // horizon so distance fades seamlessly — no hard skyline edge, no clear sky.
-    const skyTop = new THREE.Color(0x8a9094);
-    const skyBottom = new THREE.Color(0x8a9094);
-    this.scene.background = new THREE.Color(0x8a9094);
-    // Linear fog: clear out to ~12m, fully grey by 145m (just inside the 160
-    // camera far plane) so the whole world — including the skyline — dissolves
-    // into the same grey with no visible edge.
-    this.scene.fog = new THREE.Fog(0x8a9094, 12, 145);
+    // Wet Belfast NIGHT: near-black sky overhead fading to a faint cold blue glow
+    // at the horizon (sodium/city light pollution behind the cloud). Sky, fog and
+    // far horizon share the dark tone so distance dissolves with no hard edge.
+    const skyTop = new THREE.Color(0x05070d);
+    const skyBottom = new THREE.Color(0x121826);
+    this.scene.background = new THREE.Color(0x0a0e16);
+    // Linear fog: clear out to ~10m, fully dark by ~130m (inside the 160 far
+    // plane) so the night swallows the distance.
+    this.scene.fog = new THREE.Fog(0x0a0e16, 10, 130);
 
     // --- Camera (the player's eyes) --------------------------------------
     this.camera = new THREE.PerspectiveCamera(
@@ -97,16 +97,17 @@ export class Engine {
   }
 
   _buildLights() {
-    // Dim, cool overcast bounce — muted sky / muddy ground.
-    const hemi = new THREE.HemisphereLight(0x99a1a6, 0x3a342c, 0.8);
+    // Cold moonlit bounce — deep-blue sky light, near-black ground.
+    const hemi = new THREE.HemisphereLight(0x1c2840, 0x050608, 0.45);
     this.scene.add(hemi);
 
-    // Weak, diffuse "sun" hidden behind cloud — just enough for form shading.
-    const sun = new THREE.DirectionalLight(0xc2cbd0, 0.42);
-    sun.position.set(-40, 60, -20);
-    this.scene.add(sun);
+    // The moon: a cool, low directional key from high up for form shading.
+    const moon = new THREE.DirectionalLight(0x9fb4d8, 0.55);
+    moon.position.set(-30, 70, 25);
+    this.scene.add(moon);
 
-    this.scene.add(new THREE.AmbientLight(0x363c40, 0.35));
+    // A very faint warm fill from street lamps, so shadows aren't pure black.
+    this.scene.add(new THREE.AmbientLight(0x0c1018, 0.22));
   }
 
   /** Cheap world-space rain: short vertical streaks recycled around the camera. */
@@ -130,7 +131,7 @@ export class Engine {
     geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
     this.rain = new THREE.LineSegments(
       geo,
-      new THREE.LineBasicMaterial({ color: 0x9fb0b8, transparent: true, opacity: 0.32, fog: true }),
+      new THREE.LineBasicMaterial({ color: 0x6a7686, transparent: true, opacity: 0.28, fog: true }),
     );
     this.rain.frustumCulled = false;
     this.scene.add(this.rain);

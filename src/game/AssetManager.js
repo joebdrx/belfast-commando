@@ -207,7 +207,7 @@ export class AssetManager {
     // Environment map, 3D models, 2D sprites, and the rigged enemy run alongside.
     const envJob = scene ? this._loadEnvironment(scene) : Promise.resolve();
     const skyJob = scene ? this._loadSky(scene) : Promise.resolve();
-    await Promise.all([...jobs, envJob, skyJob, this.loadModels(), this.loadSprites(), this.loadMurals(), this._loadRiggedEnemy(), this._loadArchetypeRigs(), this._loadAttackClip(), this._loadMenuActor(), this.captureFacades(), this.loadFace(), this.loadHouseSide()]);
+    await Promise.all([...jobs, envJob, skyJob, this.loadModels(), this.loadSprites(), this.loadMurals(), this._loadRiggedEnemy(), this._loadArchetypeRigs(), this._loadAttackClip(), this._loadMenuActor(), this._loadMenuActor2(), this.captureFacades(), this.loadFace(), this.loadHouseSide()]);
   }
 
   /** Load the photo face that gets billboarded onto each enemy's head. */
@@ -604,6 +604,50 @@ export class AssetManager {
     return !!this._menuActor;
   }
 
+  /** A SECOND animated menu character (player-2 rig) — same pipeline as the menu
+   *  actor (menu_actor2.glb walk + anim_menu2_idle.glb idle). */
+  async _loadMenuActor2() {
+    try {
+      const base = await this.gltfLoader.loadAsync(`${BASE}models/menu_actor2.glb`);
+      const clips = {};
+      if (base.animations[0]) clips.walk = base.animations[0];
+      const idle = await this.gltfLoader.loadAsync(`${BASE}models/anim_menu2_idle.glb`).catch(() => null);
+      if (idle && idle.animations[0]) clips.idle = idle.animations[0];
+      base.scene.traverse((o) => {
+        if (o.isMesh) o.frustumCulled = false;
+        const mats = o.material ? (Array.isArray(o.material) ? o.material : [o.material]) : [];
+        for (const m of mats) { if (m && m.metalness !== undefined) { m.metalness = 0; m.needsUpdate = true; } }
+      });
+      let height = 1.7;
+      if (clips.walk) {
+        const tmp = new THREE.AnimationMixer(base.scene);
+        tmp.clipAction(clips.walk).play();
+        tmp.update(0.2);
+        base.scene.updateMatrixWorld(true);
+        height = new THREE.Box3().setFromObject(base.scene).getSize(new THREE.Vector3()).y || 1.7;
+        tmp.stopAllAction();
+      }
+      this._menuActor2 = { scene: base.scene, clips, height };
+    } catch {
+      this._menuActor2 = null;
+    }
+  }
+
+  hasMenuActor2() {
+    return !!this._menuActor2;
+  }
+
+  /** A fresh clone of the player-2 menu character (mirrors getMenuActor). */
+  getMenuActor2() {
+    if (!this._menuActor2) return null;
+    const inner = cloneSkeleton(this._menuActor2.scene);
+    inner.rotation.y = 0; // rig front is +Z; callers rotate the wrap to aim it
+    const wrap = new THREE.Group();
+    wrap.add(inner);
+    wrap.scale.setScalar(1.8 / (this._menuActor2.height || 1.7));
+    return { object3D: wrap, clips: this._menuActor2.clips };
+  }
+
   /**
    * A fresh animated menu actor for the safehouse: a SkeletonUtils clone wrapped
    * in a group and scaled to a natural ~1.8m height, plus its shared clips. The
@@ -798,9 +842,9 @@ export class AssetManager {
           const pmrem = new THREE.PMREMGenerator(this.renderer);
           const envMap = pmrem.fromEquirectangular(hdr).texture;
           scene.environment = envMap;
-          // Keep IBL subtle so it complements (not replaces) the scene lights
-          // and the stylised gradient sky stays as the background.
-          if ("environmentIntensity" in scene) scene.environmentIntensity = 0.35;
+          // NIGHT: keep IBL very dim so the overcast HDRI doesn't daylight the
+          // scene — just a faint cold sheen on wet/metal surfaces.
+          if ("environmentIntensity" in scene) scene.environmentIntensity = 0.12;
           hdr.dispose();
           pmrem.dispose();
           resolve();
@@ -819,8 +863,9 @@ export class AssetManager {
         (hdr) => {
           hdr.mapping = THREE.EquirectangularReflectionMapping;
           scene.background = hdr;
-          if ("backgroundIntensity" in scene) scene.backgroundIntensity = 0.85;
-          if ("backgroundBlurriness" in scene) scene.backgroundBlurriness = 0.04;
+          // NIGHT: crush the overcast cloud HDRI to a near-black night sky.
+          if ("backgroundIntensity" in scene) scene.backgroundIntensity = 0.06;
+          if ("backgroundBlurriness" in scene) scene.backgroundBlurriness = 0.06;
           // Hide the placeholder gradient dome now that real clouds are up.
           const dome = scene.getObjectByName("skyDome");
           if (dome) dome.visible = false;

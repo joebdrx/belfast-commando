@@ -166,8 +166,13 @@ export class Level {
     // Urban Jungle detail textures (one material per image; used as windows on
     // facades, varied door leaves, and wall/ground decals).
     const tex = (n, o) => this._texMat(`textures/urban/${n}.jpg`, o);
-    this._windowMats = ["win_1", "win_2", "win_3", "win_4", "win_5"]
-      .map((n) => tex(n, { repeat: [1, 1], roughness: 0.35, metalness: 0.1, color: 0x99a0a4 }));
+    // A mix of LIT (warm glow at night) and dark windows so the terraces read as
+    // inhabited after dark.
+    this._windowMats = ["win_1", "win_2", "win_3", "win_4", "win_5"].map((n, i) =>
+      tex(n, {
+        repeat: [1, 1], roughness: 0.35, metalness: 0.1, color: 0x99a0a4,
+        emissive: i % 2 === 0 ? { color: 0xffca6e, intensity: 0.85 } : null,
+      }));
     this._doorMats = ["door_1", "door_2", "door_3", "door_4", "door_5"]
       .map((n) => tex(n, { repeat: [1, 1], roughness: 0.8, color: 0x9a8f80 }));
     this._signMats = ["sign_1", "sign_2", "sign_3", "sign_4", "sign_5"]
@@ -218,8 +223,12 @@ export class Level {
    * flat-colour fallback (so the level builds instantly, texture pops in). Used
    * for the curated "Urban Jungle" textures that aren't in the AssetManager DEFS.
    */
-  _texMat(path, { repeat = [1, 1], roughness = 0.95, metalness = 0.0, color = 0x9a8a7a } = {}) {
+  _texMat(path, { repeat = [1, 1], roughness = 0.95, metalness = 0.0, color = 0x9a8a7a, emissive = null } = {}) {
     const mat = new THREE.MeshStandardMaterial({ color, roughness, metalness });
+    if (emissive) {
+      mat.emissive = new THREE.Color(emissive.color ?? 0xffffff);
+      mat.emissiveIntensity = emissive.intensity ?? 0.3;
+    }
     new THREE.TextureLoader().load(`${BASE}${path}`, (tex) => {
       tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
       tex.repeat.set(repeat[0], repeat[1]);
@@ -230,6 +239,7 @@ export class Level {
       }
       mat.map = tex;
       mat.color.set(0xffffff); // let the texture show its true colours
+      if (emissive) mat.emissiveMap = tex; // window self-glows with its own image at night
       mat.needsUpdate = true;
     });
     return mat;
