@@ -70,6 +70,10 @@ export function buildFacade(THREE, materials, face, opts = {}) {
   const OUT = 0.06; // outward offset so flat detail never z-fights the wall
   const glass = materials.glass || new THREE.MeshStandardMaterial({ color: 0x10141a, roughness: 0.25, metalness: 0.1 });
   const glassLit = materials.glassLit || glass;
+  // Real window photo textures (Urban Jungle). When provided, each window uses
+  // one of these instead of a plain glass quad; varied per cell + per building.
+  const windowMats = Array.isArray(materials.windows) && materials.windows.length ? materials.windows : null;
+  const winSalt = (opts.salt | 0);
   const doorMat = materials.door || new THREE.MeshStandardMaterial({ color: 0x4a3422, roughness: 0.85 });
   const roofMat = materials.roof || new THREE.MeshStandardMaterial({ color: 0x33373b, roughness: 0.9 });
 
@@ -85,8 +89,10 @@ export function buildFacade(THREE, materials, face, opts = {}) {
     return g;
   };
   win.positions.forEach((p, i) => {
-    const lit = i % 4 === 0;
-    const m = new THREE.Mesh(winGeo(p.w, p.h), lit ? glassLit : glass);
+    let mat;
+    if (windowMats) mat = windowMats[(i + winSalt) % windowMats.length];
+    else mat = i % 4 === 0 ? glassLit : glass;
+    const m = new THREE.Mesh(winGeo(p.w, p.h), mat);
     m.position.set(p.u, p.v, OUT);
     group.add(m);
   });

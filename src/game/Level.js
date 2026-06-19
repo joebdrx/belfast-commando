@@ -163,6 +163,25 @@ export class Level {
     this._urbanBricks = ["brick_red", "brick_mixed", "brick_weathered", "brick_clean", "brick_grey"]
       .map((n) => this._texMat(`textures/urban/${n}.jpg`, { repeat: [2, 1.8], roughness: 0.95, color: 0x8a5a44 }));
 
+    // Urban Jungle detail textures (one material per image; used as windows on
+    // facades, varied door leaves, and wall/ground decals).
+    const tex = (n, o) => this._texMat(`textures/urban/${n}.jpg`, o);
+    this._windowMats = ["win_1", "win_2", "win_3", "win_4", "win_5"]
+      .map((n) => tex(n, { repeat: [1, 1], roughness: 0.35, metalness: 0.1, color: 0x99a0a4 }));
+    this._doorMats = ["door_1", "door_2", "door_3", "door_4", "door_5"]
+      .map((n) => tex(n, { repeat: [1, 1], roughness: 0.8, color: 0x9a8f80 }));
+    this._signMats = ["sign_1", "sign_2", "sign_3", "sign_4", "sign_5"]
+      .map((n) => tex(n, { repeat: [1, 1], roughness: 0.6, color: 0xc8c4bc }));
+    this._graffitiMats = ["graf_1", "graf_2", "graf_3", "graf_4", "graf_5"]
+      .map((n) => tex(n, { repeat: [1, 1], roughness: 0.9, color: 0xa9a4a0 }));
+    this._gratingMats = ["grate_1", "grate_2", "grate_3", "grate_4"]
+      .map((n) => tex(n, { repeat: [1, 1], roughness: 0.85, metalness: 0.3, color: 0x6a6a6a }));
+    this._groundMats = {
+      gravel: tex("ground_gravel", { repeat: [5, 5], roughness: 0.97, color: 0x7a7068 }),
+      crack: tex("ground_crack", { repeat: [4, 4], roughness: 0.95, color: 0x55585b }),
+      grass: tex("grass", { repeat: [3, 3], roughness: 1.0, color: 0x4a5a32 }),
+    };
+
     // Grid geometry shared across builders. Buildings are tall, long terraces:
     // narrow frontage (X) and a long run (Z), so they line the north–south
     // streets the player walks down.
@@ -210,6 +229,67 @@ export class Level {
       mat.needsUpdate = true;
     });
     return mat;
+  }
+
+  /**
+   * Place a flat textured decal slightly proud of a surface (sign/graffiti on a
+   * wall, or grating/grass on the ground). `ground:true` lays it flat; otherwise
+   * it's a vertical panel oriented by `rotY` (same convention as _brickWall).
+   * polygonOffset keeps it from z-fighting the surface it sits on.
+   */
+  _decal(mat, x, y, z, rotY, w, h, { ground = false } = {}) {
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), mat);
+    m.position.set(x, y, z);
+    if (ground) m.rotation.x = -Math.PI / 2;
+    else m.rotation.y = rotY;
+    m.renderOrder = 1;
+    this.group.add(m);
+    return m;
+  }
+
+  /** Deterministic pick from an array, seeded by a position + salt (no per-frame RNG). */
+  _pick(arr, x, z, salt = 0) {
+    if (!arr || !arr.length) return null;
+    const k = Math.abs(Math.round(x * 7.3 + z * 3.1) + (this.index | 0) + salt);
+    return arr[k % arr.length];
+  }
+
+  /**
+   * Sparingly stamp a graffiti panel and/or a sign onto a wall face (street-side).
+   * `(centerX, centerZ, rotY)` is the wall's ground-line centre + outward facing
+   * (same convention as _brickWall); `w`/`h` are the face size. Deterministic, so
+   * the same sector always decorates the same walls.
+   */
+  _decorateWall(centerX, centerZ, rotY, w, h, salt = 0) {
+    if (w < 3) return;
+    const g = new THREE.Group();
+    g.position.set(centerX, 0, centerZ);
+    g.rotation.y = rotY;
+    const OUT = 0.08;
+    const seed = Math.abs(Math.round(centerX + centerZ * 1.7) + (this.index | 0) + salt);
+    // Graffiti — roughly half of eligible walls get one, low on the wall.
+    if (this._graffitiMats.length && seed % 2 === 0) {
+      const gm = this._graffitiMats[seed % this._graffitiMats.length];
+      const gw = Math.min(3.4, w * 0.45), gh = Math.min(2.0, h * 0.6);
+      const span = Math.max(0.1, w - gw - 0.6);
+      const u = ((seed * 7) % Math.floor(span * 10)) / 10 - span / 2;
+      const m = new THREE.Mesh(new THREE.PlaneGeometry(gw, gh), gm);
+      m.position.set(u, gh / 2 + 0.25, OUT);
+      m.renderOrder = 1;
+      g.add(m);
+    }
+    // Sign — about a third of walls, at head height.
+    if (this._signMats.length && seed % 3 === 1) {
+      const sm = this._signMats[(seed + 2) % this._signMats.length];
+      const sw = 0.85, sh = 1.0;
+      const span = Math.max(0.1, w - sw - 0.6);
+      const u = ((seed * 13) % Math.floor(span * 10)) / 10 - span / 2;
+      const m = new THREE.Mesh(new THREE.PlaneGeometry(sw, sh), sm);
+      m.position.set(u, Math.min(2.0, h - 0.6), OUT);
+      m.renderOrder = 1;
+      g.add(m);
+    }
+    if (g.children.length) this.group.add(g);
   }
 
   _box(w, h, d, mat, x, y, z, { collider = true, los = false } = {}) {
@@ -448,7 +528,8 @@ export class Level {
       const hinge = doorSide === 1
         ? new THREE.Vector3(doorWallX, 0, dz - doorW / 2)
         : new THREE.Vector3(doorWallX, 0, dz + doorW / 2);
-      const door = new Door(hinge, doorW, -doorSide, facing, this._materials.door, null);
+      const doorMat = this._pick(this._doorMats, dz, cz, i) || this._materials.door;
+      const door = new Door(hinge, doorW, -doorSide, facing, doorMat, null);
       this.group.add(door.pivot);
       this.doors.push(door);
       this.colliders.push(door._closedBox);
@@ -474,18 +555,27 @@ export class Level {
     const doorRotY = doorSide === 1 ? Math.PI / 2 : -Math.PI / 2;
     // Solid back long wall — one panel.
     this._brickWall(backWallX - doorSide * 0.31, wallH / 2, cz, backRotY, this.BLOCK_L, wallH, clad);
-    // Door long wall — a panel per solid segment (doorways stay open).
+    // Door long wall — a panel per solid segment, plus a brick LINTEL above each
+    // doorway (the door is only DOOR_OPEN tall; clad the strip above so there's no
+    // bare gap over the door).
     let s = cz - halfL;
     for (let i = 0; i <= N; i++) {
       const e = i < N ? roomZ(i) - doorW / 2 : cz + halfL;
       if (e - s > 0.4) {
         this._brickWall(doorWallX + doorSide * 0.31, wallH / 2, (s + e) / 2, doorRotY, e - s, wallH, clad);
       }
-      if (i < N) s = roomZ(i) + doorW / 2;
+      if (i < N) {
+        const above = wallH - DOOR_OPEN;
+        if (above > 0.05) {
+          this._brickWall(doorWallX + doorSide * 0.31, DOOR_OPEN + above / 2, roomZ(i), doorRotY, doorW, above, clad);
+        }
+        s = roomZ(i) + doorW / 2;
+      }
     }
     // End (short) walls — same cladding material, so the whole shell matches.
     this._brickWall(cx, wallH / 2, cz - halfL - 0.32, Math.PI, this.BLOCK_W, wallH, clad); // north end faces -Z
     this._brickWall(cx, wallH / 2, cz + halfL + 0.32, 0, this.BLOCK_W, wallH, clad); // south end faces +Z
+    this._cornerPosts(cx, cz, wallH, clad); // close the corner seams
 
     // Facade detailing (windows/door) so the brick shell reads as a real terrace.
     // These buildings have a pitched roof, so no parapet cap. The door wall keeps
@@ -494,6 +584,10 @@ export class Level {
     this._addWindowFacade(backWallX - doorSide * 0.32, cz, backRotY, this.BLOCK_L, wallH, { noRoofCap: true });
     this._addWindowFacade(cx, cz - halfL - 0.33, Math.PI, this.BLOCK_W, wallH, { noRoofCap: true });
     this._addWindowFacade(cx, cz + halfL + 0.33, 0, this.BLOCK_W, wallH, { noRoofCap: true });
+
+    // Graffiti / signs on the gable end walls.
+    this._decorateWall(cx, cz - halfL - 0.34, Math.PI, this.BLOCK_W, wallH, 5);
+    this._decorateWall(cx, cz + halfL + 0.34, 0, this.BLOCK_W, wallH, 9);
 
     // Garrison `enemyCount` distinct random rooms (released when their door breaks).
     const order = [];
@@ -571,6 +665,7 @@ export class Level {
     this._brickWall(backX - frontSign * 0.05, h / 2, cz, -frontSign * Math.PI / 2, this.BLOCK_L, h, wallMat);
     this._brickWall(cx, h / 2, cz - halfL - 0.05, Math.PI, this.BLOCK_W, h, wallMat);
     this._brickWall(cx, h / 2, cz + halfL + 0.05, 0, this.BLOCK_W, h, wallMat);
+    this._cornerPosts(cx, cz, h, wallMat); // close the corner seams
 
     // Solid roof slab caps the top (no open/black top edge).
     const roof = new THREE.Mesh(
@@ -583,6 +678,13 @@ export class Level {
     // Street-facing facade: window grid + ground door (parapet cap skipped — the
     // roof slab already caps it). Sits just in front of the brick face.
     this._addWindowFacade(frontX + frontSign * 0.12, cz, frontSign * Math.PI / 2, this.BLOCK_L, h, { noRoofCap: true });
+
+    // Graffiti + signs along the front (split into thirds so the long terrace gets
+    // a few scattered marks rather than one).
+    const dRotY = frontSign * Math.PI / 2;
+    for (const off of [-this.BLOCK_L / 3, 0, this.BLOCK_L / 3]) {
+      this._decorateWall(frontX + frontSign * 0.14, cz + off, dRotY, this.BLOCK_L / 3, h, Math.round(off));
+    }
 
     // One clean footprint collider + LOS blocker for the whole block.
     const box = footprintCollider(cx, cz, this.BLOCK_W, h, this.BLOCK_L);
@@ -668,6 +770,22 @@ export class Level {
   }
 
   /**
+   * Solid brick posts at a block's four corners. The single-plane wall faces meet
+   * at the corners with a thin seam/gap; a small box at each corner closes it so
+   * the building reads as a continuous solid mass from every angle.
+   */
+  _cornerPosts(cx, cz, h, mat) {
+    const hw = this.BLOCK_W / 2, hl = this.BLOCK_L / 2, t = 0.55;
+    for (const sx of [-1, 1]) {
+      for (const sz of [-1, 1]) {
+        const post = new THREE.Mesh(new THREE.BoxGeometry(t, h, t), mat || this._materials.brick);
+        post.position.set(cx + sx * hw, h / 2, cz + sz * hl);
+        this.group.add(post);
+      }
+    }
+  }
+
+  /**
    * Stamp a proportionate facade (window grid + optional door + roof cap) onto a
    * wall face so buildings read as real. `(x, z)` is the wall's ground-line
    * centre, `rotY` orients it outward (same convention as _brickWall), `w`/`h`
@@ -678,9 +796,10 @@ export class Level {
     const group = buildFacade(THREE, {
       glass: this._materials.glass,
       glassLit: this._materials.glassLit,
+      windows: this._windowMats, // real window photos instead of plain glass quads
       door: this._materials.door,
       roof: this._materials.roof,
-    }, { width: w, height: h, orientationY: rotY, center: { x, y: 0, z } }, opts);
+    }, { width: w, height: h, orientationY: rotY, center: { x, y: 0, z } }, { salt: Math.round((x + z) / 7), ...opts });
     this.group.add(group);
     return group;
   }
@@ -712,15 +831,16 @@ export class Level {
 
   /** Brick chimney stacks with pots, spaced along the long ridge. */
   _buildChimney(cx, cz) {
-    const ridgeY = this.WALL_H + 2.6;
+    const ridgeY = this.WALL_H + 1.6; // the lowered pitched-roof ridge height
     const halfL = this.BLOCK_L / 2;
+    const STACK_H = 0.9; // short stacks that sit ON the ridge, not towering above
     for (const oz of [-halfL * 0.6, -halfL * 0.1, halfL * 0.45]) {
-      const stack = new THREE.Mesh(new THREE.BoxGeometry(0.8, 1.5, 0.8), this._materials.brick);
-      stack.position.set(cx, ridgeY + 0.55, cz + oz);
+      const stack = new THREE.Mesh(new THREE.BoxGeometry(0.7, STACK_H, 0.7), this._materials.brick);
+      stack.position.set(cx, ridgeY + STACK_H / 2 - 0.1, cz + oz);
       this.group.add(stack);
-      for (const ox of [-0.2, 0.2]) {
-        const pot = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.12, 0.35, 8), this._materials.kerb);
-        pot.position.set(cx + ox, ridgeY + 1.45, cz + oz);
+      for (const ox of [-0.18, 0.18]) {
+        const pot = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.11, 0.28, 8), this._materials.kerb);
+        pot.position.set(cx + ox, ridgeY + STACK_H + 0.04, cz + oz);
         this.group.add(pot);
       }
     }
