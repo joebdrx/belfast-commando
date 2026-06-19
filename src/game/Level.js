@@ -361,6 +361,58 @@ export class Level {
     }
   }
 
+  /**
+   * Street lamps down the inner lanes: a dark pole with an arm reaching over the
+   * street, a glowing warm bulb, and a warm PointLight that pools light on the wet
+   * road at night. `armDir` (+1/-1) is the world-X direction the arm reaches.
+   * Kept to a handful of lights (no shadows) for performance.
+   */
+  _streetLamp(x, z, armDir = 1) {
+    const POLE_H = 4.8;
+    const poleMat = this._lampPoleMat || (this._lampPoleMat =
+      new THREE.MeshStandardMaterial({ color: 0x15171b, roughness: 0.6, metalness: 0.6 }));
+    const bulbMat = this._lampBulbMat || (this._lampBulbMat =
+      new THREE.MeshStandardMaterial({ color: 0xffe2b0, emissive: 0xffb158, emissiveIntensity: 2.4, roughness: 0.4 }));
+    const g = new THREE.Group();
+    g.position.set(x, 0, z);
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.12, POLE_H, 8), poleMat);
+    pole.position.y = POLE_H / 2;
+    g.add(pole);
+    const ax = armDir * 0.75;
+    const arm = new THREE.Mesh(new THREE.BoxGeometry(Math.abs(ax) + 0.1, 0.09, 0.09), poleMat);
+    arm.position.set(ax / 2, POLE_H - 0.2, 0);
+    g.add(arm);
+    const head = new THREE.Mesh(new THREE.ConeGeometry(0.26, 0.32, 8), poleMat);
+    head.position.set(ax, POLE_H - 0.36, 0);
+    g.add(head);
+    const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.12, 8, 6), bulbMat);
+    bulb.position.set(ax, POLE_H - 0.52, 0);
+    g.add(bulb);
+    const light = new THREE.PointLight(0xffb259, 16, 24, 2); // warm, decays over ~24m
+    light.position.set(ax, POLE_H - 0.55, 0);
+    g.add(light);
+    this.group.add(g);
+    // Thin collider so the player can't walk through the post.
+    this.colliders.push(new THREE.Box3(
+      new THREE.Vector3(x - 0.22, 0, z - 0.22), new THREE.Vector3(x + 0.22, POLE_H, z + 0.22),
+    ));
+  }
+
+  /** Place street lamps zig-zagging down the two inner N-S lanes + by the spawn. */
+  _buildStreetLamps() {
+    const lx = this.PITCH_X / 2; // ~12, lane centre between the column blocks
+    const zs = [-42, -14, 14, 42];
+    for (const lane of [-lx, lx]) {
+      zs.forEach((z, i) => {
+        const edge = i % 2 === 0 ? -3.5 : 3.5; // alternate sides of the lane
+        this._streetLamp(lane + edge, z, edge < 0 ? 1 : -1); // arm reaches over the street
+      });
+    }
+    // Two lamps lighting the spawn approach so the player doesn't start in the dark.
+    this._streetLamp(this.spawn.x - 5, this.spawn.z - 5, 1);
+    this._streetLamp(this.spawn.x + 5, this.spawn.z - 5, -1);
+  }
+
   _box(w, h, d, mat, x, y, z, { collider = true, los = false } = {}) {
     const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
     mesh.position.set(x, y, z);
@@ -423,6 +475,9 @@ export class Level {
     // --- Ground detailing: grass patches, grates, and cracked/gravel variety
     // scattered across the open streets (after buildings so footprints are known).
     this._scatterGroundDetails();
+
+    // --- Warm street lamps pooling light down the lanes (night). ---
+    this._buildStreetLamps();
 
     // --- Street cover: crates + explosive barrels in the open lanes. ------
     const coverCount = 6 + this.index * 2;
