@@ -486,16 +486,27 @@ export class AssetManager {
 
   async _loadArchetypeRigs() {
     this._rigs = {};
-    const ARCHES = ["grunt", "gunner", "breacher", "enforcer"];
-    await Promise.all(ARCHES.map(async (arch) => {
-      try { this._rigs[arch] = await this._loadRig(`enemy_${arch}`, `anim_${arch}_run`); }
-      catch { /* missing → getRiggedEnemy falls back to the generic rig */ }
+    // Loaded character models. enemy_gunner=invader2, enemy_breacher=invader1
+    // (the two young "invader" street guys), enemy_enforcer=groomer (bald older
+    // man), enemy_fatstabber (turbaned heavy). The cleaver "stabber" (enemy_grunt)
+    // is intentionally NOT loaded — it's retired.
+    const RIGS = ["gunner", "breacher", "enforcer", "fatstabber"];
+    await Promise.all(RIGS.map(async (slug) => {
+      try { this._rigs[slug] = await this._loadRig(`enemy_${slug}`, `anim_${slug}_run`); }
+      catch { /* missing → dropped from the pool below */ }
     }));
-    // Grunt variety: a grunt spawns as a random pick from these distinct rigs so
-    // the swarm doesn't look uniform. The stabber rig (this._rigs.grunt) is
-    // deliberately EXCLUDED — that cleaver character is being retired pending an
-    // animated replacement, so grunts use the invader2 / invader1 rigs only.
-    this._gruntVariants = [this._rigs.gunner, this._rigs.breacher].filter(Boolean);
+    // Unified ENEMY MODEL POOL: the MODEL is decoupled from the archetype, so
+    // EVERY enemy type spawns a random model from this pool (wide variety). Each
+    // entry carries a `soundType` (1 or 2) that drives which voice-bark pool the
+    // enemy uses — only that model's type lines play for it.
+    //   type1 = invader1 / invader2 (young street guys)
+    //   type2 = groomer (bald man) / fatstabber (turbaned heavy)
+    this._modelPool = [
+      { rig: this._rigs.gunner, soundType: 1 }, // invader2
+      { rig: this._rigs.breacher, soundType: 1 }, // invader1
+      { rig: this._rigs.enforcer, soundType: 2 }, // groomer
+      { rig: this._rigs.fatstabber, soundType: 2 }, // fatstabber
+    ].filter((e) => e.rig);
     // Rescuable civilian: same Meshy rig pipeline (walk + run armature). darken=1
     // keeps her natural-coloured so she reads as a civilian, not an enemy.
     this._victimRig = await this._loadRig("enemy_victim", "anim_victim_run", 1.0).catch(() => null);
@@ -520,18 +531,17 @@ export class AssetManager {
    * have their own heads, so they do NOT get the shared photo face.
    */
   getRiggedEnemy(archetype) {
-    let rig = null;
-    let distinct = false;
-    if (archetype === "grunt" && this._gruntVariants && this._gruntVariants.length) {
-      // Grunts pick a random distinct rig (stabber / invader2 / invader1) for variety.
-      rig = this._gruntVariants[Math.floor(Math.random() * this._gruntVariants.length)];
-      distinct = true;
-    } else if (archetype && this._rigs && this._rigs[archetype]) {
-      rig = this._rigs[archetype];
-      distinct = true;
-    } else {
-      rig = this._riggedEnemy;
+    // The MODEL is independent of the archetype: pick a random model from the
+    // unified pool (so every enemy type has the full variety). The archetype only
+    // drives behaviour/stats elsewhere. `soundType` rides along so the enemy uses
+    // the matching voice-bark pool.
+    let entry = null;
+    if (this._modelPool && this._modelPool.length) {
+      entry = this._modelPool[Math.floor(Math.random() * this._modelPool.length)];
     }
+    const rig = entry ? entry.rig : this._riggedEnemy;
+    const soundType = entry ? entry.soundType : 1;
+    const distinct = !!entry; // pool models have their own heads (no photo face)
     if (!rig) return null;
     const inner = cloneSkeleton(rig.scene);
     // The rig's natural front is +Z, which is what Enemy's facing math
@@ -545,7 +555,7 @@ export class AssetManager {
     // Add the shared one-shot melee attack clip (retargets onto this rig's
     // bones) without mutating the rig's shared clips object.
     const clips = this._attackClip ? { ...rig.clips, attack: this._attackClip } : rig.clips;
-    return { object3D: wrap, clips };
+    return { object3D: wrap, clips, soundType };
   }
 
   /**

@@ -80,6 +80,9 @@ export class Enemy {
     // Prefer the rigged + animated invader; then a static GLB; then placeholder.
     // `_bodyMat` drives the hit-flash and only exists for the placeholder.
     this._bodyMat = null;
+    // Voice-bark model type (1 or 2) — set by the rig the AssetManager chose, so
+    // only this model's lines play for it. Defaults to type 1.
+    this.soundType = opts.rigged && opts.rigged.soundType ? opts.rigged.soundType : 1;
     if (opts.rigged) {
       this.group.add(opts.rigged.object3D);
       this._rigRoot = opts.rigged.object3D;
@@ -269,10 +272,10 @@ export class Enemy {
       this._bodyMat.emissiveIntensity = 0.9;
       this._hitFlash = 0.08;
     }
-    // Pain cry (sampled, throttled + random across all enemies).
+    // Pain cry (sampled, throttled + random) — voiced by this model's type.
     const c = this._ctx;
     if (c && c.audio && c.audio.enemyPain && c.camera) {
-      c.audio.enemyPain(this.group.position, c.camera.position);
+      c.audio.enemyPain(this.group.position, c.camera.position, this.soundType);
     }
     if (this.health <= 0) this._die(dir);
   }
@@ -466,8 +469,8 @@ export class Enemy {
       }
     }
     ctx.audio.enemyMelee(this.group.position, ctx.camera.position);
-    // Taunt as they swing (sampled, throttled + random so it's not every enemy).
-    if (ctx.audio.enemyTaunt) ctx.audio.enemyTaunt(this.group.position, ctx.camera.position);
+    // Taunt as they swing (sampled, throttled) — voiced by this model's type.
+    if (ctx.audio.enemyTaunt) ctx.audio.enemyTaunt(this.group.position, ctx.camera.position, this.soundType);
     if (telegraph) return; // wind-up swing only — never deals damage
     _flat.copy(ctx.player.position).sub(this.group.position).setY(0);
     if (_flat.length() <= this.meleeRange + 0.5) {

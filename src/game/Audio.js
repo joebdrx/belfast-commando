@@ -6,32 +6,37 @@ const BASE = import.meta.env.BASE_URL || "/";
  * key maps to one served MP3; decoded into AudioBuffers on init().
  */
 const SAMPLES = {
-  // weapons / explosion
+  // weapons / explosion (the SMG deliberately reuses the pistol report)
   gun_pistol: "sfx/guns/pistol.mp3",
-  gun_smg: "sfx/guns/smg.mp3",
   gun_shotgun: "sfx/guns/shotgun.mp3",
   reload: "sfx/guns/reload.mp3",
   explosion: "sfx/guns/explosion.mp3",
   // player voice barks
   p_getdafout: "sfx/player/getdafout.mp3",
   p_lookatallthese: "sfx/player/lookatallthese.mp3",
-  p_gaesinireland: "sfx/player/gaesinireland.mp3",
-  // enemy taunts (aggro / attacking)
-  e_coconut: "sfx/enemy/coconut.mp3",
-  e_nobossinafrica: "sfx/enemy/nobossinafrica.mp3",
-  e_rpndiskewl: "sfx/enemy/rpndiskewl.mp3",
-  e_ihearurarases: "sfx/enemy/ihearurarases.mp3",
-  e_uaregae: "sfx/enemy/uaregae.mp3",
-  // enemy pain (taking damage / dying)
-  e_bloodyfu: "sfx/enemy/bloodyfu.mp3",
-  e_sopainful: "sfx/enemy/sopainful.mp3",
-  e_notbrping: "sfx/enemy/notbrping.mp3",
+  // enemy voice barks, split by MODEL type. type1 = the two young "invader"
+  // models; type2 = the bald "groomer" + the turbaned "fatstabber". Within each
+  // type some lines are taunts (spotting/attacking), others pain (hit/killed).
+  t1_coconut: "sfx/enemy/type1/coconut.mp3",
+  t1_nobossinafrica: "sfx/enemy/type1/nobossinafrica.mp3",
+  t1_rpndiskewl: "sfx/enemy/type1/rpndiskewl.mp3",
+  t1_uaregae: "sfx/enemy/type1/uaregae.mp3",
+  t1_sopainful: "sfx/enemy/type1/sopainful.mp3",
+  t1_notbrping: "sfx/enemy/type1/notbrping.mp3",
+  t2_ihearurarases: "sfx/enemy/type2/ihearurarases.mp3",
+  t2_bloodyfu: "sfx/enemy/type2/bloodyfu.mp3",
 };
-// Bark pools. Player kill bark favours "get da f out"; enemies split into
-// taunts (when they spot/attack) and pain cries (when hit/killed).
-const KILL_BARKS = ["p_getdafout", "p_getdafout", "p_gaesinireland"];
-const ENEMY_TAUNTS = ["e_coconut", "e_nobossinafrica", "e_rpndiskewl", "e_ihearurarases", "e_uaregae"];
-const ENEMY_PAIN = ["e_bloodyfu", "e_sopainful", "e_notbrping"];
+// Player kill bark. Enemy barks are keyed by model type → {taunt, pain} pools,
+// so only that model's voice plays for that model.
+const KILL_BARKS = ["p_getdafout"];
+const ENEMY_TAUNTS = {
+  1: ["t1_coconut", "t1_nobossinafrica", "t1_rpndiskewl", "t1_uaregae"],
+  2: ["t2_ihearurarases"],
+};
+const ENEMY_PAIN = {
+  1: ["t1_sopainful", "t1_notbrping"],
+  2: ["t2_bloodyfu"],
+};
 
 /**
  * Audio
@@ -141,22 +146,17 @@ export class Audio {
 
   /** Player one-liner as an operation begins ("look at all these…"). */
   levelStartBark() {
-    this._bark(Math.random() < 0.75 ? ["p_lookatallthese"] : ["p_gaesinireland"], {
-      player: true,
-      chance: 1,
-      cooldown: 0,
-      gain: 0.95,
-    });
+    this._bark(["p_lookatallthese"], { player: true, chance: 1, cooldown: 0, gain: 0.95 });
   }
 
-  /** Enemy taunt when it spots/charges/attacks the player (positional). */
-  enemyTaunt(pos, listenerPos) {
-    this._bark(ENEMY_TAUNTS, { chance: 0.5, cooldown: 2.2, gain: 0.85, pos, listenerPos });
+  /** Enemy taunt when it attacks the player — voiced by the model's type pool. */
+  enemyTaunt(pos, listenerPos, type = 1) {
+    this._bark(ENEMY_TAUNTS[type] || ENEMY_TAUNTS[1], { chance: 0.5, cooldown: 2.2, gain: 0.85, pos, listenerPos });
   }
 
-  /** Enemy pain cry when hit or killed (positional). */
-  enemyPain(pos, listenerPos) {
-    this._bark(ENEMY_PAIN, { chance: 0.55, cooldown: 1.6, gain: 0.85, pos, listenerPos });
+  /** Enemy pain cry when hit or killed — voiced by the model's type pool. */
+  enemyPain(pos, listenerPos, type = 1) {
+    this._bark(ENEMY_PAIN[type] || ENEMY_PAIN[1], { chance: 0.55, cooldown: 1.6, gain: 0.85, pos, listenerPos });
   }
 
   setMuted(muted) {
@@ -201,8 +201,9 @@ export class Audio {
 
   gunshot(weapon = "Sidearm") {
     if (!this._ok()) return;
-    // Sampled gunfire per weapon (SMG / Boomstick-shotgun / Sidearm-pistol).
-    const key = weapon === "SMG" ? "gun_smg" : weapon === "Boomstick" ? "gun_shotgun" : "gun_pistol";
+    // Sampled gunfire: Boomstick → shotgun; everything else (pistol AND SMG) →
+    // the pistol report, fired on every shot.
+    const key = weapon === "Boomstick" ? "gun_shotgun" : "gun_pistol";
     if (this._playBuffer(key, { gain: weapon === "Boomstick" ? 0.9 : 0.7 })) return;
     // Fallback: synth report.
     const dur = weapon === "Boomstick" ? 0.28 : 0.12;

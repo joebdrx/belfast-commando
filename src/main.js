@@ -335,7 +335,10 @@ class Game {
     this.paused = false;
     this.state.setPhase("LEVEL");
     this._requestLock();
-    this.audio.levelStartBark(); // sampled "look at all these…" one-liner
+    // Defer the "look at all these…" bark until the world is actually up and the
+    // player can see it: the loop fires it once we're a live, rendered, pointer-
+    // locked LEVEL frame and ~1s has elapsed (not during the load transition).
+    this._levelBarkAt = this.time + 1.0;
   }
 
   /** Extraction reached — the sector is won. */
@@ -617,6 +620,12 @@ class Game {
       cam.position.z += shake.z;
       if (shake.roll) cam.rotateZ(shake.roll);
       this.floating.update(realDt);
+      // Level-start bark: only once we're live + rendered + pointer-locked in the
+      // level and the short delay has passed (so it doesn't play over the load).
+      if (this._levelBarkAt && this.time >= this._levelBarkAt) {
+        this._levelBarkAt = 0;
+        this.audio.levelStartBark();
+      }
     } else if (this.phase === "HUB") {
       this.hub.update(realDt);
       this._updateHubLabels();
