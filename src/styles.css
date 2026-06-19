@@ -483,8 +483,8 @@ html, body {
   align-self: center;
 }
 
-/* Key cap chip — override the accent b rule above */
-#overlay-body .controls-grid b {
+/* Key cap chip — used by the result overlay AND the menu/pause controls views. */
+.controls-grid b {
   display: inline-block;
   font-size: 12px;
   font-weight: 700;

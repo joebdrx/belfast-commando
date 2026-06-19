@@ -42,18 +42,6 @@ const OPERATION_VIDEO = "loading/operation-loading.mp4";
 
 const MAX_DT = 0.05;
 
-const CONTROLS_HTML = `
-  <div class="controls-grid">
-    <span>Move</span><b>W A S D</b>
-    <span>Sprint</span><b>Shift</b>
-    <span>Jump</span><b>Space</b>
-    <span>Slide</span><b>Ctrl / C (while sprinting)</b>
-    <span>Kick</span><b>F</b>
-    <span>Shoot</span><b>Left Mouse</b>
-    <span>Weapons</span><b>1 2 3 / Q</b>
-    <span>Mute</span><b>M</b>
-  </div>`;
-
 /**
  * Game
  * ----

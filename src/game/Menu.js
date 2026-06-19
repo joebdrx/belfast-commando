@@ -3,6 +3,8 @@ import UPGRADES from "../data/upgrades.json";
 import BOOTS from "../data/boots.json";
 import DIALOGUE from "../data/dialogue.json";
 import LEVELS from "../data/levels.json";
+import { controlsGridHTML } from "./controls.js";
+import { isTouchDevice } from "./TouchControls.js";
 
 /**
  * Menu
@@ -278,6 +280,17 @@ export class Menu {
       }
       .${PREFIX}select:hover { border-color: #ff7a1a; }
       .${PREFIX}select option { color: #0b0c0d; }
+      /* Operation-code input (Settings). */
+      .${PREFIX}input {
+        flex: 1 1 auto; min-width: 0;
+        padding: 9px 10px;
+        font-family: "Courier New", "Consolas", monospace;
+        font-size: 18px; font-weight: 700; letter-spacing: 0.34em; text-align: center;
+        color: #ffc566; background: rgba(0,0,0,0.4);
+        border: 1px solid rgba(255,122,26,0.35); border-radius: 4px;
+      }
+      .${PREFIX}input::placeholder { color: rgba(240,237,232,0.3); letter-spacing: 0.34em; }
+      .${PREFIX}input:focus { outline: none; border-color: #ff7a1a; }
 
       /* ---- Landline level-code dial (modal over everything) ---------------- */
       .${PREFIX}dial {
@@ -591,13 +604,98 @@ export class Menu {
 
     this.body.appendChild(this._el("div", `${PREFIX}section-label`, "Controls"));
     this.body.appendChild(this._buildSensitivityRow());
+    const ctlBtn = this._makeButton("View Controls", () => this._renderControls(), true);
+    ctlBtn.style.marginTop = "2px";
+    this.body.appendChild(ctlBtn);
 
     this.body.appendChild(this._el("div", `${PREFIX}section-label`, "Graphics"));
     this.body.appendChild(this._buildQualityRow());
 
+    this.body.appendChild(this._el("div", `${PREFIX}section-label`, "Operation Code"));
+    this.body.appendChild(this._buildCodeRow());
+
     this.body.appendChild(this._makeBackRow());
 
     this._refreshSettings(); // sync the controls from the persisted values
+  }
+
+  /** Controls-reference sub-view (keyboard/mouse or touch, by device). */
+  _renderControls() {
+    this._view = "controls";
+    this._clearBody();
+
+    this.body.appendChild(this._el("div", `${PREFIX}sub-title`, "Controls"));
+    const grid = this._el("div");
+    grid.innerHTML = controlsGridHTML(isTouchDevice());
+    this.body.appendChild(grid);
+
+    const row = this._el("div", `${PREFIX}back`);
+    row.appendChild(this._makeButton("◂ Back", () => this._renderSettings(), true));
+    this.body.appendChild(row);
+  }
+
+  /**
+   * Operation-code entry: a 4-digit input + "Go". Mirrors the landline dial —
+   * validates via the LevelManager and, on a hit, fires onCodeAccepted so the
+   * next "Start Operation" deploys to that sector (and any RP reward is paid).
+   */
+  _buildCodeRow() {
+    const wrap = this._el("div");
+
+    const rowEl = this._el("div", `${PREFIX}row`);
+    rowEl.appendChild(this._el("div", `${PREFIX}row-label`, "Level Code"));
+    const control = this._el("div", `${PREFIX}row-control`);
+
+    const input = this._el("input", `${PREFIX}input`);
+    input.type = "text";
+    input.inputMode = "numeric";
+    input.maxLength = 4;
+    input.placeholder = "0000";
+    input.autocomplete = "off";
+    input.addEventListener("input", () => {
+      input.value = input.value.replace(/\D/g, "").slice(0, 4); // digits only, max 4
+    });
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") this._submitLevelCode();
+    });
+    this._codeInput = input;
+
+    control.appendChild(input);
+    control.appendChild(this._makeButton("Go", () => this._submitLevelCode(), true));
+    rowEl.appendChild(control);
+    wrap.appendChild(rowEl);
+
+    this._codeStatus = this._el("div", `${PREFIX}item-meta`);
+    this._codeStatus.style.minHeight = "14px";
+    wrap.appendChild(this._codeStatus);
+    return wrap;
+  }
+
+  /** Validate + redeem the typed operation code (same path as the dial). */
+  _submitLevelCode() {
+    const code = (this._codeInput.value || "").replace(/\D/g, "");
+    if (code.length < 4) {
+      this._setCodeStatus("Enter all 4 digits", "bad");
+      return;
+    }
+    const lm = this._providers.levelManager;
+    const index = lm && typeof lm.indexForCode === "function" ? lm.indexForCode(code) : -1;
+    if (index >= 0) {
+      this._call("onCodeAccepted", index);
+      this._updateRp();
+      this._setCodeStatus(`Operation ${this._levelName(index)} unlocked — Start Operation to deploy`, "ok");
+    } else {
+      this._setCodeStatus("Invalid code", "bad");
+    }
+  }
+
+  /** Paint the code-entry status line. `kind` = "" | "ok" | "bad". */
+  _setCodeStatus(text, kind = "") {
+    if (!this._codeStatus) return;
+    this._codeStatus.classList.toggle(`${PREFIX}locked`, kind === "bad");
+    this._codeStatus.style.color = kind === "ok" ? "#3fb950" : "";
+    const mark = kind === "ok" ? "✓ " : kind === "bad" ? "⚠ " : "";
+    this._codeStatus.innerHTML = `${mark}${text}`;
   }
 
   /** Mouse Sensitivity row: a range slider + a live numeric readout. */
@@ -1187,6 +1285,7 @@ export class Menu {
     if (this._view === "upgrades") this._renderUpgrades();
     else if (this._view === "story") this._renderStory();
     else if (this._view === "settings") this._renderSettings();
+    else if (this._view === "controls") this._renderControls();
   }
 
   /** Tear down: remove the DOM, the style block, and the bus subscription. */

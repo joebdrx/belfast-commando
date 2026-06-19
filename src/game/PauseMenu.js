@@ -1,4 +1,6 @@
 import gameState from "./GameState.js";
+import { controlsGridHTML } from "./controls.js";
+import { isTouchDevice } from "./TouchControls.js";
 
 /**
  * PauseMenu
@@ -174,6 +176,9 @@ export class PauseMenu {
       }
       .${PREFIX}select:hover { border-color: #ff7a1a; }
       .${PREFIX}select option { color: #0b0c0d; }
+      /* Controls reference (toggled open under the Controls button). */
+      .${PREFIX}controls { margin-top: 4px; }
+      .${PREFIX}controls .controls-grid { margin-top: 10px; }
     `;
     document.head.appendChild(style);
   }
@@ -208,7 +213,23 @@ export class PauseMenu {
     this.card.appendChild(this._buildSensitivityRow());
     this.card.appendChild(this._buildQualityRow());
 
+    // --- Controls (toggleable reference) ----------------------------------
+    this._controlsBtn = this._makeButton("Controls", () => this._toggleControls());
+    this._controlsBtn.style.marginTop = "16px";
+    this.card.appendChild(this._controlsBtn);
+    this._controlsPanel = this._el("div", `${PREFIX}controls`);
+    this._controlsPanel.style.display = "none";
+    this.card.appendChild(this._controlsPanel);
+
     document.body.appendChild(this.root);
+  }
+
+  /** Show/hide the control-scheme reference (touch or keyboard, by device). */
+  _toggleControls() {
+    if (!this._controlsPanel) return;
+    const open = this._controlsPanel.style.display === "none";
+    if (open) this._controlsPanel.innerHTML = controlsGridHTML(isTouchDevice());
+    this._controlsPanel.style.display = open ? "block" : "none";
   }
 
   /** Mouse Sensitivity row: a range slider + a live numeric readout. */
@@ -399,6 +420,7 @@ export class PauseMenu {
   /** Show the overlay (re-reading current settings) and make it interactive. */
   show() {
     this.refresh();
+    if (this._controlsPanel) this._controlsPanel.style.display = "none"; // collapse each open
     this.root.classList.remove(`${PREFIX}hidden`);
   }
 
