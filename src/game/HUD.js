@@ -25,6 +25,7 @@ export class HUD {
     this.overlay = this.$("overlay");
     this.overlayTitle = this.$("overlay-title");
     this.overlayBody = this.$("overlay-body");
+    this.overlayActions = this.$("overlay-actions");
     this.overlayHint = this.$("overlay-hint");
     this.crosshair = this.$("crosshair");
     this._damageT = 0;
@@ -232,7 +233,33 @@ export class HUD {
     this.overlayTitle.innerHTML = title;
     this.overlayBody.innerHTML = body;
     this.overlayHint.innerHTML = hint || "";
+    this.setOverlayActions([]); // clear any prior result buttons by default
     this.overlay.classList.remove("hidden");
+  }
+
+  /**
+   * Populate the result-card action row with explicit buttons. Each entry is
+   * `{ label, onClick, primary? }`. Button clicks stop propagation so they don't
+   * also trigger the overlay's click-to-continue handler. Pass [] to clear.
+   * @param {Array<{label:string,onClick:Function,primary?:boolean}>} actions
+   * @returns {boolean} whether any buttons were rendered.
+   */
+  setOverlayActions(actions = []) {
+    if (!this.overlayActions) return false;
+    this.overlayActions.replaceChildren();
+    for (const a of actions) {
+      if (!a || !a.label) continue;
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = `overlay-btn${a.primary ? " primary" : ""}`;
+      btn.textContent = a.label;
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if (typeof a.onClick === "function") a.onClick();
+      });
+      this.overlayActions.appendChild(btn);
+    }
+    return this.overlayActions.childElementCount > 0;
   }
 
   hideOverlay() {

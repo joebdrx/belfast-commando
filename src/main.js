@@ -186,6 +186,11 @@ class Game {
     // inside Menu; we only need the launch + (optional) exit hooks. The level
     // manager backs the landline level-code dial.
     this.menu.setProviders({ progression: this.progression, levelManager: this.levelManager });
+    // Safehouse Settings panel applies live, identical to the pause menu's.
+    this.menu.setOnSettingsChange((s) => {
+      this.player.sensitivity = s.sensitivity;
+      this._applyQuality(s.quality);
+    });
     this.menu.setHandlers({
       onStartOperation: () => this._startCampaign(),
       onUpgrades: () => {},
@@ -287,16 +292,38 @@ class Game {
       this._pendingSkipIndex != null && this._pendingSkipIndex >= 0 ? this._pendingSkipIndex : 0;
     this._pendingSkipIndex = null; // consume the skip
     this.state.startRun({ levelIndex: index });
-    // Loading screen (the cover) covers the sector build; input stays gated until
-    // it fades. Pointer lock is still requested now (inside this click gesture).
+    // The FIRST deploy from the safehouse plays the operation intro VIDEO.
+    this._deployWithLoading(index, { video: true });
+  }
+
+  /**
+   * Deploy into a campaign sector behind a loading overlay. `video:true` plays the
+   * operation intro clip to completion (the menu→operation start); `video:false`
+   * runs the GTA-style image slides — used for every BETWEEN-operation transition.
+   * Input stays gated and the heavy 3D render is skipped until the overlay reveals
+   * the live scene. Call from a user gesture so _loadLevel's pointer-lock holds.
+   */
+  _deployWithLoading(index, { video = false } = {}) {
     this._loadingActive = true;
-    this.loading.show([], { logo: LOADING_LOGO, video: OPERATION_VIDEO, videoLoop: false });
+    if (video) {
+      this.loading.show([], { logo: LOADING_LOGO, video: OPERATION_VIDEO, videoLoop: false });
+    } else {
+      this.loading.show(LOADING_SLIDES, { logo: LOADING_LOGO, minMs: 2800 });
+    }
     this._loadLevel(index);
-    this.loading.finish().then(() => {
-      this._loadingActive = false;
-      // Re-evaluate input gating now the overlay is gone (no pointerlock event fires).
-      this.ctx.active = this.phase === "LEVEL" && !this.paused && document.pointerLockElement === this.dom;
-    });
+    // onReveal turns rendering back on UNDER the still-opaque frozen frame, so the
+    // fade dissolves into the live sector instead of flashing a stale menu frame.
+    this.loading
+      .finish({ onReveal: () => this._revealLevel() })
+      .then(() => this._revealLevel());
+  }
+
+  /** Lift the loading gate so the loop renders the live sector behind the fade. */
+  _revealLevel() {
+    if (!this._loadingActive) return; // idempotent (onReveal + finish() both call)
+    this._loadingActive = false;
+    this.ctx.active =
+      this.phase === "LEVEL" && !this.paused && document.pointerLockElement === this.dom;
   }
 
   /** Build + deploy into a campaign sector (LEVEL phase). */
@@ -433,29 +460,39 @@ class Game {
       : "";
 
     let title;
-    let hint;
     if (died) {
       title = "YOU WENT DOWN";
-      hint = "Click to fall back to the safehouse";
     } else if (last) {
       title = "BELFAST LIBERATED";
-      hint = "Click to return to the safehouse";
       Steam.unlock("ACH_BELFAST_LIBERATED").catch(() => {});
     } else {
       title = `${this.levelManager.name.toUpperCase()} CLEARED`;
-      hint = "Click for the next sector";
     }
+
+    this._resultsDied = died;
+    this._resultsCampaignDone = last && !died;
 
     const outro = died ? "Belfast still needs you." : this.levelManager.outro || "";
     this.hud.showOverlay(
       title,
       `${outro}<br/>${bonusRows}Score <b>${this.score.total.toLocaleString()}</b> &nbsp;·&nbsp; Kills <b>${run.kills}</b><br/>Resistance Points earned <b>+${rp}</b>`,
-      hint,
+      "",
     );
-    Steam.submitScore(this.score.total).catch(() => {});
 
-    this._resultsDied = died;
-    this._resultsCampaignDone = last && !died;
+    // Explicit choices: a survivable clear can push on to the next sector; every
+    // result can fall back to the safehouse (CONTRACTS: HUB is always reachable).
+    const actions = [];
+    if (!died && !last) {
+      actions.push({ label: "Next Operation", primary: true, onClick: () => this._handleResultsContinue() });
+    }
+    actions.push({
+      label: "Return to Safehouse",
+      primary: died || last,
+      onClick: () => this._enterHub(),
+    });
+    this._resultsHasActions = this.hud.setOverlayActions(actions);
+
+    Steam.submitScore(this.score.total).catch(() => {});
   }
 
   /** Advance from RESULTS: next sector on a clear, else back to the safehouse. */
@@ -465,7 +502,8 @@ class Game {
       return;
     }
     if (this.levelManager.hasNext()) {
-      this._loadLevel(this.levelManager.nextIndex());
+      // Between operations: GTA-style image slides (no intro video).
+      this._deployWithLoading(this.levelManager.nextIndex(), { video: false });
     } else {
       this._enterHub();
     }
@@ -537,7 +575,8 @@ class Game {
   _handlePrimaryClick() {
     if (this.phase === "LEVEL" && this.paused) {
       this._requestLock();
-    } else if (this.phase === "RESULTS") {
+    } else if (this.phase === "RESULTS" && !this._resultsHasActions) {
+      // Fallback only: with explicit result buttons present, the player chooses.
       this._handleResultsContinue();
     }
   }

@@ -487,6 +487,58 @@ html, body {
   text-shadow: none;
 }
 
+/* -- Result-screen action buttons -------------------------- */
+/* Populated by JS (HUD.setOverlayActions) for the RESULTS card — e.g. "Next
+   Operation" + "Return to Safehouse". Empty (display:none) for other overlays. */
+#overlay-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 12px;
+  margin-bottom: 22px;
+}
+
+#overlay-actions:empty {
+  display: none;
+}
+
+.overlay-btn {
+  flex: 0 1 auto;
+  min-width: 200px;
+  padding: 13px 26px;
+  font-family: "Arial Narrow", "Inter", system-ui, sans-serif;
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #f0ede8;
+  cursor: pointer;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 122, 26, 0.32);
+  border-bottom: 2px solid rgba(255, 122, 26, 0.5);
+  border-radius: 3px;
+  transition: background 0.14s ease, border-color 0.14s ease, transform 0.06s ease;
+}
+
+.overlay-btn:hover {
+  background: rgba(255, 122, 26, 0.18);
+  border-color: #ff7a1a;
+}
+
+.overlay-btn:active {
+  transform: translateY(1px);
+}
+
+.overlay-btn.primary {
+  color: #0b0c0d;
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.overlay-btn.primary:hover {
+  background: #ffa24d;
+}
+
 /* -- CTA hint (pulsing) ------------------------------------ */
 @keyframes pulse-hint {
   0%, 100% { opacity: 0.52; }

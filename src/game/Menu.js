@@ -43,14 +43,30 @@ const DESKTOP_RELEASES_URL = "https://github.com/joebdrx/belfast-commando/releas
 const UPGRADES_BY_ID = Object.fromEntries(UPGRADES.map((u) => [u.id, u]));
 const BOOTS_BY_ID = Object.fromEntries(BOOTS.map((b) => [b.id, b]));
 
+/**
+ * Settings bounds/options — kept in lock-step with PauseMenu so the safehouse and
+ * the in-operation pause panel edit the same `progression.settings` identically.
+ */
+const SENS_MIN = 0.0008;
+const SENS_MAX = 0.005;
+const SENS_STEP = 0.0002;
+const QUALITY_OPTIONS = [
+  { value: "low", label: "Low" },
+  { value: "medium", label: "Medium" },
+  { value: "high", label: "High" },
+];
+const DEFAULT_SETTINGS = { sensitivity: 0.0022, quality: "high", muted: false };
+
 export class Menu {
   constructor() {
     /** @type {{onStartOperation?:Function,onUpgrades?:Function,onStoryLogs?:Function,onExit?:Function,onCodeAccepted?:Function}} */
     this._handlers = {};
     /** @type {{progression: any|null, levelManager: any|null}} */
     this._providers = { progression: null, levelManager: null };
-    /** Which view is showing: "main" | "upgrades" | "story". */
+    /** Which view is showing: "main" | "upgrades" | "story" | "settings". */
     this._view = "main";
+    /** Live-apply callback for settings changes (sensitivity → Player, quality → renderer). */
+    this._onSettingsChange = null;
     /** Landline dial state. */
     this._dialEntry = "";
     this._dialCloseTimer = null;
@@ -224,6 +240,44 @@ export class Menu {
       }
       .${PREFIX}back { margin-top: 22px; }
       .${PREFIX}item-meta.${PREFIX}locked b { color: #f85149; }
+
+      /* ---- Settings rows (controls + graphics) ----------------------------- */
+      .${PREFIX}row {
+        display: flex; align-items: center; gap: 14px;
+        padding: 12px 14px; margin-bottom: 10px;
+        background: rgba(255,255,255,0.035);
+        border: 1px solid rgba(255,255,255,0.10);
+        border-left: 2px solid rgba(255,122,26,0.5);
+        border-radius: 3px; text-align: left;
+      }
+      .${PREFIX}row-label {
+        flex: 0 0 auto; min-width: 132px;
+        font-size: 13px; font-weight: 800; letter-spacing: 0.06em;
+        text-transform: uppercase; color: #f0ede8;
+      }
+      .${PREFIX}row-control { flex: 1 1 auto; display: flex; align-items: center; gap: 12px; }
+      .${PREFIX}range {
+        flex: 1 1 auto; min-width: 0; height: 4px; cursor: pointer;
+        accent-color: #ff7a1a;
+        background: rgba(255,255,255,0.14); border-radius: 2px;
+      }
+      .${PREFIX}range-value {
+        flex: 0 0 auto; min-width: 58px; text-align: right;
+        font-size: 13px; font-weight: 800; letter-spacing: 0.04em; color: #ffc566;
+        font-variant-numeric: tabular-nums;
+      }
+      .${PREFIX}select {
+        flex: 1 1 auto; min-width: 0;
+        padding: 8px 10px;
+        font-family: inherit; font-size: 13px; font-weight: 800;
+        letter-spacing: 0.06em; text-transform: uppercase;
+        color: #f0ede8; cursor: pointer;
+        background: rgba(255,255,255,0.05);
+        border: 1px solid rgba(255,122,26,0.35);
+        border-radius: 4px;
+      }
+      .${PREFIX}select:hover { border-color: #ff7a1a; }
+      .${PREFIX}select option { color: #0b0c0d; }
 
       /* ---- Landline level-code dial (modal over everything) ---------------- */
       .${PREFIX}dial {
@@ -403,6 +457,9 @@ export class Menu {
       this._call("onStoryLogs");
       this._renderStory();
     }));
+    row.appendChild(this._makeButton("Settings", () => {
+      this._renderSettings();
+    }));
     row.appendChild(this._makeButton("Exit", () => {
       this._call("onExit");
     }));
@@ -519,6 +576,71 @@ export class Menu {
     }
     this.body.appendChild(list);
     this.body.appendChild(this._makeBackRow());
+  }
+
+  /**
+   * Settings sub-panel: Controls (mouse sensitivity) + Graphics (quality). Edits
+   * the same `progression.settings` block the pause menu does; persists via the
+   * progression provider and reports live changes through onSettingsChange.
+   */
+  _renderSettings() {
+    this._view = "settings";
+    this._clearBody();
+
+    this.body.appendChild(this._el("div", `${PREFIX}sub-title`, "Settings"));
+
+    this.body.appendChild(this._el("div", `${PREFIX}section-label`, "Controls"));
+    this.body.appendChild(this._buildSensitivityRow());
+
+    this.body.appendChild(this._el("div", `${PREFIX}section-label`, "Graphics"));
+    this.body.appendChild(this._buildQualityRow());
+
+    this.body.appendChild(this._makeBackRow());
+
+    this._refreshSettings(); // sync the controls from the persisted values
+  }
+
+  /** Mouse Sensitivity row: a range slider + a live numeric readout. */
+  _buildSensitivityRow() {
+    const rowEl = this._el("div", `${PREFIX}row`);
+    rowEl.appendChild(this._el("div", `${PREFIX}row-label`, "Mouse Sensitivity"));
+
+    const control = this._el("div", `${PREFIX}row-control`);
+    const input = this._el("input", `${PREFIX}range`);
+    input.type = "range";
+    input.min = String(SENS_MIN);
+    input.max = String(SENS_MAX);
+    input.step = String(SENS_STEP);
+    input.addEventListener("input", () => this._onSensitivityInput());
+    this.sensInput = input;
+
+    const value = this._el("div", `${PREFIX}range-value`);
+    this.sensValue = value;
+
+    control.appendChild(input);
+    control.appendChild(value);
+    rowEl.appendChild(control);
+    return rowEl;
+  }
+
+  /** Graphics Quality row: a Low/Medium/High select. */
+  _buildQualityRow() {
+    const rowEl = this._el("div", `${PREFIX}row`);
+    rowEl.appendChild(this._el("div", `${PREFIX}row-label`, "Graphics Quality"));
+
+    const control = this._el("div", `${PREFIX}row-control`);
+    const select = this._el("select", `${PREFIX}select`);
+    for (const opt of QUALITY_OPTIONS) {
+      const o = this._el("option", null, opt.label);
+      o.value = opt.value;
+      select.appendChild(o);
+    }
+    select.addEventListener("change", () => this._onQualityChange());
+    this.qualitySelect = select;
+
+    control.appendChild(select);
+    rowEl.appendChild(control);
+    return rowEl;
   }
 
   // ---- row builders --------------------------------------------------------
@@ -826,6 +948,76 @@ export class Menu {
     this._renderUpgrades();
   }
 
+  // ---- settings (controls + graphics) --------------------------------------
+
+  /**
+   * The live settings object on the persistent progression block. Mutating the
+   * return value mutates `gameState.getProgression().settings` (what gets saved).
+   * @returns {{sensitivity:number, quality:string, muted:boolean}}
+   */
+  _settings() {
+    const prog = gameState.getProgression();
+    if (!prog.settings || typeof prog.settings !== "object") {
+      prog.settings = { ...DEFAULT_SETTINGS };
+    }
+    return prog.settings;
+  }
+
+  /** Clamp/normalise a quality string to one of the known option values. */
+  _normQuality(quality) {
+    const v = typeof quality === "string" ? quality.toLowerCase() : "";
+    return v === "low" || v === "medium" || v === "high" ? v : "high";
+  }
+
+  /** Format a sensitivity value for the live readout (e.g. 0.0022). */
+  _fmtSensitivity(v) {
+    return Number.isFinite(v) ? v.toFixed(4) : "—";
+  }
+
+  /** Sync the settings controls from the persisted values. */
+  _refreshSettings() {
+    const s = this._settings();
+    if (this.sensInput) this.sensInput.value = String(s.sensitivity);
+    if (this.sensValue) this.sensValue.textContent = this._fmtSensitivity(s.sensitivity);
+    if (this.qualitySelect) this.qualitySelect.value = this._normQuality(s.quality);
+  }
+
+  /** Sensitivity slider moved: update settings, repaint readout, commit. */
+  _onSensitivityInput() {
+    const v = parseFloat(this.sensInput.value);
+    if (!Number.isFinite(v)) return;
+    const s = this._settings();
+    s.sensitivity = v;
+    if (this.sensValue) this.sensValue.textContent = this._fmtSensitivity(v);
+    this._commitSettings(s);
+  }
+
+  /** Quality select changed: update settings, commit. */
+  _onQualityChange() {
+    const s = this._settings();
+    s.quality = this._normQuality(this.qualitySelect.value);
+    this._commitSettings(s);
+  }
+
+  /** Persist (if a provider is wired) and report the new settings. Both guarded. */
+  _commitSettings(settings) {
+    const prog = this._providers.progression;
+    if (prog && typeof prog.save === "function") {
+      try {
+        prog.save();
+      } catch (err) {
+        console.warn("[Menu] progression.save threw:", err);
+      }
+    }
+    if (typeof this._onSettingsChange === "function") {
+      try {
+        this._onSettingsChange(settings);
+      } catch (err) {
+        console.warn("[Menu] onSettingsChange threw:", err);
+      }
+    }
+  }
+
   // ---- landline level-code dial -------------------------------------------
 
   /** Repaint the masked 4-slot display from the current entry. */
@@ -968,6 +1160,16 @@ export class Menu {
   }
 
   /**
+   * Register the live-apply callback for settings changes. Invoked with the full
+   * settings object (`{sensitivity, quality, muted}`) whenever a Settings control
+   * changes so the orchestrator can apply sensitivity → Player, quality → renderer.
+   * @param {(settings:object)=>void} fn
+   */
+  setOnSettingsChange(fn) {
+    this._onSettingsChange = typeof fn === "function" ? fn : null;
+  }
+
+  /**
    * Inject providers. `progression` is Agent A's Progression instance (or null
    * for standalone tests); `levelManager` powers the level-code dial. If the
    * Upgrades panel is open, re-render it.
@@ -984,6 +1186,7 @@ export class Menu {
     this._updateRp();
     if (this._view === "upgrades") this._renderUpgrades();
     else if (this._view === "story") this._renderStory();
+    else if (this._view === "settings") this._renderSettings();
   }
 
   /** Tear down: remove the DOM, the style block, and the bus subscription. */

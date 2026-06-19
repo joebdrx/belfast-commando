@@ -128,7 +128,10 @@ export class LoadingScreen {
       this._video = v;     // clock without rendering → flashes only the end frame)
       this._layers = [];
     } else {
-      this._layers = slides.map((src, i) => {
+      // Shuffle so the first frame (and the scan order) differ every load — the
+      // menu loader otherwise always opened on the same image.
+      const order = this._shuffle(slides);
+      this._layers = order.map((src, i) => {
         const layer = document.createElement("div");
         layer.className = `${PREFIX}img ${i % 2 ? `${PREFIX}pan-b` : `${PREFIX}pan-a`}`;
         layer.style.backgroundImage = `url("${BASE}${src}")`;
@@ -185,12 +188,29 @@ export class LoadingScreen {
     this._layers.forEach((l, i) => l.classList.toggle(`${PREFIX}on`, i === idx));
   }
 
+  /** Fisher-Yates shuffle on a copy (so the caller's array is untouched). */
+  _shuffle(arr) {
+    const a = arr.slice();
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
+  }
+
   /**
-   * Finish: pan to the cover (the last slide), hold it, then fade the overlay out
-   * and remove it. Resolves once removed. Honours `minMs` (waits the remainder if
-   * called too early). Safe to call once.
+   * Finish: hold the current frame (a non-looping video freezes on its LAST frame
+   * once `ended` fires), then fade the overlay out and remove it. Resolves once
+   * removed. Honours `minMs` (waits the remainder if called too early).
+   *
+   * `onReveal` (optional) fires ONCE the instant before the fade begins — i.e. the
+   * moment the content is ready to be shown. Callers use it to start rendering the
+   * live scene UNDER the still-opaque frozen frame, so the fade reveals the game,
+   * not a stale canvas. Safe to call once.
+   *
+   * @param {{onReveal?: () => void}} [opts]
    */
-  finish() {
+  finish({ onReveal = null } = {}) {
     if (!this._root || this._finishing) return Promise.resolve();
     this._finishing = true;
     return new Promise((resolve) => {
@@ -201,6 +221,9 @@ export class LoadingScreen {
         done = true;
         if (safety) { clearTimeout(safety); safety = null; }
         if (this._timer) { clearInterval(this._timer); this._timer = null; }
+        // Reveal the live scene behind the frozen frame BEFORE we start fading, so
+        // the 0.7s fade dissolves into the game and never flashes a stale frame.
+        if (typeof onReveal === "function") { try { onReveal(); } catch (_) { /* ignore */ } }
         if (this._root) this._root.classList.add(`${PREFIX}out`);
         setTimeout(() => { this._teardown(false); resolve(); }, 750);
       };
