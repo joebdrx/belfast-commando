@@ -181,6 +181,10 @@ export class Level {
       crack: tex("ground_crack", { repeat: [4, 4], roughness: 0.95, color: 0x55585b }),
       grass: tex("grass", { repeat: [3, 3], roughness: 1.0, color: 0x4a5a32 }),
     };
+    // Belfast sectarian murals (Ulster loyalist + IRA republican) — alternated
+    // along the boundary walls.
+    this._muralMats = ["mural_ulster", "mural_ira"]
+      .map((n) => tex(n, { repeat: [1, 1], roughness: 0.9, color: 0xb0aaa2 }));
 
     // Grid geometry shared across builders. Buildings are tall, long terraces:
     // narrow frontage (X) and a long run (Z), so they line the north–south
@@ -293,9 +297,12 @@ export class Level {
   }
 
   /**
-   * Scatter flat ground decals across the open streets: small grass patches
-   * (weeds), a few metal grates/drains (sparingly), and cracked/gravel patches for
-   * variety. Deterministic per sector; skips anything over a building footprint.
+   * Ground detailing, placed where it makes sense rather than at random:
+   *   • GRASS / weeds grow in the neglected perimeter BACK-ALLEYS — the ~12m strip
+   *     between the outer buildings (±GRID_HALF) and the boundary wall (±BX/BZ).
+   *   • GRATES / drains sit in the inner traffic lanes (between the column blocks).
+   *   • a few cracked/gravel patches add wear in the alleys.
+   * Deterministic per sector; everything skips building footprints.
    */
   _scatterGroundDetails() {
     const inStreet = (x, z) => {
@@ -305,27 +312,39 @@ export class Level {
       }
       return true;
     };
-    const HX = this.GRID_HALF_X, HZ = this.GRID_HALF_Z;
-    let seed = 1234 + (this.index | 0) * 97;
+    let seed = 4321 + (this.index | 0) * 131;
     const rng = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
-    let grates = 0, grass = 0, patches = 0;
-    for (let i = 0; i < 70; i++) {
-      const x = (rng() * 2 - 1) * HX, z = (rng() * 2 - 1) * HZ;
-      if (!inStreet(x, z)) continue;
-      const r = rng();
-      if (r < 0.16 && grates < 5 && this._gratingMats.length) {
-        const s = 1.0 + rng() * 0.6;
-        this._decal(this._pick(this._gratingMats, x, z, i), x, 0.15, z, 0, s, s, { ground: true });
-        grates++;
-      } else if (r < 0.6 && grass < 14) {
-        const s = 1.2 + rng() * 2.0;
-        this._decal(this._groundMats.grass, x, 0.15, z, 0, s, s, { ground: true });
-        grass++;
-      } else if (patches < 10) {
-        const gm = rng() < 0.5 ? this._groundMats.gravel : this._groundMats.crack;
-        const s = 1.6 + rng() * 2.6;
-        this._decal(gm, x, 0.142, z, 0, s, s, { ground: true });
-        patches++;
+    const put = (mat, x, z, s, y = 0.15) => { if (mat && inStreet(x, z)) this._decal(mat, x, y, z, 0, s, s, { ground: true }); };
+
+    const HX = this.GRID_HALF_X, HZ = this.GRID_HALF_Z; // outer building edges (31, 61)
+    const BX = HX + 12, BZ = HZ + 12;                    // boundary wall (43, 73) — matches _buildBoundary
+    const midX = (HX + BX) / 2, midZ = (HZ + BZ) / 2;    // alley centre-lines (~37, ~67)
+    const grass = this._groundMats.grass;
+    const gravel = this._groundMats.gravel, crack = this._groundMats.crack;
+
+    // --- Grass verges running the length of the four perimeter alleys. ---
+    for (let z = -HZ + 5; z <= HZ - 5; z += 8) {
+      put(grass, midX + (rng() - 0.5) * 5, z + (rng() - 0.5) * 4, 2.4 + rng() * 2.4);   // east alley
+      put(grass, -midX + (rng() - 0.5) * 5, z + (rng() - 0.5) * 4, 2.4 + rng() * 2.4);  // west alley
+      if (rng() < 0.3) put(rng() < 0.5 ? gravel : crack, midX + (rng() - 0.5) * 6, z, 2.0 + rng() * 2, 0.142);
+    }
+    for (let x = -HX + 5; x <= HX - 5; x += 8) {
+      put(grass, x + (rng() - 0.5) * 4, midZ + (rng() - 0.5) * 5, 2.4 + rng() * 2.4);   // north alley
+      put(grass, x + (rng() - 0.5) * 4, -midZ + (rng() - 0.5) * 5, 2.4 + rng() * 2.4);  // south alley
+      if (rng() < 0.3) put(rng() < 0.5 ? gravel : crack, x, midZ + (rng() - 0.5) * 6, 2.0 + rng() * 2, 0.142);
+    }
+    // Bigger grass clumps in the four corner alleys (most neglected).
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+      put(grass, sx * midX + (rng() - 0.5) * 4, sz * midZ + (rng() - 0.5) * 4, 4.0 + rng() * 2.5);
+    }
+
+    // --- Storm drains/grates along the inner north-south traffic lanes (sparing). ---
+    if (this._gratingMats.length) {
+      let grates = 0;
+      for (const lx of [-this.PITCH_X / 2, this.PITCH_X / 2]) { // ~±12, between columns
+        for (let z = -HZ + 12; z <= HZ - 12 && grates < 6; z += 28) {
+          if (inStreet(lx, z)) { put(this._pick(this._gratingMats, lx, z, grates), lx, z, 1.1 + rng() * 0.5, 0.152); grates++; }
+        }
       }
     }
   }
@@ -1082,14 +1101,38 @@ export class Level {
       clad(BX, z, -Math.PI / 2, "x", 1); // east wall: facade faces -X
     }
 
-    // Signs + graffiti on the inner faces of the boundary walls (sparing).
-    for (let x = -BX + 14; x <= BX - 14; x += 24) {
-      this._decorateWall(x, -BZ + 0.35, 0, 14, WH, 31);       // south wall faces +Z
-      this._decorateWall(x, BZ - 0.35, Math.PI, 14, WH, 41);  // north wall faces -Z
+    // Big Belfast sectarian murals along the boundary walls (Ulster / IRA,
+    // alternating), with the odd sign/graffiti between them.
+    const muralH = Math.min(4.4, WH - 0.4);
+    let mi = 0;
+    const mural = (mx, mz, rotY) => {
+      const mat = this._muralMats[mi++ % this._muralMats.length];
+      if (!mat) return;
+      const g = new THREE.Group();
+      g.position.set(mx, 0, mz);
+      g.rotation.y = rotY;
+      const m = new THREE.Mesh(new THREE.PlaneGeometry(muralH, muralH), mat);
+      m.position.set(0, muralH / 2 + 0.3, 0.12);
+      m.renderOrder = 2;
+      g.add(m);
+      this.group.add(g);
+    };
+    for (let x = -BX + 22; x <= BX - 22; x += 30) {
+      mural(x, -BZ + 0.36, 0);       // south wall faces +Z
+      mural(x, BZ - 0.36, Math.PI);  // north wall faces -Z
     }
-    for (let z = -BZ + 14; z <= BZ - 14; z += 24) {
-      this._decorateWall(-BX + 0.35, z, Math.PI / 2, 14, WH, 51);  // west wall faces +X
-      this._decorateWall(BX - 0.35, z, -Math.PI / 2, 14, WH, 61);  // east wall faces -X
+    for (let z = -BZ + 22; z <= BZ - 22; z += 34) {
+      mural(-BX + 0.36, z, Math.PI / 2);  // west wall faces +X
+      mural(BX - 0.36, z, -Math.PI / 2);  // east wall faces -X
+    }
+    // A few signs/graffiti in the gaps between murals (sparser than the murals).
+    for (let x = -BX + 38; x <= BX - 38; x += 44) {
+      this._decorateWall(x, -BZ + 0.35, 0, 12, WH, 31);
+      this._decorateWall(x, BZ - 0.35, Math.PI, 12, WH, 41);
+    }
+    for (let z = -BZ + 38; z <= BZ - 38; z += 50) {
+      this._decorateWall(-BX + 0.35, z, Math.PI / 2, 12, WH, 51);
+      this._decorateWall(BX - 0.35, z, -Math.PI / 2, 12, WH, 61);
     }
   }
 
