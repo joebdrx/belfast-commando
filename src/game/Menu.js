@@ -29,6 +29,7 @@ import LEVELS from "../data/levels.json";
  */
 
 const PREFIX = "bc-menu-";
+const BASE = import.meta.env.BASE_URL || "/";
 
 /**
  * Desktop (Tauri) build download. The native installers are published to the
@@ -79,6 +80,12 @@ export class Menu {
         color: #f0ede8;
       }
       .${PREFIX}root.${PREFIX}hidden { display: none; }
+      /* Game logo in the top-right corner (the right side is otherwise the hero). */
+      .${PREFIX}logo {
+        position: absolute; top: 22px; right: 30px; z-index: 31;
+        width: 300px; max-width: 28vw; height: auto; pointer-events: none;
+        filter: drop-shadow(0 3px 12px rgba(0,0,0,0.85));
+      }
       /* LEFT vertical command panel; the right ~60% is transparent so the hub
          hero model reads behind it (CoD-lobby framing). */
       .${PREFIX}panel {
@@ -296,6 +303,12 @@ export class Menu {
   /** Build the root, left panel, title, RP readout, the action list and the sub-view host. */
   _buildDom() {
     this.root = this._el("div", `${PREFIX}root`);
+
+    // Game logo, top-right corner.
+    const logo = this._el("img", `${PREFIX}logo`);
+    logo.src = `${BASE}ui/bs-logo.png`;
+    logo.alt = "Belfast Survivor";
+    this.root.appendChild(logo);
 
     // The left command panel; the right side of the root is transparent so the
     // hub hero model renders behind the menu.

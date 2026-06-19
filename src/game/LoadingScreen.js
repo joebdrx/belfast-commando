@@ -61,9 +61,16 @@ export class LoadingScreen {
         content: ""; position: absolute; inset: 0; pointer-events: none;
         background: radial-gradient(120% 80% at 50% 35%, transparent 55%, rgba(0,0,0,0.55) 100%);
       }
-      /* GTA-style spinner, bottom-right. */
+      /* Bottom-right corner: game logo above a GTA-style spinner. */
+      .${PREFIX}corner {
+        position: absolute; right: 40px; bottom: 32px; z-index: 2;
+        display: flex; flex-direction: column; align-items: flex-end; gap: 12px;
+      }
+      .${PREFIX}logo {
+        width: 300px; max-width: 34vw; height: auto;
+        filter: drop-shadow(0 3px 12px rgba(0,0,0,0.85));
+      }
       .${PREFIX}spin {
-        position: absolute; right: 40px; bottom: 34px; z-index: 2;
         display: flex; align-items: center; gap: 14px;
         font-family: "Arial Narrow", "Roboto Condensed", sans-serif;
       }
@@ -82,11 +89,6 @@ export class LoadingScreen {
         animation: ${PREFIX}spin 0.9s linear infinite;
       }
       @keyframes ${PREFIX}spin { to { transform: rotate(360deg); } }
-      .${PREFIX}title {
-        position: absolute; left: 40px; bottom: 34px; z-index: 2;
-        color: rgba(240,237,232,0.6); font-size: 13px; letter-spacing: 0.28em;
-        text-transform: uppercase; text-shadow: 0 2px 6px #000;
-      }
     `;
     document.head.appendChild(style);
   }
@@ -96,7 +98,7 @@ export class LoadingScreen {
    * served base). The last slide is treated as the cover (the finale). `minMs` is
    * the minimum time the overlay stays up before finish() is allowed to fade it.
    */
-  show(slides = [], { minMs = 2600 } = {}) {
+  show(slides = [], { minMs = 2600, logo = null } = {}) {
     if (this._root) this._teardown(true);
     this._finishing = false;
     this._startAt = performance.now();
@@ -115,15 +117,21 @@ export class LoadingScreen {
       return layer;
     });
 
-    const title = document.createElement("div");
-    title.className = `${PREFIX}title`;
-    title.textContent = "Belfast Commando";
-    root.appendChild(title);
-
+    // Bottom-right corner: the game logo above the spinner.
+    const corner = document.createElement("div");
+    corner.className = `${PREFIX}corner`;
+    if (logo) {
+      const img = document.createElement("img");
+      img.className = `${PREFIX}logo`;
+      img.src = `${BASE}${logo}`;
+      img.alt = "";
+      corner.appendChild(img);
+    }
     const spin = document.createElement("div");
     spin.className = `${PREFIX}spin`;
     spin.innerHTML = `<div class="${PREFIX}text">Loading</div><div class="${PREFIX}ring"></div>`;
-    root.appendChild(spin);
+    corner.appendChild(spin);
+    root.appendChild(corner);
 
     document.body.appendChild(root);
     this._root = root;

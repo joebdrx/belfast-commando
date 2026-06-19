@@ -24,15 +24,17 @@ import { Abilities } from "./game/Abilities.js";
 import { Decals } from "./game/Decals.js";
 import { LoadingScreen } from "./game/LoadingScreen.js";
 
-// GTA-style loading slides — promo art that slow-scans, ending on the cover.
+// GTA-style loading slides — promo art that slow-scans during the pre-menu boot.
+const LOADING_LOGO = "ui/bs-logo.png";
 const LOADING_SLIDES = [
   "loading/deheader.jpg",
-  "loading/skewl-stabber.jpg",
-  "loading/grrom-1.jpg",
-  "loading/stab-man-fat.jpg",
-  "loading/survivor.jpg",
-  "loading/cover.jpg",
+  "loading/skewlstabber.jpg",
+  "loading/liestabber.jpg",
+  "loading/grommer.jpg",
+  "loading/survivro.jpg",
 ];
+// The box-art cover is used ONLY for the pre-operation loading screen.
+const OPERATION_SLIDES = ["loading/cover.jpg"];
 
 const MAX_DT = 0.05;
 
@@ -71,7 +73,7 @@ class Game {
   constructor() {
     // Pre-menu loading screen up FIRST so it covers the whole boot + asset stream.
     this.loading = new LoadingScreen();
-    this.loading.show(LOADING_SLIDES, { minMs: 2800 });
+    this.loading.show(LOADING_SLIDES, { minMs: 2800, logo: LOADING_LOGO });
     this._loadingActive = false; // gates LEVEL input while a loading screen is up
 
     this.engine = new Engine(document.getElementById("app"));
@@ -289,7 +291,7 @@ class Game {
     // Loading screen (the cover) covers the sector build; input stays gated until
     // it fades. Pointer lock is still requested now (inside this click gesture).
     this._loadingActive = true;
-    this.loading.show(["loading/cover.jpg"], { minMs: 2800 });
+    this.loading.show(OPERATION_SLIDES, { minMs: 2800, logo: LOADING_LOGO });
     this._loadLevel(index);
     this.loading.finish().then(() => {
       this._loadingActive = false;
