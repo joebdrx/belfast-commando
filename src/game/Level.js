@@ -179,7 +179,7 @@ export class Level {
     this._groundMats = {
       gravel: tex("ground_gravel", { repeat: [5, 5], roughness: 0.97, color: 0x7a7068 }),
       crack: tex("ground_crack", { repeat: [4, 4], roughness: 0.95, color: 0x55585b }),
-      grass: tex("grass", { repeat: [3, 3], roughness: 1.0, color: 0x4a5a32 }),
+      grass: tex("grass", { repeat: [1, 1], roughness: 1.0, color: 0x4a5a32 }), // tiled per-strip via geometry UVs
     };
     // Belfast sectarian murals (Ulster loyalist + IRA republican) — alternated
     // along the boundary walls.
@@ -298,11 +298,10 @@ export class Level {
 
   /**
    * Ground detailing, placed where it makes sense rather than at random:
-   *   • GRASS / weeds grow in the neglected perimeter BACK-ALLEYS — the ~12m strip
-   *     between the outer buildings (±GRID_HALF) and the boundary wall (±BX/BZ).
+   *   • GRASS — a continuous straight verge butting each boundary wall (the
+   *     neglected back-alley behind the outer buildings), one long plane per wall.
    *   • GRATES / drains sit in the inner traffic lanes (between the column blocks).
-   *   • a few cracked/gravel patches add wear in the alleys.
-   * Deterministic per sector; everything skips building footprints.
+   * Deterministic per sector; grates skip building footprints.
    */
   _scatterGroundDetails() {
     const inStreet = (x, z) => {
@@ -318,25 +317,28 @@ export class Level {
 
     const HX = this.GRID_HALF_X, HZ = this.GRID_HALF_Z; // outer building edges (31, 61)
     const BX = HX + 12, BZ = HZ + 12;                    // boundary wall (43, 73) — matches _buildBoundary
-    const midX = (HX + BX) / 2, midZ = (HZ + BZ) / 2;    // alley centre-lines (~37, ~67)
-    const grass = this._groundMats.grass;
-    const gravel = this._groundMats.gravel, crack = this._groundMats.crack;
 
-    // --- Grass verges running the length of the four perimeter alleys. ---
-    for (let z = -HZ + 5; z <= HZ - 5; z += 8) {
-      put(grass, midX + (rng() - 0.5) * 5, z + (rng() - 0.5) * 4, 2.4 + rng() * 2.4);   // east alley
-      put(grass, -midX + (rng() - 0.5) * 5, z + (rng() - 0.5) * 4, 2.4 + rng() * 2.4);  // west alley
-      if (rng() < 0.3) put(rng() < 0.5 ? gravel : crack, midX + (rng() - 0.5) * 6, z, 2.0 + rng() * 2, 0.142);
-    }
-    for (let x = -HX + 5; x <= HX - 5; x += 8) {
-      put(grass, x + (rng() - 0.5) * 4, midZ + (rng() - 0.5) * 5, 2.4 + rng() * 2.4);   // north alley
-      put(grass, x + (rng() - 0.5) * 4, -midZ + (rng() - 0.5) * 5, 2.4 + rng() * 2.4);  // south alley
-      if (rng() < 0.3) put(rng() < 0.5 ? gravel : crack, x, midZ + (rng() - 0.5) * 6, 2.0 + rng() * 2, 0.142);
-    }
-    // Bigger grass clumps in the four corner alleys (most neglected).
-    for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
-      put(grass, sx * midX + (rng() - 0.5) * 4, sz * midZ + (rng() - 0.5) * 4, 4.0 + rng() * 2.5);
-    }
+    // --- Continuous grass verge butting each boundary wall (a straight strip, not
+    // patches). One long plane per wall; UVs tiled by size so grass never stretches.
+    const grass = this._groundMats.grass;
+    const VERGE = 5; // strip width (m), sitting just inside the wall
+    const TILE = 4;  // metres of ground per grass-texture tile
+    const strip = (cx2, cz2, w, d) => {
+      const geo = new THREE.PlaneGeometry(w, d);
+      const uv = geo.attributes.uv;
+      const su = Math.max(1, w / TILE), sv = Math.max(1, d / TILE);
+      for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * su, uv.getY(i) * sv);
+      uv.needsUpdate = true;
+      const m = new THREE.Mesh(geo, grass);
+      m.rotation.x = -Math.PI / 2;
+      m.position.set(cx2, 0.15, cz2);
+      m.renderOrder = 1;
+      this.group.add(m);
+    };
+    strip(BX - VERGE / 2, 0, VERGE, 2 * BZ);   // east wall (x=+BX): strip runs along Z
+    strip(-BX + VERGE / 2, 0, VERGE, 2 * BZ);  // west wall
+    strip(0, BZ - VERGE / 2, 2 * BX, VERGE);   // north wall (z=+BZ): strip runs along X
+    strip(0, -BZ + VERGE / 2, 2 * BX, VERGE);  // south wall
 
     // --- Storm drains/grates along the inner north-south traffic lanes (sparing). ---
     if (this._gratingMats.length) {
