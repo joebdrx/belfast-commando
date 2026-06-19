@@ -292,6 +292,44 @@ export class Level {
     if (g.children.length) this.group.add(g);
   }
 
+  /**
+   * Scatter flat ground decals across the open streets: small grass patches
+   * (weeds), a few metal grates/drains (sparingly), and cracked/gravel patches for
+   * variety. Deterministic per sector; skips anything over a building footprint.
+   */
+  _scatterGroundDetails() {
+    const inStreet = (x, z) => {
+      for (const b of this.colliders) {
+        if (b.max.y < 1) continue; // ground/pavement slabs — ignore
+        if (x > b.min.x - 0.5 && x < b.max.x + 0.5 && z > b.min.z - 0.5 && z < b.max.z + 0.5) return false;
+      }
+      return true;
+    };
+    const HX = this.GRID_HALF_X, HZ = this.GRID_HALF_Z;
+    let seed = 1234 + (this.index | 0) * 97;
+    const rng = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
+    let grates = 0, grass = 0, patches = 0;
+    for (let i = 0; i < 70; i++) {
+      const x = (rng() * 2 - 1) * HX, z = (rng() * 2 - 1) * HZ;
+      if (!inStreet(x, z)) continue;
+      const r = rng();
+      if (r < 0.16 && grates < 5 && this._gratingMats.length) {
+        const s = 1.0 + rng() * 0.6;
+        this._decal(this._pick(this._gratingMats, x, z, i), x, 0.15, z, 0, s, s, { ground: true });
+        grates++;
+      } else if (r < 0.6 && grass < 14) {
+        const s = 1.2 + rng() * 2.0;
+        this._decal(this._groundMats.grass, x, 0.15, z, 0, s, s, { ground: true });
+        grass++;
+      } else if (patches < 10) {
+        const gm = rng() < 0.5 ? this._groundMats.gravel : this._groundMats.crack;
+        const s = 1.6 + rng() * 2.6;
+        this._decal(gm, x, 0.142, z, 0, s, s, { ground: true });
+        patches++;
+      }
+    }
+  }
+
   _box(w, h, d, mat, x, y, z, { collider = true, los = false } = {}) {
     const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
     mesh.position.set(x, y, z);
@@ -350,6 +388,10 @@ export class Level {
     this._buildRoadPaint();
     this._buildBackdrop();
     this._buildBoundary();
+
+    // --- Ground detailing: grass patches, grates, and cracked/gravel variety
+    // scattered across the open streets (after buildings so footprints are known).
+    this._scatterGroundDetails();
 
     // --- Street cover: crates + explosive barrels in the open lanes. ------
     const coverCount = 6 + this.index * 2;
@@ -1022,7 +1064,10 @@ export class Level {
       _box.setFromObject(m);
       const innerFace = out > 0 ? _box.min[axis] : _box.max[axis];
       const wallC = axis === "x" ? BX : BZ;
-      const target = (out > 0 ? wallC : -wallC) - out * 0.6;
+      // Push the model fully BEHIND the wall (inner face 0.3m OUTSIDE the barrier
+      // plane) so the facade never protrudes into the street — only the building's
+      // upper storeys show above the 5m wall.
+      const target = (out > 0 ? wallC : -wallC) + out * 0.3;
       m.position[axis] += target - innerFace;
       this._brightenBuildingModel(m); // lift any over-dark baked material
       this.group.add(m);
@@ -1035,6 +1080,16 @@ export class Level {
     for (let z = -BZ + 6; z <= BZ - 6; z += STEP) {
       clad(-BX, z, Math.PI / 2, "x", -1); // west wall: facade faces +X
       clad(BX, z, -Math.PI / 2, "x", 1); // east wall: facade faces -X
+    }
+
+    // Signs + graffiti on the inner faces of the boundary walls (sparing).
+    for (let x = -BX + 14; x <= BX - 14; x += 24) {
+      this._decorateWall(x, -BZ + 0.35, 0, 14, WH, 31);       // south wall faces +Z
+      this._decorateWall(x, BZ - 0.35, Math.PI, 14, WH, 41);  // north wall faces -Z
+    }
+    for (let z = -BZ + 14; z <= BZ - 14; z += 24) {
+      this._decorateWall(-BX + 0.35, z, Math.PI / 2, 14, WH, 51);  // west wall faces +X
+      this._decorateWall(BX - 0.35, z, -Math.PI / 2, 14, WH, 61);  // east wall faces -X
     }
   }
 
