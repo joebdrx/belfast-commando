@@ -108,7 +108,7 @@ export class Audio {
   _initMusic() {
     if (this._musicGain || !this.ctx) return;
     this._musicGain = this.ctx.createGain();
-    this._musicGain.gain.value = 0.9;
+    this._musicGain.gain.value = 0.8; // whole music bed sits under SFX/voice
     this._musicGain.connect(this.master);
     this._ambientEls = {};
     for (const [key, rel] of Object.entries(MUSIC_LOOPS)) {
@@ -118,7 +118,9 @@ export class Audio {
         el.preload = "auto";
         const src = this.ctx.createMediaElementSource(el);
         const g = this.ctx.createGain();
-        g.gain.value = 0.5; // background level (under SFX/voice)
+        // Loudness-normalised tracks → these are the artistic mix levels. The
+        // LEVEL traffic sits lower so gunfire dominates during the operation.
+        g.gain.value = key === "level" ? 0.42 : 0.55;
         src.connect(g);
         g.connect(this._musicGain);
         this._ambientEls[key] = { el, gain: g };
@@ -164,7 +166,7 @@ export class Audio {
     src.buffer = this.buffers.music_drum;
     src.loop = true;
     const g = this.ctx.createGain();
-    g.gain.value = 0.55;
+    g.gain.value = 0.45; // subtle bodhrán bed under everything else
     src.connect(g);
     g.connect(this._musicGain);
     src.start();
@@ -177,7 +179,7 @@ export class Audio {
     if (this._whistleTimer) return;
     const playOnce = () => {
       if (this._ambientPhase !== "HUB") { this._whistleTimer = null; return; }
-      this._playBuffer("music_whistle", { gain: 0.6 });
+      this._playBuffer("music_whistle", { gain: 0.5 });
       // next: after the ~8.5s melody + a 14–38s gap of quiet.
       const wait = 8500 + 14000 + Math.random() * 24000;
       this._whistleTimer = setTimeout(playOnce, wait);
