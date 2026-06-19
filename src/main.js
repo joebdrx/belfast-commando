@@ -33,8 +33,8 @@ const LOADING_SLIDES = [
   "loading/grommer.jpg",
   "loading/survivro.jpg",
 ];
-// The box-art cover is used ONLY for the pre-operation loading screen.
-const OPERATION_SLIDES = ["loading/cover.jpg"];
+// The pre-operation loading screen plays this looping video (muted) with the logo.
+const OPERATION_VIDEO = "loading/operation-loading.mp4";
 
 const MAX_DT = 0.05;
 
@@ -291,7 +291,7 @@ class Game {
     // Loading screen (the cover) covers the sector build; input stays gated until
     // it fades. Pointer lock is still requested now (inside this click gesture).
     this._loadingActive = true;
-    this.loading.show(OPERATION_SLIDES, { minMs: 2800, logo: LOADING_LOGO });
+    this.loading.show([], { minMs: 2800, logo: LOADING_LOGO, video: OPERATION_VIDEO });
     this._loadLevel(index);
     this.loading.finish().then(() => {
       this._loadingActive = false;

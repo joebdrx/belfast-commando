@@ -20,6 +20,7 @@ export class LoadingScreen {
   constructor() {
     this._root = null;
     this._layers = [];
+    this._video = null;
     this._timer = null;
     this._coverIndex = 0;
     this._startAt = 0;
@@ -55,6 +56,11 @@ export class LoadingScreen {
       @keyframes ${PREFIX}kb-b {
         from { transform: scale(1.18) translate(3%, -2%); }
         to   { transform: scale(1.08) translate(-3%, 2%); }
+      }
+      /* Full-bleed video background (operation loader). */
+      .${PREFIX}video {
+        position: absolute; inset: 0; width: 100%; height: 100%;
+        object-fit: cover; background: #05060a;
       }
       /* Bottom edge vignette so the spinner reads over busy art. */
       .${PREFIX}root::after {
@@ -98,9 +104,10 @@ export class LoadingScreen {
    * served base). The last slide is treated as the cover (the finale). `minMs` is
    * the minimum time the overlay stays up before finish() is allowed to fade it.
    */
-  show(slides = [], { minMs = 2600, logo = null } = {}) {
+  show(slides = [], { minMs = 2600, logo = null, video = null } = {}) {
     if (this._root) this._teardown(true);
     this._finishing = false;
+    this._video = null;
     this._startAt = performance.now();
     this._minMs = minMs;
     this._coverIndex = Math.max(0, slides.length - 1);
@@ -108,14 +115,28 @@ export class LoadingScreen {
     const root = document.createElement("div");
     root.className = `${PREFIX}root`;
 
-    this._layers = slides.map((src, i) => {
-      const layer = document.createElement("div");
-      layer.className = `${PREFIX}img ${i % 2 ? `${PREFIX}pan-b` : `${PREFIX}pan-a`}`;
-      layer.style.backgroundImage = `url("${BASE}${src}")`;
-      if (i === 0) layer.classList.add(`${PREFIX}on`);
-      root.appendChild(layer);
-      return layer;
-    });
+    if (video) {
+      // Looping muted video background (autoplays — muted, so the browser allows
+      // it even without a gesture; the game music plays underneath).
+      const v = document.createElement("video");
+      v.className = `${PREFIX}video`;
+      v.src = `${BASE}${video}`;
+      v.autoplay = true; v.loop = true; v.muted = true;
+      v.playsInline = true; v.setAttribute("playsinline", "");
+      v.play && v.play().catch(() => {});
+      root.appendChild(v);
+      this._video = v;
+      this._layers = [];
+    } else {
+      this._layers = slides.map((src, i) => {
+        const layer = document.createElement("div");
+        layer.className = `${PREFIX}img ${i % 2 ? `${PREFIX}pan-b` : `${PREFIX}pan-a`}`;
+        layer.style.backgroundImage = `url("${BASE}${src}")`;
+        if (i === 0) layer.classList.add(`${PREFIX}on`);
+        root.appendChild(layer);
+        return layer;
+      });
+    }
 
     // Bottom-right corner: the game logo above the spinner.
     const corner = document.createElement("div");
@@ -178,6 +199,10 @@ export class LoadingScreen {
 
   _teardown(immediate) {
     if (this._timer) { clearInterval(this._timer); this._timer = null; }
+    if (this._video) {
+      try { this._video.pause(); this._video.removeAttribute("src"); this._video.load(); } catch (_) { /* gone */ }
+      this._video = null;
+    }
     if (this._root) { this._root.remove(); this._root = null; }
     this._layers = [];
     if (immediate) this._finishing = false;
