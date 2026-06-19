@@ -157,8 +157,9 @@ export class Level {
     // Grid geometry shared across builders. Buildings are tall, long terraces:
     // narrow frontage (X) and a long run (Z), so they line the north–south
     // streets the player walks down.
-    this.WALL_H = 11; // exterior brick shell height (lowered from 15 — less towering)
-    this.CEIL_H = 3.2; // low apartment ceiling INSIDE the shell (decoupled from WALL_H)
+    this.CEIL_H = 3.2; // interior apartment ceiling height
+    this.WALL_H = 3.6; // exterior wall height — sits just above the ceiling so the
+                       // roof caps right on top (no hollow shell above the room)
     this.BLOCK_W = 14; // frontage width (X)
     this.BLOCK_L = 56; // 4× the original 14m run (Z)
     this.STREET = 10; // lane width between blocks
@@ -434,33 +435,34 @@ export class Level {
     this._buildRoof(cx, cz);
     this._buildChimney(cx, cz);
 
-    // --- Cladding: uniform BRICK on every exterior face (long sides + ends), at
-    // a real-world brick scale (no stretching). The grimy-photo/baked-facade
-    // cladding is gone — interior buildings now read as solid brick all round.
+    // --- Cladding: continuous exterior wall on every face (long sides + ends), at
+    // a real-world scale (no stretching). The material varies per building (brick /
+    // dark brick / concrete) so neighbours differ.
+    const clad = this._pickBuildingMat(cx, cz);
     const backRotY = doorSide === 1 ? -Math.PI / 2 : Math.PI / 2;
     const doorRotY = doorSide === 1 ? Math.PI / 2 : -Math.PI / 2;
     // Solid back long wall — one panel.
-    this._brickWall(backWallX - doorSide * 0.31, wallH / 2, cz, backRotY, this.BLOCK_L, wallH);
+    this._brickWall(backWallX - doorSide * 0.31, wallH / 2, cz, backRotY, this.BLOCK_L, wallH, clad);
     // Door long wall — a panel per solid segment (doorways stay open).
     let s = cz - halfL;
     for (let i = 0; i <= N; i++) {
       const e = i < N ? roomZ(i) - doorW / 2 : cz + halfL;
       if (e - s > 0.4) {
-        this._brickWall(doorWallX + doorSide * 0.31, wallH / 2, (s + e) / 2, doorRotY, e - s, wallH);
+        this._brickWall(doorWallX + doorSide * 0.31, wallH / 2, (s + e) / 2, doorRotY, e - s, wallH, clad);
       }
       if (i < N) s = roomZ(i) + doorW / 2;
     }
-    // End (short) walls — brick too, so the whole shell is brick.
-    this._brickWall(cx, wallH / 2, cz - halfL - 0.32, Math.PI, this.BLOCK_W, wallH); // north end faces -Z
-    this._brickWall(cx, wallH / 2, cz + halfL + 0.32, 0, this.BLOCK_W, wallH); // south end faces +Z
+    // End (short) walls — same cladding material, so the whole shell matches.
+    this._brickWall(cx, wallH / 2, cz - halfL - 0.32, Math.PI, this.BLOCK_W, wallH, clad); // north end faces -Z
+    this._brickWall(cx, wallH / 2, cz + halfL + 0.32, 0, this.BLOCK_W, wallH, clad); // south end faces +Z
 
     // Facade detailing (windows/door) so the brick shell reads as a real terrace.
     // These buildings have a pitched roof, so no parapet cap. The door wall keeps
     // its ground floor clear (the kickable doors live there) — windows above only.
-    this._addFacade(doorWallX + doorSide * 0.32, cz, doorRotY, this.BLOCK_L, wallH, { minRow: 1, noDoor: true, noRoofCap: true });
-    this._addFacade(backWallX - doorSide * 0.32, cz, backRotY, this.BLOCK_L, wallH, { noRoofCap: true });
-    this._addFacade(cx, cz - halfL - 0.33, Math.PI, this.BLOCK_W, wallH, { noRoofCap: true });
-    this._addFacade(cx, cz + halfL + 0.33, 0, this.BLOCK_W, wallH, { noRoofCap: true });
+    this._addWindowFacade(doorWallX + doorSide * 0.32, cz, doorRotY, this.BLOCK_L, wallH, { minRow: 1, noDoor: true, noRoofCap: true });
+    this._addWindowFacade(backWallX - doorSide * 0.32, cz, backRotY, this.BLOCK_L, wallH, { noRoofCap: true });
+    this._addWindowFacade(cx, cz - halfL - 0.33, Math.PI, this.BLOCK_W, wallH, { noRoofCap: true });
+    this._addWindowFacade(cx, cz + halfL + 0.33, 0, this.BLOCK_W, wallH, { noRoofCap: true });
 
     // Garrison `enemyCount` distinct random rooms (released when their door breaks).
     const order = [];
@@ -530,12 +532,14 @@ export class Level {
     const frontX = cx + frontSign * halfW;
     const backX = cx - frontSign * halfW;
 
-    // Four CONTINUOUS brick faces (proportionate UVs via _brickWall → no stretch),
-    // each one panel spanning the whole face so there are no gaps/voids anywhere.
-    this._brickWall(frontX + frontSign * 0.05, h / 2, cz, frontSign * Math.PI / 2, this.BLOCK_L, h);
-    this._brickWall(backX - frontSign * 0.05, h / 2, cz, -frontSign * Math.PI / 2, this.BLOCK_L, h);
-    this._brickWall(cx, h / 2, cz - halfL - 0.05, Math.PI, this.BLOCK_W, h);
-    this._brickWall(cx, h / 2, cz + halfL + 0.05, 0, this.BLOCK_W, h);
+    // Four CONTINUOUS faces (proportionate UVs via _brickWall → no stretch), each
+    // one panel spanning the whole face so the texture covers it with no gaps/voids.
+    // The wall material varies per building (brick / dark brick / concrete).
+    const wallMat = this._pickBuildingMat(cx, cz);
+    this._brickWall(frontX + frontSign * 0.05, h / 2, cz, frontSign * Math.PI / 2, this.BLOCK_L, h, wallMat);
+    this._brickWall(backX - frontSign * 0.05, h / 2, cz, -frontSign * Math.PI / 2, this.BLOCK_L, h, wallMat);
+    this._brickWall(cx, h / 2, cz - halfL - 0.05, Math.PI, this.BLOCK_W, h, wallMat);
+    this._brickWall(cx, h / 2, cz + halfL + 0.05, 0, this.BLOCK_W, h, wallMat);
 
     // Solid roof slab caps the top (no open/black top edge).
     const roof = new THREE.Mesh(
@@ -547,7 +551,7 @@ export class Level {
 
     // Street-facing facade: window grid + ground door (parapet cap skipped — the
     // roof slab already caps it). Sits just in front of the brick face.
-    this._addFacade(frontX + frontSign * 0.12, cz, frontSign * Math.PI / 2, this.BLOCK_L, h, { noRoofCap: true });
+    this._addWindowFacade(frontX + frontSign * 0.12, cz, frontSign * Math.PI / 2, this.BLOCK_L, h, { noRoofCap: true });
 
     // One clean footprint collider + LOS blocker for the whole block.
     const box = footprintCollider(cx, cz, this.BLOCK_W, h, this.BLOCK_L);
@@ -604,9 +608,8 @@ export class Level {
    * Shared brick material (one draw material); per-panel geometry UVs do the
    * scaling, so tall and long walls all read at the same brick scale.
    */
-  _brickWall(x, y, z, rotY, w, h) {
+  _brickWall(x, y, z, rotY, w, h, mat = this._materials.brick) {
     const TILE_M = 4; // metres of wall per brick-texture tile
-    const mat = this._materials.brick;
     const rep = mat && mat.map && mat.map.repeat ? mat.map.repeat : { x: 1, y: 1 };
     const geo = new THREE.PlaneGeometry(w, h);
     const uv = geo.attributes.uv;
@@ -622,13 +625,24 @@ export class Level {
   }
 
   /**
+   * Pick an exterior wall material for a building, deterministically from its grid
+   * position + sector index, so neighbouring buildings differ (red brick / dark
+   * brick / grey concrete). All are loaded from public/textures/<slug>/.
+   */
+  _pickBuildingMat(cx, cz) {
+    const mats = [this._materials.brick, this._materials.brickDark, this._materials.concrete];
+    const k = Math.abs(Math.round(cx / 7) + Math.round(cz / 7) * 3 + (this.index | 0));
+    return mats[k % mats.length];
+  }
+
+  /**
    * Stamp a proportionate facade (window grid + optional door + roof cap) onto a
    * wall face so buildings read as real. `(x, z)` is the wall's ground-line
    * centre, `rotY` orients it outward (same convention as _brickWall), `w`/`h`
    * are the face size. `opts` flows to BuildingFacade (e.g. `{ doorClear:true }`
    * to skip the door for walls that already have kickable doors).
    */
-  _addFacade(x, z, rotY, w, h, opts = {}) {
+  _addWindowFacade(x, z, rotY, w, h, opts = {}) {
     const group = buildFacade(THREE, {
       glass: this._materials.glass,
       glassLit: this._materials.glassLit,
@@ -643,7 +657,7 @@ export class Level {
   _buildRoof(cx, cz) {
     const halfW = this.BLOCK_W / 2;
     const wallH = this.WALL_H;
-    const rise = 2.6;
+    const rise = 1.6; // gentle pitch, proportionate to the low walls
     const slopeLen = Math.hypot(rise, halfW);
     const angle = Math.atan2(rise, halfW);
     for (const sgn of [-1, 1]) {
