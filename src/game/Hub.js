@@ -1,6 +1,8 @@
 import * as THREE from "three";
 
 const BASE = import.meta.env.BASE_URL || "/";
+// Safehouse character display scale — the hero + ally figures are scaled up 25%.
+const MENU_CHAR_SCALE = 1.25;
 
 /**
  * Hub
@@ -392,8 +394,8 @@ export class Hub {
    * tests / not yet streamed) each falls back to the low-poly capsule figure.
    */
   _buildNpcs() {
-    // Ruairí — now a SECOND, distinct player character (the static player_model2
-    // mesh) standing idle, for visual variety among the menu figures.
+    // Ruairí — a SECOND, distinct player character: the STATIC player-2 model
+    // (its rig animation deformed badly), with a subtle procedural breathing bob.
     this._buildNpc({
       x: -2.4,
       z: -3.3,
@@ -401,7 +403,8 @@ export class Hub {
       coat: 0x3c4a32,
       hat: "cap",
       hatColor: 0x1c2018,
-      staticModel: "player_model2",
+      staticModel: "player2_static",
+      breathing: true,
     });
     // Davy — Ulster-Scots paramilitary, rust coat, maroon beret. Patrols a short
     // path behind the table (clear of the hero + camera), carrying his SMG.
@@ -414,12 +417,12 @@ export class Hub {
       hatColor: 0x5a1f24,
       patrol: { minX: 1.2, maxX: 3.0, z: -3.7, speed: 0.55, dir: 1 },
     });
-    // True once BOTH the menu actor (Davy) AND player_model2 (Ruairí) are loaded,
-    // so the _ensureNpcs rebuild swaps the capsule fallbacks for the real figures.
+    // True once the menu actor (Davy) AND the static player-2 model (Ruairí) are
+    // loaded, so the _ensureNpcs rebuild swaps the capsule fallbacks for the reals.
     this._npcsAnimated = !!(
       this.assets &&
       this.assets.hasMenuActor && this.assets.hasMenuActor() &&
-      this.assets.hasModel && this.assets.hasModel("player_model2")
+      this.assets.hasPlayer2 && this.assets.hasPlayer2()
     );
   }
 
@@ -438,42 +441,35 @@ export class Hub {
   }
 
   /**
-   * A static character model (e.g. player_model2) standing as a menu figure. The
-   * source mesh is modelled lying along its longest axis, so we stand it upright,
-   * recentre it horizontally, and seat its feet on the floor. Falls back to the
-   * capsule figure until the GLB has streamed in (the _ensureNpcs rebuild swaps it
-   * in once available).
+   * A STATIC character model standing as a menu figure (its rig animation is
+   * unusable). The mesh is modelled upright + foot-anchored by MODEL_DEFS, so we
+   * just place + face it; `cfg.breathing` flags it for a subtle idle bob in
+   * update(). Falls back to the capsule until the GLB streams in (the _ensureNpcs
+   * rebuild swaps it in).
    */
   _buildStaticNpc(cfg) {
-    const m = this.assets && typeof this.assets.getModel === "function"
-      ? this.assets.getModel(cfg.staticModel)
+    // player-2 is a skinned mesh shown static (bind pose) — it must be cloned via
+    // getPlayer2 (SkeletonUtils); a plain getModel clone collapses skinned meshes.
+    const obj = this.assets && typeof this.assets.getPlayer2 === "function"
+      ? this.assets.getPlayer2()
       : null;
-    if (!m) { this._buildCapsuleNpc(cfg); return; }
+    if (!obj) { this._buildCapsuleNpc(cfg); return; }
     const group = new THREE.Group();
-    // Stand it upright: rotate the longest (body) axis to vertical.
-    m.updateMatrixWorld(true);
-    const size = new THREE.Box3().setFromObject(m).getSize(new THREE.Vector3());
-    if (size.z >= size.y && size.z >= size.x) m.rotation.x = -Math.PI / 2; // Z (body) → up, faces -Z
-    else if (size.x >= size.y && size.x >= size.z) m.rotation.z = Math.PI / 2; // X → up
-    m.rotation.y += Math.PI; // turn to face +Z (toward the lobby camera)
-    m.updateMatrixWorld(true);
-    const box = new THREE.Box3().setFromObject(m);
-    m.position.x -= (box.min.x + box.max.x) / 2; // recentre X
-    m.position.z -= (box.min.z + box.max.z) / 2; // recentre Z
-    m.position.y -= box.min.y; // feet on the floor
-    group.add(m);
+    group.scale.setScalar(MENU_CHAR_SCALE); // scaled up 25% like the others
+    group.add(obj);
     group.position.set(cfg.x, 0, cfg.z);
-    group.rotation.y = cfg.yaw;
+    group.rotation.y = cfg.yaw + (cfg.faceFlip ? Math.PI : 0); // rig front is +Z
     this.scene.add(group);
-    this.npcs.push({ group, baseY: 0, phase: this.npcs.length * 1.7 });
+    this.npcs.push({ group, baseY: 0, phase: this.npcs.length * 1.7, breathing: !!cfg.breathing });
   }
 
   /**
    * Animated ally: the shared rigged actor, given an SMG (the patroller carries
    * it at the ready in-hand; the idler wears it slung across the back).
    */
-  _buildAnimatedNpc({ x, z, yaw, patrol }, actor) {
+  _buildAnimatedNpc({ x, z, yaw, patrol, faceFlip }, actor) {
     const group = new THREE.Group();
+    group.scale.setScalar(MENU_CHAR_SCALE); // menu characters scaled up 25%
     group.add(actor.object3D);
 
     // Only the patroller carries a weapon (held at the ready). The idler has no
@@ -489,7 +485,7 @@ export class Hub {
       group.rotation.y = Math.PI / 2; // rig front is +Z → face +X (start dir = +1)
     } else {
       group.position.set(x, 0, z);
-      group.rotation.y = yaw;
+      group.rotation.y = yaw + (faceFlip ? Math.PI : 0); // faceFlip if the rig faces away
     }
     this.scene.add(group);
 
@@ -574,6 +570,7 @@ export class Hub {
    */
   _buildHero() {
     const group = new THREE.Group();
+    group.scale.setScalar(MENU_CHAR_SCALE); // scaled up 25% to match the allies
     group.position.set(1.8, 0, -0.6); // front-right, the lobby focal point
     // Face the camera (at ~(-0.6,1.5,2.7)). Rig front is +Z, facing dir =
     // (sin y, cos y); aiming at the camera gives y ≈ -0.5 (slight 3/4 stance).
@@ -911,6 +908,12 @@ export class Hub {
         } else if (n.group.position.x <= p.minX) {
           n.group.position.x = p.minX; p.dir = 1; n.group.rotation.y = Math.PI / 2; // face +X
         }
+      } else if (n.breathing) {
+        // Subtle idle breathing on the static figure: a tiny vertical chest-rise
+        // (feet stay planted) + a micro-bob, so it reads as alive without a rig.
+        const b = 1 + Math.sin(t * 1.3 + n.phase) * 0.014;
+        n.group.scale.y = MENU_CHAR_SCALE * b;
+        n.group.position.y = n.baseY + (b - 1) * 0.06;
       } else if (!n.mixer) {
         n.group.position.y = n.baseY + Math.sin(t * 1.4 + n.phase) * 0.025;
       }

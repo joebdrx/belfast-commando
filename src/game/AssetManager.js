@@ -78,9 +78,6 @@ const MODEL_DEFS = {
   // upright + face it into the room. Centre-anchored so it pivots about its own
   // middle when Hub rotates it onto the wall.
   landline_phone:   { size: 0.55, fit: "max", anchor: "center", rotY: 0 },
-  // A second player character (static high-poly mesh, modelled lying along Z).
-  // Hub stands it upright + re-anchors the feet, so centre-anchor + max-fit here.
-  player_model2:    { size: 1.75, fit: "max", anchor: "center", rotY: 0 },
   // Belfast exterior building templates (optimized from asset-reference via
   // scripts/optimize-buildings.sh). Provisional; tuned from the in-game audit.
   bldg_terrace:     { size: 12, fit: "height", anchor: "bottom", rotY: 0 },
@@ -207,7 +204,7 @@ export class AssetManager {
     // Environment map, 3D models, 2D sprites, and the rigged enemy run alongside.
     const envJob = scene ? this._loadEnvironment(scene) : Promise.resolve();
     const skyJob = scene ? this._loadSky(scene) : Promise.resolve();
-    await Promise.all([...jobs, envJob, skyJob, this.loadModels(), this.loadSprites(), this.loadMurals(), this._loadRiggedEnemy(), this._loadArchetypeRigs(), this._loadAttackClip(), this._loadMenuActor(), this._loadMenuActor2(), this.captureFacades(), this.loadFace(), this.loadHouseSide()]);
+    await Promise.all([...jobs, envJob, skyJob, this.loadModels(), this.loadSprites(), this.loadMurals(), this._loadRiggedEnemy(), this._loadArchetypeRigs(), this._loadAttackClip(), this._loadMenuActor(), this._loadPlayer2(), this.captureFacades(), this.loadFace(), this.loadHouseSide()]);
   }
 
   /** Load the photo face that gets billboarded onto each enemy's head. */
@@ -604,48 +601,48 @@ export class AssetManager {
     return !!this._menuActor;
   }
 
-  /** A SECOND animated menu character (player-2 rig) — same pipeline as the menu
-   *  actor (menu_actor2.glb walk + anim_menu2_idle.glb idle). */
-  async _loadMenuActor2() {
+  /** Player-2 used STATIC: a skinned mesh shown in its bind/rest pose (its own
+   *  animation deformed badly). Loaded like a rig so it can be SkeletonUtils-
+   *  cloned (a plain clone collapses skinned meshes); Hub adds a breathing bob. */
+  async _loadPlayer2() {
     try {
-      const base = await this.gltfLoader.loadAsync(`${BASE}models/menu_actor2.glb`);
-      const clips = {};
-      if (base.animations[0]) clips.walk = base.animations[0];
-      const idle = await this.gltfLoader.loadAsync(`${BASE}models/anim_menu2_idle.glb`).catch(() => null);
-      if (idle && idle.animations[0]) clips.idle = idle.animations[0];
+      const base = await this.gltfLoader.loadAsync(`${BASE}models/player2_static.glb`);
       base.scene.traverse((o) => {
         if (o.isMesh) o.frustumCulled = false;
         const mats = o.material ? (Array.isArray(o.material) ? o.material : [o.material]) : [];
         for (const m of mats) { if (m && m.metalness !== undefined) { m.metalness = 0; m.needsUpdate = true; } }
       });
+      // Measure height with the baked clip briefly applied (bind-pose bbox is tiny).
       let height = 1.7;
-      if (clips.walk) {
+      const clip = base.animations[0];
+      if (clip) {
         const tmp = new THREE.AnimationMixer(base.scene);
-        tmp.clipAction(clips.walk).play();
-        tmp.update(0.2);
+        tmp.clipAction(clip).play();
+        tmp.update(0.01);
         base.scene.updateMatrixWorld(true);
         height = new THREE.Box3().setFromObject(base.scene).getSize(new THREE.Vector3()).y || 1.7;
         tmp.stopAllAction();
       }
-      this._menuActor2 = { scene: base.scene, clips, height };
+      this._player2 = { scene: base.scene, height };
     } catch {
-      this._menuActor2 = null;
+      this._player2 = null;
     }
   }
 
-  hasMenuActor2() {
-    return !!this._menuActor2;
+  hasPlayer2() {
+    return !!this._player2;
   }
 
-  /** A fresh clone of the player-2 menu character (mirrors getMenuActor). */
-  getMenuActor2() {
-    if (!this._menuActor2) return null;
-    const inner = cloneSkeleton(this._menuActor2.scene);
-    inner.rotation.y = 0; // rig front is +Z; callers rotate the wrap to aim it
+  /** A fresh SkeletonUtils clone of player-2, wrapped + scaled to ~1.8m, shown in
+   *  bind/rest pose (no mixer). Front is +Z. Returns null when unavailable. */
+  getPlayer2() {
+    if (!this._player2) return null;
+    const inner = cloneSkeleton(this._player2.scene);
+    inner.rotation.y = 0;
     const wrap = new THREE.Group();
     wrap.add(inner);
-    wrap.scale.setScalar(1.8 / (this._menuActor2.height || 1.7));
-    return { object3D: wrap, clips: this._menuActor2.clips };
+    wrap.scale.setScalar(1.8 / (this._player2.height || 1.7));
+    return wrap;
   }
 
   /**
