@@ -25,6 +25,16 @@ const SAMPLES = {
   t1_notbrping: "sfx/enemy/type1/notbrping.mp3",
   t2_ihearurarases: "sfx/enemy/type2/ihearurarases.mp3",
   t2_bloodyfu: "sfx/enemy/type2/bloodyfu.mp3",
+  // Music/ambience decoded into buffers: the drum loops gaplessly (BufferSource)
+  // and the whistle plays intermittently. The long traffic ambiences stream via
+  // HTMLAudioElement instead (see MUSIC_LOOPS) to avoid huge in-memory PCM.
+  music_drum: "sfx/music/drum.mp3",
+  music_whistle: "sfx/music/whistle.mp3",
+};
+// Long looping ambiences — streamed (HTMLAudioElement), not decoded to PCM.
+const MUSIC_LOOPS = {
+  menu: "sfx/music/menu_ambient.mp3", // main menu (HUB)
+  level: "sfx/music/level_ambient.mp3", // during the operation (LEVEL)
 };
 // Player kill bark. Enemy barks are keyed by model type → {taunt, pain} pools,
 // so only that model's voice plays for that model.
@@ -61,6 +71,12 @@ export class Audio {
     // but multiple enemies (or rapid kills) don't stack into noise.
     this._playerVoiceAt = 0;
     this._enemyVoiceAt = 0;
+    // Music/ambience state.
+    this._musicGain = null;
+    this._ambientEls = null; // { menu:{el,gain}, level:{el,gain} }
+    this._drumSource = null; // gapless looping bodhrán
+    this._whistleTimer = null; // intermittent whistle scheduler
+    this._ambientPhase = null;
   }
 
   /** Must be called from a user gesture (Start click) to satisfy autoplay. */
@@ -79,6 +95,93 @@ export class Audio {
     this.master.gain.value = 0.5;
     this.master.connect(this.ctx.destination);
     this._loadSamples();
+    this._initMusic();
+  }
+
+  /** Build the music sub-graph + the streamed ambience elements (once). All music
+   *  routes through `_musicGain` → master, so mute (master gain) silences it too. */
+  _initMusic() {
+    if (this._musicGain || !this.ctx) return;
+    this._musicGain = this.ctx.createGain();
+    this._musicGain.gain.value = 0.9;
+    this._musicGain.connect(this.master);
+    this._ambientEls = {};
+    for (const [key, rel] of Object.entries(MUSIC_LOOPS)) {
+      try {
+        const el = new window.Audio(`${BASE}${rel}`);
+        el.loop = true;
+        el.preload = "auto";
+        const src = this.ctx.createMediaElementSource(el);
+        const g = this.ctx.createGain();
+        g.gain.value = 0.5; // background level (under SFX/voice)
+        src.connect(g);
+        g.connect(this._musicGain);
+        this._ambientEls[key] = { el, gain: g };
+      } catch (_) { /* element unsupported → skip */ }
+    }
+  }
+
+  /**
+   * Drive the phase-appropriate ambience. The bodhrán DRUM plays continuously in
+   * BOTH the menu and the level (started once, never stopped). The traffic
+   * ambience swaps menu↔level. The WHISTLE plays intermittently in the menu only
+   * (never a continuous loop). Safe to call before init() (no-op until audio is up).
+   */
+  setAmbient(phase) {
+    if (!this._ok() || !this._ambientEls) return;
+    this._ambientPhase = phase;
+    this._startDrum(); // continuous in both menu + level
+    if (phase === "HUB") {
+      this._loop("menu", true);
+      this._loop("level", false);
+      this._scheduleWhistle();
+    } else if (phase === "LEVEL") {
+      this._loop("level", true);
+      this._loop("menu", false);
+      this._stopWhistle();
+    } else {
+      this._loop("menu", false);
+      this._loop("level", false);
+      this._stopWhistle();
+    }
+  }
+
+  _loop(key, on) {
+    const a = this._ambientEls && this._ambientEls[key];
+    if (!a) return;
+    if (on) { a.el.play().catch(() => {}); } else { a.el.pause(); }
+  }
+
+  /** Start the gapless looping bodhrán (idempotent). */
+  _startDrum() {
+    if (this._drumSource || !this.buffers.music_drum) return;
+    const src = this.ctx.createBufferSource();
+    src.buffer = this.buffers.music_drum;
+    src.loop = true;
+    const g = this.ctx.createGain();
+    g.gain.value = 0.55;
+    src.connect(g);
+    g.connect(this._musicGain);
+    src.start();
+    this._drumSource = src;
+  }
+
+  /** Schedule the intermittent whistle: play, then silence for a random spell,
+   *  then play again — never a continuous loop. Menu only. */
+  _scheduleWhistle() {
+    if (this._whistleTimer) return;
+    const playOnce = () => {
+      if (this._ambientPhase !== "HUB") { this._whistleTimer = null; return; }
+      this._playBuffer("music_whistle", { gain: 0.6 });
+      // next: after the ~8.5s melody + a 14–38s gap of quiet.
+      const wait = 8500 + 14000 + Math.random() * 24000;
+      this._whistleTimer = setTimeout(playOnce, wait);
+    };
+    this._whistleTimer = setTimeout(playOnce, 5000); // first one a few seconds in
+  }
+
+  _stopWhistle() {
+    if (this._whistleTimer) { clearTimeout(this._whistleTimer); this._whistleTimer = null; }
   }
 
   /** Fetch + decode every MP3 in SAMPLES into this.buffers (best-effort). */
@@ -149,14 +252,16 @@ export class Audio {
     this._bark(["p_lookatallthese"], { player: true, chance: 1, cooldown: 0, gain: 0.95 });
   }
 
-  /** Enemy taunt when it attacks the player — voiced by the model's type pool. */
+  /** Enemy taunt when it attacks the player — voiced by the model's type pool.
+   *  Gain 1.25 (loud); the source MP3s are loudness-normalised so all enemy lines
+   *  play at the same level. */
   enemyTaunt(pos, listenerPos, type = 1) {
-    this._bark(ENEMY_TAUNTS[type] || ENEMY_TAUNTS[1], { chance: 0.5, cooldown: 2.2, gain: 0.85, pos, listenerPos });
+    this._bark(ENEMY_TAUNTS[type] || ENEMY_TAUNTS[1], { chance: 0.5, cooldown: 2.2, gain: 1.25, pos, listenerPos });
   }
 
-  /** Enemy pain cry when hit or killed — voiced by the model's type pool. */
+  /** Enemy pain cry when hit or killed — voiced by the model's type pool (loud). */
   enemyPain(pos, listenerPos, type = 1) {
-    this._bark(ENEMY_PAIN[type] || ENEMY_PAIN[1], { chance: 0.55, cooldown: 1.6, gain: 0.85, pos, listenerPos });
+    this._bark(ENEMY_PAIN[type] || ENEMY_PAIN[1], { chance: 0.55, cooldown: 1.6, gain: 1.25, pos, listenerPos });
   }
 
   setMuted(muted) {

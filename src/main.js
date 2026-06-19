@@ -245,6 +245,7 @@ class Game {
     this.menu.refresh();
     this.menu.show();
     this._setHubLabelsVisible(true);
+    this.audio.setAmbient("HUB"); // menu ambience + drum + intermittent whistle
   }
 
   /**
@@ -335,6 +336,7 @@ class Game {
     this.paused = false;
     this.state.setPhase("LEVEL");
     this._requestLock();
+    this.audio.setAmbient("LEVEL"); // level ambience (drum continues from the menu)
     // Defer the "look at all these…" bark until the world is actually up and the
     // player can see it: the loop fires it once we're a live, rendered, pointer-
     // locked LEVEL frame and ~1s has elapsed (not during the load transition).
@@ -451,6 +453,15 @@ class Game {
   }
 
   _bindUI() {
+    // First user gesture anywhere unlocks audio (autoplay policy) and starts the
+    // current phase's ambience — so the menu music/drum play while browsing.
+    const unlockAudio = () => {
+      this.audio.init();
+      this.audio.setAmbient(this.phase);
+    };
+    window.addEventListener("pointerdown", unlockAudio, { once: true });
+    window.addEventListener("keydown", unlockAudio, { once: true });
+
     // The #overlay card is used only for PAUSED + RESULTS (HUB uses Menu).
     document.getElementById("overlay").addEventListener("click", () => this._handlePrimaryClick());
     this.dom.addEventListener("click", (e) => {
