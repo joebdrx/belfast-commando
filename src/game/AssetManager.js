@@ -77,7 +77,10 @@ const MODEL_DEFS = {
   // wall phone, proportionate to the room) and let Hub._buildPhone stand it
   // upright + face it into the room. Centre-anchored so it pivots about its own
   // middle when Hub rotates it onto the wall.
-  landline_phone:   { size: 0.85, fit: "max", anchor: "center", rotY: 0 },
+  landline_phone:   { size: 0.55, fit: "max", anchor: "center", rotY: 0 },
+  // A second player character (static high-poly mesh, modelled lying along Z).
+  // Hub stands it upright + re-anchors the feet, so centre-anchor + max-fit here.
+  player_model2:    { size: 1.75, fit: "max", anchor: "center", rotY: 0 },
   // Belfast exterior building templates (optimized from asset-reference via
   // scripts/optimize-buildings.sh). Provisional; tuned from the in-game audit.
   bldg_terrace:     { size: 12, fit: "height", anchor: "bottom", rotY: 0 },

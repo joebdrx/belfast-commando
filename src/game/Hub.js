@@ -261,18 +261,8 @@ export class Hub {
    * (headless / tests / still streaming). Each call uses its OWN model clone.
    */
   _ensureTableSmg() {
-    if (this._tableSmg || !this.assets || typeof this.assets.getModel !== "function") return;
-    const smg = this.assets.getModel("weapon_ak");
-    if (!smg) return;
-    // Lay it flat (the model's long axis is its barrel); a small yaw makes it
-    // sit casually across the planning map rather than square to the table.
-    smg.rotation.set(0, 0.6, 0);
-    smg.updateMatrixWorld(true);
-    const minY = new THREE.Box3().setFromObject(smg).min.y;
-    const restY = (this._tableTopY ?? 0.95) + 0.06; // sit on the parchment map
-    smg.position.set(-0.15, restY - minY, -2.35); // seat its bbox floor on the map
-    this.scene.add(smg);
-    this._tableSmg = smg;
+    // Intentionally empty — the table no longer holds a spare SMG (removed per
+    // request). Kept as a no-op so the existing call sites stay valid.
   }
 
   /**
@@ -402,7 +392,8 @@ export class Hub {
    * tests / not yet streamed) each falls back to the low-poly capsule figure.
    */
   _buildNpcs() {
-    // Ruairí — IRA fighter, olive-green coat, dark flat cap. Idles (rifle slung).
+    // Ruairí — now a SECOND, distinct player character (the static player_model2
+    // mesh) standing idle, for visual variety among the menu figures.
     this._buildNpc({
       x: -2.4,
       z: -3.3,
@@ -410,6 +401,7 @@ export class Hub {
       coat: 0x3c4a32,
       hat: "cap",
       hatColor: 0x1c2018,
+      staticModel: "player_model2",
     });
     // Davy — Ulster-Scots paramilitary, rust coat, maroon beret. Patrols a short
     // path behind the table (clear of the hero + camera), carrying his SMG.
@@ -422,8 +414,13 @@ export class Hub {
       hatColor: 0x5a1f24,
       patrol: { minX: 1.2, maxX: 3.0, z: -3.7, speed: 0.55, dir: 1 },
     });
-    // True once the allies are the animated actor (vs. the capsule fallback).
-    this._npcsAnimated = !!(this.assets && typeof this.assets.hasMenuActor === "function" && this.assets.hasMenuActor());
+    // True once BOTH the menu actor (Davy) AND player_model2 (Ruairí) are loaded,
+    // so the _ensureNpcs rebuild swaps the capsule fallbacks for the real figures.
+    this._npcsAnimated = !!(
+      this.assets &&
+      this.assets.hasMenuActor && this.assets.hasMenuActor() &&
+      this.assets.hasModel && this.assets.hasModel("player_model2")
+    );
   }
 
   /**
@@ -432,11 +429,43 @@ export class Hub {
    * headless.
    */
   _buildNpc(cfg) {
+    if (cfg.staticModel) { this._buildStaticNpc(cfg); return; }
     const actor = this.assets && typeof this.assets.getMenuActor === "function"
       ? this.assets.getMenuActor()
       : null;
     if (actor) this._buildAnimatedNpc(cfg, actor);
     else this._buildCapsuleNpc(cfg);
+  }
+
+  /**
+   * A static character model (e.g. player_model2) standing as a menu figure. The
+   * source mesh is modelled lying along its longest axis, so we stand it upright,
+   * recentre it horizontally, and seat its feet on the floor. Falls back to the
+   * capsule figure until the GLB has streamed in (the _ensureNpcs rebuild swaps it
+   * in once available).
+   */
+  _buildStaticNpc(cfg) {
+    const m = this.assets && typeof this.assets.getModel === "function"
+      ? this.assets.getModel(cfg.staticModel)
+      : null;
+    if (!m) { this._buildCapsuleNpc(cfg); return; }
+    const group = new THREE.Group();
+    // Stand it upright: rotate the longest (body) axis to vertical.
+    m.updateMatrixWorld(true);
+    const size = new THREE.Box3().setFromObject(m).getSize(new THREE.Vector3());
+    if (size.z >= size.y && size.z >= size.x) m.rotation.x = -Math.PI / 2; // Z (body) → up, faces -Z
+    else if (size.x >= size.y && size.x >= size.z) m.rotation.z = Math.PI / 2; // X → up
+    m.rotation.y += Math.PI; // turn to face +Z (toward the lobby camera)
+    m.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(m);
+    m.position.x -= (box.min.x + box.max.x) / 2; // recentre X
+    m.position.z -= (box.min.z + box.max.z) / 2; // recentre Z
+    m.position.y -= box.min.y; // feet on the floor
+    group.add(m);
+    group.position.set(cfg.x, 0, cfg.z);
+    group.rotation.y = cfg.yaw;
+    this.scene.add(group);
+    this.npcs.push({ group, baseY: 0, phase: this.npcs.length * 1.7 });
   }
 
   /**
@@ -447,8 +476,9 @@ export class Hub {
     const group = new THREE.Group();
     group.add(actor.object3D);
 
-    // Give the ally a weapon_ak: held by the patroller, slung on the idler's back.
-    this._attachActorSmg(actor, patrol ? "held" : "slung");
+    // Only the patroller carries a weapon (held at the ready). The idler has no
+    // back-slung weapon (removed per request).
+    if (patrol) this._attachActorSmg(actor, "held");
 
     // Patroller walks (and faces its travel direction); idler stands and fidgets.
     const clip = patrol ? (actor.clips.walk || actor.clips.idle) : (actor.clips.idle || actor.clips.walk);
@@ -610,8 +640,7 @@ export class Hub {
    */
   _attachHeroActor(group, actor) {
     group.add(actor.object3D);
-    // Sling a weapon_ak across the hero's back (he stands idle, gun stowed).
-    this._attachActorSmg(actor, "slung");
+    // (No back-slung weapon — removed per request.)
     const clip = (actor.clips && (actor.clips.idle || actor.clips.walk)) || null;
     this._heroMixer = this._playActorClip(actor.object3D, clip);
   }
