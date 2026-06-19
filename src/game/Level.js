@@ -6,6 +6,8 @@ import { Victim } from "./Victim.js";
 import { buildFacade } from "./BuildingFacade.js";
 import FURNITURE from "../data/furniture.json";
 
+const BASE = import.meta.env.BASE_URL || "/";
+
 const _ray = new THREE.Ray();
 const _dir = new THREE.Vector3();
 const _hit = new THREE.Vector3();
@@ -126,7 +128,9 @@ export class Level {
     this._materials = {
       brick: this._mat("brick", 0x8a4b3a, 0.95),
       brickDark: this._mat("brick_dark", 0x6e3b2e, 0.95),
-      tarmac: this._mat("tarmac", 0x33373b, 1.0),
+      // Real asphalt photo for the street (Urban Jungle), kept slightly wet via
+      // low roughness so the scene's env map still glistens in the rain.
+      tarmac: this._texMat("textures/urban/asphalt.jpg", { repeat: [10, 30], roughness: 0.55, metalness: 0.05, color: 0x33373b }),
       concrete: this._mat("concrete", 0x6b6f72, 0.9),
       crate: this._mat("crate", 0x7a5a30, 0.8),
       barrel: this._mat("barrel", 0x355e3b, 0.6, 0.3),
@@ -143,9 +147,9 @@ export class Level {
       paint: new THREE.MeshStandardMaterial({ color: 0xeae6da, roughness: 0.55 }),
       hill: new THREE.MeshStandardMaterial({ color: 0x3a4138, roughness: 1.0 }),
       ceiling: new THREE.MeshStandardMaterial({ color: 0x4a4d4f, roughness: 0.95 }),
-      // Domestic interior surfaces — warm plaster walls + a wood floor so the
-      // low-ceiling rooms read as lived-in apartments, not bare brick halls.
-      apartmentWall: new THREE.MeshStandardMaterial({ color: 0xbcae97, roughness: 0.97, metalness: 0 }),
+      // Domestic interior surfaces — a real plaster photo on the walls + a wood
+      // floor so the low-ceiling rooms read as lived-in apartments, not bare brick.
+      apartmentWall: this._texMat("textures/urban/plaster.jpg", { repeat: [3, 1.5], roughness: 0.97, color: 0xc4baa6 }),
       apartmentFloor: new THREE.MeshStandardMaterial({ color: 0x5a3f28, roughness: 0.7, metalness: 0 }),
       apartmentCeiling: new THREE.MeshStandardMaterial({ color: 0xd8d2c4, roughness: 0.96 }),
       // Grimy tenement photo clad onto the long side walls (null → plain brick).
@@ -153,6 +157,11 @@ export class Level {
         ? new THREE.MeshStandardMaterial({ map: assets.getHouseSideTexture(), roughness: 0.92, metalness: 0 })
         : null,
     };
+
+    // Curated real brick photos (Urban Jungle) used to vary building exteriors —
+    // each building picks one (see _pickBuildingMat) so the terraces never repeat.
+    this._urbanBricks = ["brick_red", "brick_mixed", "brick_weathered", "brick_clean", "brick_grey"]
+      .map((n) => this._texMat(`textures/urban/${n}.jpg`, { repeat: [2, 1.8], roughness: 0.95, color: 0x8a5a44 }));
 
     // Grid geometry shared across builders. Buildings are tall, long terraces:
     // narrow frontage (X) and a long run (Z), so they line the north–south
@@ -179,6 +188,28 @@ export class Level {
   _mat(slug, color, roughness = 0.9, metalness = 0.0) {
     if (this.assets) return this.assets.getMaterial(slug);
     return new THREE.MeshStandardMaterial({ color, roughness, metalness });
+  }
+
+  /**
+   * A standalone textured material that streams a `public/`-served image onto a
+   * flat-colour fallback (so the level builds instantly, texture pops in). Used
+   * for the curated "Urban Jungle" textures that aren't in the AssetManager DEFS.
+   */
+  _texMat(path, { repeat = [1, 1], roughness = 0.95, metalness = 0.0, color = 0x9a8a7a } = {}) {
+    const mat = new THREE.MeshStandardMaterial({ color, roughness, metalness });
+    new THREE.TextureLoader().load(`${BASE}${path}`, (tex) => {
+      tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+      tex.repeat.set(repeat[0], repeat[1]);
+      tex.colorSpace = THREE.SRGBColorSpace;
+      tex.anisotropy = 4;
+      if (this.assets && this.assets.retro && this.assets.retro.applyTextureFilter) {
+        this.assets.retro.applyTextureFilter(tex);
+      }
+      mat.map = tex;
+      mat.color.set(0xffffff); // let the texture show its true colours
+      mat.needsUpdate = true;
+    });
+    return mat;
   }
 
   _box(w, h, d, mat, x, y, z, { collider = true, los = false } = {}) {
@@ -630,7 +661,8 @@ export class Level {
    * brick / grey concrete). All are loaded from public/textures/<slug>/.
    */
   _pickBuildingMat(cx, cz) {
-    const mats = [this._materials.brick, this._materials.brickDark, this._materials.concrete];
+    // The 5 real-brick photos plus grey concrete → 6 distinct building skins.
+    const mats = [...this._urbanBricks, this._materials.concrete];
     const k = Math.abs(Math.round(cx / 7) + Math.round(cz / 7) * 3 + (this.index | 0));
     return mats[k % mats.length];
   }

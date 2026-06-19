@@ -30,7 +30,7 @@ trap 'rm -rf "$TMP"' EXIT
 # colour. Pieces with no .png (armadio) keep their baked vertex colours instead.
 declare -A PIECE=(
   [furn_bed]="letto|lettoO.png"
-  [furn_wardrobe]="armadio|"
+  [furn_wardrobe]="armadio|comodino.png"
   [furn_nightstand]="comodino|comodino.png"
   [furn_table]="Tavolo1|tavolo1.png"
   [furn_chair]="sedia1|sedia1.png"
