@@ -1,4 +1,4 @@
-# Belfast Commando
+# Belfast Survivor
 
 A fast, kick-heavy first-person shooter MVP set in modern-day Belfast — inspired by
 *Anger Foot*. Run, breach doors with your boot, boot/shoot the invaders, chain your
