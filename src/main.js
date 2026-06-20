@@ -40,6 +40,13 @@ const LOADING_SLIDES = [
 // The pre-operation loading screen plays this looping video (muted) with the logo.
 const OPERATION_VIDEO = "loading/operation-loading.mp4";
 
+// Served base ("/" in dev) — backdrops are resolved against it for CSS use.
+const BASE = import.meta.env.BASE_URL || "/";
+// Result-overlay backdrops: the victory hero art on a clear, and the loading
+// stills (picked at random) on death or anywhere else the overlay appears.
+const VICTORY_BG = `${BASE}ui/victory.jpg`;
+const OVERLAY_BACKDROPS = LOADING_SLIDES.map((s) => `${BASE}${s}`);
+
 const MAX_DT = 0.05;
 
 /**
@@ -72,6 +79,7 @@ class Game {
     this.dom = this.engine.renderer.domElement;
 
     this.hud = new HUD();
+    this.hud.setOverlayBackdrops(OVERLAY_BACKDROPS); // random loading still behind result/death cards
     this.audio = new Audio();
     this.score = new Score(this.hud);
     this.player = new Player(this.engine.camera, this.dom);
@@ -478,6 +486,13 @@ class Game {
       `${outro}<br/>${bonusRows}Score <b>${this.score.total.toLocaleString()}</b> &nbsp;·&nbsp; Kills <b>${run.kills}</b><br/>Resistance Points earned <b>+${rp}</b>`,
       "",
     );
+    // A clear overrides showOverlay's default backdrop with the victory art (light
+    // vignette so the hero shot reads) and plays the civilian-rescue jingle as a
+    // victory sting. Death keeps the default random loading still.
+    if (!died) {
+      this.hud.setOverlayBackground(VICTORY_BG, { center: 0.32, edge: 0.8 });
+      this.audio.rescueJingle();
+    }
 
     // Explicit choices: a survivable clear can push on to the next sector; every
     // result can fall back to the safehouse (CONTRACTS: HUB is always reachable).

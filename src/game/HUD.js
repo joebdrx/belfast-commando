@@ -27,6 +27,7 @@ export class HUD {
     this.overlayBody = this.$("overlay-body");
     this.overlayActions = this.$("overlay-actions");
     this.overlayHint = this.$("overlay-hint");
+    this._overlayBackdrops = []; // pool of loading stills used as the default backdrop
     this.crosshair = this.$("crosshair");
     this._damageT = 0;
     // Adrenaline distortion layer (built in JS so index.html stays untouched).
@@ -256,7 +257,34 @@ export class HUD {
     this.overlayBody.innerHTML = body;
     this.overlayHint.innerHTML = hint || "";
     this.setOverlayActions([]); // clear any prior result buttons by default
+    // Default backdrop: a random loading still. Callers (e.g. the victory
+    // results screen) may override via setOverlayBackground() right after.
+    this.setOverlayBackground(this._randomBackdrop());
     this.overlay.classList.remove("hidden");
+  }
+
+  /** Provide the pool of loading stills used as the default overlay backdrop. */
+  setOverlayBackdrops(list = []) {
+    this._overlayBackdrops = Array.isArray(list) ? list.slice() : [];
+  }
+
+  /** Pick a random backdrop URL from the pool (or null if none). @private */
+  _randomBackdrop() {
+    const list = this._overlayBackdrops;
+    if (!list || !list.length) return null;
+    return list[Math.floor(Math.random() * list.length)];
+  }
+
+  /**
+   * Set the #overlay backdrop image, kept legible by a darkening vignette. Pass
+   * null to clear (falls back to the CSS vignette). `center`/`edge` tune the
+   * vignette opacity — lighter (lower) values let a hero image read through.
+   */
+  setOverlayBackground(url, { center = 0.6, edge = 0.93 } = {}) {
+    if (!this.overlay) return;
+    if (!url) { this.overlay.style.background = ""; return; }
+    const vig = `radial-gradient(ellipse at center, rgba(8,10,13,${center}) 0%, rgba(3,4,6,${edge}) 100%)`;
+    this.overlay.style.background = `${vig}, url("${url}") center / cover no-repeat`;
   }
 
   /**

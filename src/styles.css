@@ -409,10 +409,11 @@ html, body {
   align-items: center;
   justify-content: center;
   pointer-events: auto;
-  /* AI-generated Belfast skyline art, darkened for text legibility */
+  /* Backdrop is set per-context by JS (HUD.setOverlayBackground): victory art on
+     a clear, a random loading still on death / anywhere else. This dark vignette
+     is only the fallback when JS hasn't set one. */
   background:
-    radial-gradient(ellipse at center, rgba(8, 10, 13, 0.7) 0%, rgba(3, 4, 6, 0.94) 100%),
-    url("/ui/menu_bg.png") center / cover no-repeat;
+    radial-gradient(ellipse at center, rgba(8, 10, 13, 0.7) 0%, rgba(3, 4, 6, 0.94) 100%);
 }
 
 /* JS toggles .hidden to show/hide */

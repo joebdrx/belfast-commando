@@ -487,10 +487,10 @@ export class AssetManager {
   async _loadArchetypeRigs() {
     this._rigs = {};
     // Loaded character models. enemy_grunt=stabber (the cleaver fighter),
-    // enemy_enforcer=groomer (bald older man), enemy_fatstabber (turbaned heavy).
-    // The "invader" street guys (enemy_gunner/enemy_breacher) are NO LONGER used —
-    // the stabber replaces them, so there are ZERO invader models in the pool.
-    const RIGS = ["grunt", "enforcer", "fatstabber"];
+    // enemy_enforcer=groomer (bald older man), enemy_fatstabber (turbaned heavy),
+    // enemy_gunner=invader2 (young street guy, back in the pool). invader1
+    // (enemy_breacher) stays retired.
+    const RIGS = ["grunt", "enforcer", "fatstabber", "gunner"];
     await Promise.all(RIGS.map(async (slug) => {
       try { this._rigs[slug] = await this._loadRig(`enemy_${slug}`, `anim_${slug}_run`); }
       catch { /* missing → dropped from the pool below */ }
@@ -499,10 +499,11 @@ export class AssetManager {
     // EVERY enemy type spawns a random model from this pool (wide variety). Each
     // entry carries a `soundType` (1 or 2) that drives which voice-bark pool the
     // enemy uses — only that model's type lines play for it.
-    //   type1 = stabber (took over the invaders' slot)
+    //   type1 = stabber / invader2 (young street guys)
     //   type2 = groomer (bald man) / fatstabber (turbaned heavy)
     this._modelPool = [
-      { rig: this._rigs.grunt, soundType: 1 }, // stabber (replaces the invaders)
+      { rig: this._rigs.grunt, soundType: 1 }, // stabber
+      { rig: this._rigs.gunner, soundType: 1 }, // invader2 (re-added)
       { rig: this._rigs.enforcer, soundType: 2 }, // groomer
       { rig: this._rigs.fatstabber, soundType: 2 }, // fatstabber
     ].filter((e) => e.rig);
