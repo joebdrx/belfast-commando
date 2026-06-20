@@ -7,6 +7,32 @@ import { controlsGridHTML } from "./controls.js";
 import { isTouchDevice } from "./TouchControls.js";
 
 /**
+ * Build a fullscreen toggle button styled to match the game's button conventions.
+ * Hides itself when the Fullscreen API is unavailable (e.g. embedded iframes).
+ * @param {string} cls  CSS class string for the button element.
+ * @returns {HTMLButtonElement}
+ */
+function buildFullscreenButton(cls) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = cls;
+  const update = () => {
+    btn.textContent = document.fullscreenElement ? "⊡ Exit Fullscreen" : "⛶ Fullscreen";
+  };
+  update();
+  btn.addEventListener("click", () => {
+    if (document.fullscreenElement) {
+      document.exitFullscreen().catch(() => {});
+    } else {
+      document.documentElement.requestFullscreen().catch(() => {});
+    }
+  });
+  document.addEventListener("fullscreenchange", update);
+  if (!document.fullscreenEnabled) btn.style.display = "none";
+  return btn;
+}
+
+/**
  * Menu
  * ----
  * The safehouse HTML/CSS overlay menu for GamePhase "HUB". Built ENTIRELY in JS
@@ -476,6 +502,7 @@ export class Menu {
     row.appendChild(this._makeButton("Exit", () => {
       this._call("onExit");
     }));
+    row.appendChild(buildFullscreenButton(`${PREFIX}btn`));
     this.body.appendChild(row);
 
     // Desktop (Tauri) build download — shown only in the BROWSER (it's pointless

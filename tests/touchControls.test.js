@@ -40,4 +40,10 @@ describe("joystickToKeys", () => {
       ShiftLeft: true,
     });
   });
+
+  it("sprint threshold can be customised", () => {
+    // Custom sprint=0.5 — half-way push engages sprint.
+    expect(joystickToKeys(0, -0.6, { sprint: 0.5 }).ShiftLeft).toBe(true);
+    expect(joystickToKeys(0, -0.4, { sprint: 0.5 }).ShiftLeft).toBe(false);
+  });
 });

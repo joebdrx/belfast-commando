@@ -206,6 +206,7 @@ export class PauseMenu {
     row.appendChild(this._makeButton("Resume", () => this._call("onResume"), true));
     row.appendChild(this._makeButton("Restart Sector", () => this._call("onRestart")));
     row.appendChild(this._makeButton("Quit to Safehouse", () => this._call("onQuit")));
+    row.appendChild(this._buildFullscreenButton());
     this.card.appendChild(row);
 
     // --- Settings ---------------------------------------------------------
@@ -222,6 +223,27 @@ export class PauseMenu {
     this.card.appendChild(this._controlsPanel);
 
     document.body.appendChild(this.root);
+  }
+
+  /** Fullscreen toggle button — hidden when the Fullscreen API is unavailable. */
+  _buildFullscreenButton() {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = `${PREFIX}btn`;
+    const update = () => {
+      btn.textContent = document.fullscreenElement ? "⊡ Exit Fullscreen" : "⛶ Fullscreen";
+    };
+    update();
+    btn.addEventListener("click", () => {
+      if (document.fullscreenElement) {
+        document.exitFullscreen().catch(() => {});
+      } else {
+        document.documentElement.requestFullscreen().catch(() => {});
+      }
+    });
+    document.addEventListener("fullscreenchange", update);
+    if (!document.fullscreenEnabled) btn.style.display = "none";
+    return btn;
   }
 
   /** Show/hide the control-scheme reference (touch or keyboard, by device). */

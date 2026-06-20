@@ -217,6 +217,28 @@ export class HUD {
   }
 
   /**
+   * Make the interact prompt clickable (tap to rescue). Pass null to restore
+   * the non-interactive default. Safe to call with the same fn repeatedly.
+   * @param {(() => void)|null} fn
+   */
+  setInteractCallback(fn) {
+    if (!this._interactPrompt) return;
+    if (this._interactClickFn) {
+      this._interactPrompt.removeEventListener("click", this._interactClickFn);
+      this._interactClickFn = null;
+    }
+    if (fn) {
+      this._interactClickFn = fn;
+      this._interactPrompt.addEventListener("click", this._interactClickFn);
+      this._interactPrompt.style.pointerEvents = "auto";
+      this._interactPrompt.style.cursor = "pointer";
+    } else {
+      this._interactPrompt.style.pointerEvents = "none";
+      this._interactPrompt.style.cursor = "default";
+    }
+  }
+
+  /**
    * Show a timed dialogue bubble at the bottom of the screen.
    * @param {string} text
    * @param {number} [ms=3200]  Auto-hide delay in milliseconds.

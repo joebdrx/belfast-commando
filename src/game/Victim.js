@@ -143,7 +143,11 @@ export class Victim {
         if (_fwd.dot(_tmp) < 0.25) gone = true;
       }
       if (gone) {
-        if (this._promptActive && ctx.hud) { ctx.hud.setInteractPrompt(null); this._promptActive = false; }
+        if (this._promptActive && ctx.hud) {
+          ctx.hud.setInteractPrompt(null);
+          ctx.hud.setInteractCallback(null);
+          this._promptActive = false;
+        }
         this.removed = true;
       }
       return;
@@ -166,10 +170,16 @@ export class Victim {
     const inRange = dist < INTERACT_RADIUS;
     if (inRange && !this._promptActive) {
       this._promptActive = true;
-      if (ctx.hud) ctx.hud.setInteractPrompt("Press E to free the civilian");
+      if (ctx.hud) {
+        ctx.hud.setInteractPrompt("Press E / tap to free the civilian");
+        ctx.hud.setInteractCallback(() => this._rescue(ctx));
+      }
     } else if (!inRange && this._promptActive) {
       this._promptActive = false;
-      if (ctx.hud) ctx.hud.setInteractPrompt(null);
+      if (ctx.hud) {
+        ctx.hud.setInteractPrompt(null);
+        ctx.hud.setInteractCallback(null);
+      }
     }
     if (inRange && ctx.player.keys && ctx.player.keys["KeyE"]) this._rescue(ctx);
   }
@@ -181,7 +191,9 @@ export class Victim {
 
   /** Trigger the rescue: rewards, dialogue, begin fleeing. @private */
   _rescue(ctx) {
+    if (this.rescued) return;
     this.rescued = true;
+    if (ctx.hud) ctx.hud.setInteractCallback(null);
     this._stopScream(); // she's safe now — the screaming stops
     if (ctx.audio && ctx.audio.rescueJingle) ctx.audio.rescueJingle();
     if (this._promptActive && ctx.hud) { ctx.hud.setInteractPrompt(null); this._promptActive = false; }
