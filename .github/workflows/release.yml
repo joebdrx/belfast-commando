@@ -2,7 +2,8 @@ name: release
 
 # Build the native Tauri desktop bundles on each OS and publish them to a GitHub
 # Release (the main-menu "Download Desktop Version" button links at the assets).
-# Trigger by pushing a version tag (e.g. v0.1.0) or running it manually.
+# Trigger by pushing a version tag (e.g. v0.1.1) or running it manually
+# (Actions tab -> release -> Run workflow). Builds Linux + macOS + Windows.
 on:
   push:
     tags: ['v*']
