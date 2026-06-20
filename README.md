@@ -7,7 +7,7 @@ kills for a bigger multiplier, and reach the exit.
 Built with **Three.js** (engine/rendering), **Vite** (dev/build), and **Tauri v2**
 (native desktop wrapper), with optional **Steamworks** achievements + leaderboards.
 
-<img width="800" height="900" alt="belfast-survivor-final" src="https://raw.githubusercontent.com/joebdrx/belfast-commando/refs/heads/master/belfast-survivor-final.png" />
+<img width="500" height="550" alt="belfast-survivor-final" src="https://raw.githubusercontent.com/joebdrx/belfast-commando/refs/heads/master/belfast-survivor-final.png" />
 
 ## Controls
 
