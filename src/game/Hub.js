@@ -73,7 +73,7 @@ export class Hub {
     // Lobby framing (CoD-style): camera sits front-left and looks slightly left
     // into the room so the hero fighter — placed on the RIGHT — reads large in
     // the right portion of the frame, leaving the left for the menu panel.
-    this._camBase = new THREE.Vector3(-0.6, 1.5, 2.7);
+    this._camBase = new THREE.Vector3(-0.6, 1.5, 1.8); // pushed in a touch from 2.7
     this._lookTarget = new THREE.Vector3(-0.45, 1.12, -2.4);
     this._tmpV = new THREE.Vector3(); // reused each frame — no per-frame alloc
     this._elapsed = 0;
@@ -82,10 +82,12 @@ export class Hub {
     this._buildAtmosphere();
     this._buildShell();
     this._buildMurals();
+    this._buildPortrait();
     this._buildBar();
     this._buildMapTable();
     this._buildBulb();
     this._buildCrates();
+    this._buildFurniture();
     this._buildNpcs();
     this._buildHero();
     this._buildDoor();
@@ -119,6 +121,23 @@ export class Hub {
     return mesh;
   }
 
+  /**
+   * Load a hub texture (served from public/), tracked for dispose(). rx/ry > 1
+   * tiles it (RepeatWrapping); the default 1×1 clamps. Returns the texture
+   * immediately — the image streams in asynchronously and updates the material.
+   */
+  _loadTex(url, rx = 1, ry = 1) {
+    const tex = new THREE.TextureLoader().load(`${BASE}${url}`);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    if (rx !== 1 || ry !== 1) {
+      tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+      tex.repeat.set(rx, ry);
+    }
+    tex.anisotropy = 4;
+    this._muralTextures.push(tex);
+    return tex;
+  }
+
   /** Grim interior background + fog + low-key overcast-style lighting. */
   _buildAtmosphere() {
     this.scene.background = new THREE.Color(0x15171b);
@@ -138,8 +157,10 @@ export class Hub {
 
   /** Floor, ceiling and four enclosing walls (brick + concrete). */
   _buildShell() {
-    const wall = this._mat("brick", 0x6e3b2e, 0.95);
-    const floorMat = this._mat("concrete", 0x44484c, 0.95);
+    // Player-supplied red-brick walls + concrete-aggregate floor (menu only —
+    // tiled so the photo repeats across the 10m surfaces without obvious stretch).
+    const wall = new THREE.MeshStandardMaterial({ map: this._loadTex("textures/hub_brick.jpg", 5, 2), roughness: 0.96 });
+    const floorMat = new THREE.MeshStandardMaterial({ map: this._loadTex("textures/hub_ground.jpg", 6, 6), roughness: 0.95 });
     const ceilMat = this._mat("concrete", 0x34373a, 0.95);
 
     // Room spans X[-5,5], Z[-6,4] (10×10), centred at (0,*,-1), 3.4m tall.
@@ -166,9 +187,8 @@ export class Hub {
     const loader = new THREE.TextureLoader();
     // [url, centre position, yaw]; size is derived from the image aspect on load.
     const panels = [
-      // Loyalist — left wall (x≈-4.85), facing +X into the room.
-      { url: `${BASE}murals/loyalist.png`, pos: [-4.84, 1.95, -1.6], rotY: Math.PI / 2 },
       // Republican — back wall (z≈-5.85), above the bar, facing +Z into the room.
+      // (The loyalist/Ulster mural on the left wall was removed per request.)
       { url: `${BASE}murals/republican.png`, pos: [-1.4, 1.95, -5.84], rotY: 0 },
     ];
     for (const p of panels) {
@@ -195,10 +215,75 @@ export class Hub {
     }
   }
 
+  /**
+   * Framed B&W portrait (Pádraig Pearse) on the back wall, right of the republican
+   * mural and clear of the bar shelves. The supplied image already includes its
+   * own frame; a thin dark box behind it adds physical depth.
+   */
+  _buildPortrait() {
+    const tex = this._loadTex("textures/hub_portrait.jpg");
+    const frameMat = new THREE.MeshStandardMaterial({ color: 0x0b0907, roughness: 0.85 });
+    this._box(0.72, 0.84, 0.04, frameMat, 1.7, 2.0, -5.82); // depth backing
+    const portrait = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.66, 0.78),
+      new THREE.MeshBasicMaterial({ map: tex, toneMapped: false }),
+    );
+    portrait.position.set(1.7, 2.0, -5.79);
+    this.scene.add(portrait);
+  }
+
+  /**
+   * Worn upholstered seating — a 3-seat settee + an armchair — as a tired front-
+   * room "lounge" in the open left of the safehouse. Built from primitives
+   * (procedural stand-ins for the mobili models, which ship as Blender sources).
+   */
+  _buildFurniture() {
+    // Lounge against the left (stage-left) wall, backs to the brick.
+    this._buildSeat({ x: -4.15, z: -2.6, rotY: Math.PI / 2, seats: 3 }); // settee vs left wall
+    this._buildSeat({ x: -3.05, z: 0.5, rotY: Math.PI / 2 + 0.55, seats: 1 }); // armchair, angled in
+  }
+
+  /**
+   * One upholstered seat unit (base + back + arms + loose cushions + feet),
+   * centred on its group with depth along local Z (back at -Z). `seats` sets the
+   * width (1 = armchair, 3 = settee).
+   * @param {{x:number,z:number,rotY?:number,seats?:number}} cfg
+   */
+  _buildSeat({ x, z, rotY = 0, seats = 1 }) {
+    const g = new THREE.Group();
+    g.position.set(x, 0, z);
+    g.rotation.y = rotY;
+    const fabric = new THREE.MeshStandardMaterial({ color: 0x5a392c, roughness: 0.93 });   // worn oxblood-brown
+    const cushion = new THREE.MeshStandardMaterial({ color: 0x6b4734, roughness: 0.95 });   // slightly lighter
+    const footMat = new THREE.MeshStandardMaterial({ color: 0x1a140e, roughness: 0.6 });
+    const seatW = seats === 1 ? 0.98 : 1.98;
+    const depth = 0.85, seatH = 0.4, backH = 0.86, armW = 0.16;
+    const add = (geo, mat, px, py, pz) => {
+      const m = new THREE.Mesh(geo, mat); m.position.set(px, py, pz); g.add(m); return m;
+    };
+    add(new THREE.BoxGeometry(seatW, seatH, depth), fabric, 0, seatH / 2, 0);             // base
+    add(new THREE.BoxGeometry(seatW, backH, 0.18), fabric, 0, backH / 2, -depth / 2 + 0.09); // backrest
+    for (const sx of [-1, 1]) {
+      add(new THREE.BoxGeometry(armW, seatH + 0.16, depth), fabric, sx * (seatW / 2 - armW / 2), (seatH + 0.16) / 2, 0);
+    }
+    const innerW = seatW - 2 * armW - 0.04, cw = innerW / seats;
+    for (let i = 0; i < seats; i++) {
+      const cx = -innerW / 2 + cw * (i + 0.5);
+      add(new THREE.BoxGeometry(cw - 0.03, 0.12, depth - 0.22), cushion, cx, seatH + 0.06, 0.06);      // seat cushion
+      add(new THREE.BoxGeometry(cw - 0.03, 0.32, 0.13), cushion, cx, seatH + 0.24, -depth / 2 + 0.17); // back cushion
+    }
+    for (const fx of [-1, 1]) for (const fz of [-1, 1]) {
+      add(new THREE.CylinderGeometry(0.03, 0.03, 0.08, 6), footMat, fx * (seatW / 2 - 0.1), 0.04, fz * (depth / 2 - 0.1));
+    }
+    this.scene.add(g);
+    return g;
+  }
+
   /** A long pub bar counter against the back wall, with a few bottles. */
   _buildBar() {
-    const wood = this._mat("crate", 0x3f2a18, 0.8);
-    const topMat = this._mat("door", 0x5a3a22, 0.6);
+    // Player-supplied weathered-plank wood on the counter (menu only).
+    const wood = new THREE.MeshStandardMaterial({ map: this._loadTex("textures/hub_wood.jpg", 3, 1), roughness: 0.85 });
+    const topMat = new THREE.MeshStandardMaterial({ map: this._loadTex("textures/hub_wood.jpg", 3, 0.4), roughness: 0.8 });
     this._box(7.0, 1.1, 0.6, wood, 0, 0.55, -5.4); // front panel
     this._box(7.2, 0.1, 0.78, topMat, 0, 1.13, -5.38); // overhanging top
 
@@ -214,11 +299,129 @@ export class Hub {
       bottle.position.set(-1.6 + i * 1.5, 1.3, -5.4);
       this.scene.add(bottle);
     }
+
+    // Dim warm wash over the back bar so the counter, bottles + props read
+    // (the bulb over the table doesn't reach this far back).
+    const barLight = new THREE.PointLight(0xffcf9a, 2.4, 4.2, 2);
+    barLight.position.set(0, 1.85, -5.0);
+    this.scene.add(barLight);
+
+    // A Trinitron CRT + an open ThinkPad resting on the counter (streamed GLBs,
+    // placed once available via _ensureBarProps()).
+    this._barProps = {}; // { crt_tv?, thinkpad? } once each clone is placed
+    this._ensureBarProps();
+  }
+
+  /**
+   * Rest the bar-prop GLBs (CRT TV, laptop) on the counter top once they have
+   * streamed in. No-op for any prop already placed or still unavailable; called
+   * from _buildBar() + update() so the models swap in as soon as they load. Each
+   * is anchored at its base, so y = the counter surface (1.18m).
+   */
+  _ensureBarProps() {
+    if (!this.assets || typeof this.assets.getModel !== "function") return;
+    if (!this._barProps) this._barProps = {};
+    const place = (slug, x, y, z, yaw) => {
+      if (this._barProps[slug]) return;
+      const m = this.assets.getModel(slug);
+      if (!m) return;
+      m.position.set(x, y, z);
+      m.rotation.y = yaw; // additional yaw on top of the def's baked rotY
+      this.scene.add(m);
+      this._barProps[slug] = m;
+    };
+    place("crt_tv", -2.75, 1.18, -5.42, 0);    // on the bar, left of the bottles, screen into the room
+    place("thinkpad", 0.45, 1.0, -1.95, 0.25 + Math.PI); // open on the planning table (surface y≈1.0), turned 180°
+
+    // Glowing "rootkit monitor" UI overlaid on the laptop's screen. The model is a
+    // single mesh, so the screen is a separate emissive plane fitted to the lid's
+    // front face (centre + normal derived from the geometry, so it stays aligned
+    // even if the laptop is moved/rotated).
+    if (this._barProps.thinkpad && !this._barProps.laptop_screen) {
+      const fit = this._fitLaptopScreen(this._barProps.thinkpad);
+      const w = fit ? fit.w : 0.55, h = fit ? fit.h : 0.31; // fill the whole lid
+      const screen = new THREE.Mesh(
+        new THREE.PlaneGeometry(w, h),
+        new THREE.MeshBasicMaterial({ map: this._loadTex("textures/hub_laptop_screen.jpg"), toneMapped: false }),
+      );
+      if (fit) {
+        screen.position.copy(fit.center).addScaledVector(fit.normal, 0.004); // just proud of the lid
+        screen.quaternion.copy(fit.quat);
+      } else {
+        // Fallback if the geometry probe finds no lid faces (headless / odd model).
+        screen.position.set(0.401, 1.252, -2.127);
+        screen.rotation.set(0.008, 0.237, 0);
+      }
+      this.scene.add(screen);
+      this._barProps.laptop_screen = screen;
+    }
+  }
+
+  /**
+   * Fit the laptop lid's front (screen) face from its geometry so the emissive
+   * screen plane sits flush on, and fills, the open lid. Selects the upper,
+   * strongly room-facing triangles (the flat display panel), takes their
+   * area-weighted normal, then measures the panel's extent along the screen's
+   * own right/up axes to size + centre the plane. Returns {center, normal, quat,
+   * w, h} in world space, or null if no such faces are found.
+   */
+  _fitLaptopScreen(lap) {
+    let mesh = null;
+    lap.traverse((o) => { if (o.isMesh && o.geometry) mesh = o; });
+    if (!mesh) return null;
+    mesh.updateWorldMatrix(true, true);
+    const wm = mesh.matrixWorld, geo = mesh.geometry, pos = geo.attributes.position, idx = geo.index;
+    if (!pos) return null;
+    geo.computeBoundingBox();
+    const bb = geo.boundingBox.clone().applyMatrix4(wm);
+    const yMid = bb.min.y + (bb.max.y - bb.min.y) * 0.35; // lid sits above the keyboard base
+    const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
+    const ab = new THREE.Vector3(), ac = new THREE.Vector3(), n = new THREE.Vector3(), cen = new THREE.Vector3();
+    const sumN = new THREE.Vector3(); let sumA = 0;
+    const pts = []; // world verts of the accepted (display-panel) triangles
+    const tris = idx ? idx.count / 3 : pos.count / 3;
+    for (let t = 0; t < tris; t++) {
+      const i0 = idx ? idx.getX(t * 3) : t * 3, i1 = idx ? idx.getX(t * 3 + 1) : t * 3 + 1, i2 = idx ? idx.getX(t * 3 + 2) : t * 3 + 2;
+      a.fromBufferAttribute(pos, i0).applyMatrix4(wm);
+      b.fromBufferAttribute(pos, i1).applyMatrix4(wm);
+      c.fromBufferAttribute(pos, i2).applyMatrix4(wm);
+      ab.subVectors(b, a); ac.subVectors(c, a); n.crossVectors(ab, ac);
+      const area = n.length() * 0.5;
+      if (area <= 1e-9) continue;
+      n.normalize();
+      cen.copy(a).add(b).add(c).multiplyScalar(1 / 3);
+      // Upper region, strongly room-facing (the flat front panel, not the bezel sides).
+      if (cen.y > yMid && Math.abs(n.y) < 0.6 && n.z > 0.5) {
+        sumN.addScaledVector(n, area); sumA += area;
+        pts.push(a.clone(), b.clone(), c.clone());
+      }
+    }
+    if (sumA <= 0 || !pts.length) return null;
+    const normal = sumN.multiplyScalar(1 / sumA).normalize();
+    const right = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), normal).normalize();
+    const up = new THREE.Vector3().crossVectors(normal, right).normalize();
+    // Panel extent along the screen's own right/up axes → size + centre.
+    const mean = new THREE.Vector3();
+    for (const p of pts) mean.add(p);
+    mean.multiplyScalar(1 / pts.length);
+    const d = new THREE.Vector3();
+    let minR = Infinity, maxR = -Infinity, minU = Infinity, maxU = -Infinity;
+    for (const p of pts) {
+      d.subVectors(p, mean);
+      const r = d.dot(right), u = d.dot(up);
+      if (r < minR) minR = r; if (r > maxR) maxR = r;
+      if (u < minU) minU = u; if (u > maxU) maxU = u;
+    }
+    const center = mean.clone().addScaledVector(right, (minR + maxR) / 2).addScaledVector(up, (minU + maxU) / 2);
+    const lookM = new THREE.Matrix4().lookAt(new THREE.Vector3(), normal.clone().negate(), new THREE.Vector3(0, 1, 0));
+    const quat = new THREE.Quaternion().setFromRotationMatrix(lookM);
+    return { center, normal, quat, w: maxR - minR, h: maxU - minU };
   }
 
   /** The planning table: wooden top + legs, a parchment map and a couple of pins. */
   _buildMapTable() {
-    const topMat = this._mat("crate", 0x4a3320, 0.82);
+    // Player-supplied weathered-plank wood on the planning table (menu only).
+    const topMat = new THREE.MeshStandardMaterial({ map: this._loadTex("textures/hub_wood.jpg", 2, 1.2), roughness: 0.82 });
     const tableTopY = 0.95;
     this._tableTopY = tableTopY;
     this._box(1.9, 0.1, 1.2, topMat, 0, tableTopY, -2.3); // table top
@@ -233,18 +436,8 @@ export class Hub {
     map.position.set(0, tableTopY + 0.06, -2.3);
     this.scene.add(map);
 
-    // Two red objective pins + an accent route line — the operation board look.
-    const pinMat = new THREE.MeshStandardMaterial({
-      color: 0xc0392b,
-      roughness: 0.5,
-      emissive: 0xc0392b,
-      emissiveIntensity: 0.25,
-    });
-    for (const [px, pz] of [[-0.4, -0.2], [0.45, 0.25]]) {
-      const pin = new THREE.Mesh(new THREE.SphereGeometry(0.04, 8, 6), pinMat);
-      pin.position.set(px, tableTopY + 0.09, -2.3 + pz);
-      this.scene.add(pin);
-    }
+    // An accent route line on the map — the operation board look. (The two red
+    // objective pins were removed per request.)
     const routeMat = new THREE.MeshStandardMaterial({ color: 0xff7a1a, roughness: 0.6 });
     const route = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.006, 0.02), routeMat);
     route.position.set(0.02, tableTopY + 0.065, -2.25);
@@ -472,9 +665,8 @@ export class Hub {
     group.scale.setScalar(MENU_CHAR_SCALE); // menu characters scaled up 25%
     group.add(actor.object3D);
 
-    // Only the patroller carries a weapon (held at the ready). The idler has no
-    // back-slung weapon (removed per request).
-    if (patrol) this._attachActorSmg(actor, "held");
+    // Neither menu ally carries a weapon now — the patroller's held SMG was
+    // removed per request (the idler already had none).
 
     // Patroller walks (and faces its travel direction); idler stands and fidgets.
     const clip = patrol ? (actor.clips.walk || actor.clips.idle) : (actor.clips.idle || actor.clips.walk);
@@ -668,7 +860,8 @@ export class Hub {
     door.rotation.y = -Math.PI / 2; // face -x, into the room
 
     const frameMat = this._mat("door", 0x4a3322, 0.7);
-    const slabMat = new THREE.MeshStandardMaterial({ color: 0x2c2f33, roughness: 0.55, metalness: 0.4 });
+    // Player-supplied steel-door photo on the slab front (its own handle/lock).
+    const slabMat = new THREE.MeshStandardMaterial({ map: this._loadTex("textures/hub_door.jpg"), roughness: 0.6, metalness: 0.25 });
 
     // Frame (slightly larger box) + recessed slab.
     const frame = new THREE.Mesh(new THREE.BoxGeometry(1.5, 2.7, 0.16), frameMat);
@@ -677,12 +870,6 @@ export class Hub {
     const slab = new THREE.Mesh(new THREE.BoxGeometry(1.25, 2.45, 0.1), slabMat);
     slab.position.set(0, 1.25, 0.06);
     door.add(slab);
-
-    // Push-bar + a riveted reinforcement strip.
-    const barMat = new THREE.MeshStandardMaterial({ color: 0x6a6e73, roughness: 0.4, metalness: 0.6 });
-    const bar = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.1, 0.08), barMat);
-    bar.position.set(0, 1.15, 0.13);
-    door.add(bar);
 
     // Green over-door deployment lamp (emissive + a soft glow).
     const lampMat = new THREE.MeshStandardMaterial({
@@ -711,17 +898,23 @@ export class Hub {
     phone.position.set(4.88, 1.4, -1.6); // right wall, front-of-room
     phone.rotation.y = -Math.PI / 2; // face -x (into the room)
 
-    const model = this.assets && typeof this.assets.getModel === "function"
-      ? this.assets.getModel("landline_phone")
-      : null;
-    if (model) this._applyLandlineModel(phone, model);
-    else this._buildPhoneFallback(phone);
+    // Player-supplied payphone photo mounted as the wall phone (replaces the
+    // landline GLB in the menu). A brushed-steel housing box gives it depth.
+    const housing = new THREE.Mesh(
+      new THREE.BoxGeometry(0.58, 1.06, 0.1),
+      new THREE.MeshStandardMaterial({ color: 0x8a8e92, roughness: 0.5, metalness: 0.55 }),
+    );
+    phone.add(housing);
+    const face = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.52, 1.0),
+      new THREE.MeshStandardMaterial({ map: this._loadTex("textures/hub_payphone.jpg"), roughness: 0.5, metalness: 0.3 }),
+    );
+    face.position.set(0, 0, 0.051); // proud of the housing, facing into the room
+    phone.add(face);
 
     this.scene.add(phone);
     this._phoneGroup = phone;
-    // Hub is usually built before the GLB streams in → starts as the procedural
-    // cradle; `_ensurePhone()` (show()/update()) swaps the real model in later.
-    this._phoneIsModel = !!model;
+    this._phoneIsModel = true; // payphone panel IS the final visual — no GLB swap
     this._registerInteractable(phone, "phone", "Landline — Dial Code", 2.0);
   }
 
@@ -882,6 +1075,7 @@ export class Hub {
     if (!this._npcsAnimated) this._ensureNpcs(); // swap allies to the animated actor
     if (!this._phoneIsModel) this._ensurePhone(); // swap in the real landline once loaded
     if (!this._tableSmg) this._ensureTableSmg(); // place the table SMG once loaded
+    if (!this._barProps || !this._barProps.crt_tv || !this._barProps.thinkpad) this._ensureBarProps();
     this._elapsed += dt;
     const t = this._elapsed;
 
@@ -963,6 +1157,7 @@ export class Hub {
     this._interactables.length = 0;
     this._heroGroup = null;
     this._tableSmg = null;
+    this._barProps = null;
     this._lamp = null;
     this._bulbMat = null;
   }

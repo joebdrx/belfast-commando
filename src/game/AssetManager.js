@@ -78,6 +78,10 @@ const MODEL_DEFS = {
   // upright + face it into the room. Centre-anchored so it pivots about its own
   // middle when Hub rotates it onto the wall.
   landline_phone:   { size: 0.55, fit: "max", anchor: "center", rotY: 0 },
+  // Safehouse bar props (HUB only): a Trinitron CRT + an open ThinkPad, sitting
+  // on the back-bar counter. Anchored at their base so they rest on the surface.
+  crt_tv:           { size: 0.72, fit: "height", anchor: "bottom", rotY: Math.PI },
+  thinkpad:         { size: 0.6, fit: "max", anchor: "bottom", rotY: Math.PI },
   // Belfast exterior building templates (optimized from asset-reference via
   // scripts/optimize-buildings.sh). Provisional; tuned from the in-game audit.
   bldg_terrace:     { size: 12, fit: "height", anchor: "bottom", rotY: 0 },

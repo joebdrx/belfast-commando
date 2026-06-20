@@ -492,10 +492,6 @@ export class Menu {
       this._call("onUpgrades");
       this._renderUpgrades();
     }));
-    row.appendChild(this._makeButton("Story Logs", () => {
-      this._call("onStoryLogs");
-      this._renderStory();
-    }));
     row.appendChild(this._makeButton("Settings", () => {
       this._renderSettings();
     }));
