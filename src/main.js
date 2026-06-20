@@ -623,11 +623,13 @@ class Game {
       this.touchControls = null;
       return;
     }
+    this._touchSprintBtn = false;
     this.touchControls = new TouchControls();
     this.touchControls.setHandlers({
       onLook: (dx, dy) => this.player.applyLook(dx, dy, TOUCH_LOOK_SENS),
       onMove: (keys) => {
         for (const code in keys) this.player.keys[code] = keys[code];
+        if (this._touchSprintBtn) this.player.keys["ShiftLeft"] = true;
       },
       onKeyDown: (code) => {
         this.player.keys[code] = true;
@@ -645,6 +647,14 @@ class Game {
       onReload: () => this.weapon.reload(),
       onSwitch: () => this.weapon.cycleWeapon(1),
       onPause: () => this._pauseGame(),
+      onSprintDown: () => {
+        this._touchSprintBtn = true;
+        this.player.keys["ShiftLeft"] = true;
+      },
+      onSprintUp: () => {
+        this._touchSprintBtn = false;
+        this.player.keys["ShiftLeft"] = false;
+      },
     });
     this._syncTouchControls();
   }
@@ -667,6 +677,7 @@ class Game {
 
   /** Resume from the pause menu. Desktop re-locks the pointer; touch re-activates. */
   _resume() {
+    this._touchSprintBtn = false;
     if (this.ctx.touch) {
       this.paused = false;
       this.state.setPhase("LEVEL");

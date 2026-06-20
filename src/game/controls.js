@@ -26,7 +26,7 @@ export const KEYBOARD_CONTROLS = [
 export const TOUCH_CONTROLS = [
   ["Move", "Left stick"],
   ["Look", "Drag right"],
-  ["Sprint", "Stick to rim"],
+  ["Sprint", "Run btn / Stick rim"],
   ["Shoot", "Fire (hold)"],
   ["Jump", "Jump button"],
   ["Kick", "Kick button"],

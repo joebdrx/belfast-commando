@@ -171,6 +171,11 @@ export class TouchControls {
         bottom: calc(252px + env(safe-area-inset-bottom, 0px));
         width: 62px; height: 62px; font-size: 12px;
       }
+      .${PREFIX}sprint {
+        right: calc(240px + env(safe-area-inset-right, 0px));
+        bottom: calc(60px + env(safe-area-inset-bottom, 0px));
+        width: 74px; height: 74px;
+      }
       .${PREFIX}pause {
         pointer-events: auto;
         top: calc(16px + env(safe-area-inset-top, 0px));
@@ -214,8 +219,9 @@ export class TouchControls {
     this._kick = this._makeButton(`${PREFIX}kick`, "Kick");
     this._reload = this._makeButton(`${PREFIX}reload`, "Rld");
     this._wpn = this._makeButton(`${PREFIX}wpn`, "Wpn");
+    this._sprint = this._makeButton(`${PREFIX}sprint`, "Run");
     this._pause = this._makeButton(`${PREFIX}pause`, "❚❚");
-    for (const b of [this._fire, this._jump, this._kick, this._reload, this._wpn, this._pause]) {
+    for (const b of [this._fire, this._jump, this._kick, this._reload, this._wpn, this._sprint, this._pause]) {
       this.root.appendChild(b);
     }
 
@@ -258,6 +264,7 @@ export class TouchControls {
     this._holdButton(this._reload, () => this._call("onReload"), null);
     this._holdButton(this._wpn, () => this._call("onSwitch"), null);
     this._holdButton(this._pause, () => this._call("onPause"), null);
+    this._holdButton(this._sprint, () => this._call("onSprintDown"), () => this._call("onSprintUp"));
   }
 
   // ---- analog (joystick + look) wiring -------------------------------------
@@ -371,9 +378,11 @@ export class TouchControls {
     this._fire.classList.remove(`${PREFIX}down`);
     this._jump.classList.remove(`${PREFIX}down`);
     this._kick.classList.remove(`${PREFIX}down`);
+    this._sprint.classList.remove(`${PREFIX}down`);
     this._call("onFireUp");
     this._call("onKeyUp", "Space");
     this._call("onKeyUp", "KeyF");
+    this._call("onSprintUp");
   }
 
   get active() {
