@@ -29,6 +29,19 @@ html, body {
   height: 100%;
   overflow: hidden;
   background: #000;
+  /* Touch play: kill the iOS tap highlight / long-press callout and rubber-band
+     overscroll so the on-screen controls feel native. (touch-action is scoped to
+     the canvas below so menu sliders + scrollable panels still work on touch.)
+     No effect on desktop input. */
+  overscroll-behavior: none;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+}
+
+/* The game viewport itself must never scroll/zoom under a drag. */
+#app canvas,
+#app > canvas {
+  touch-action: none;
 }
 
 /* -- App container + canvas -------------------------------- */
@@ -470,8 +483,8 @@ html, body {
   align-self: center;
 }
 
-/* Key cap chip — override the accent b rule above */
-#overlay-body .controls-grid b {
+/* Key cap chip — used by the result overlay AND the menu/pause controls views. */
+.controls-grid b {
   display: inline-block;
   font-size: 12px;
   font-weight: 700;

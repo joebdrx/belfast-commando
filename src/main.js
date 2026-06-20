@@ -23,6 +23,11 @@ import { Achievements } from "./game/Achievements.js";
 import { Abilities } from "./game/Abilities.js";
 import { Decals } from "./game/Decals.js";
 import { LoadingScreen } from "./game/LoadingScreen.js";
+import { TouchControls, isTouchDevice } from "./game/TouchControls.js";
+
+// Per-pixel look speed for the on-screen touch pad (rad/px). Touch drags are
+// coarser than mouse motion, so this runs a touch hotter than the mouse default.
+const TOUCH_LOOK_SENS = 0.0042;
 
 // GTA-style loading slides — promo art that slow-scans during the pre-menu boot.
 const LOADING_LOGO = "ui/bs-logo.png";
@@ -36,18 +41,6 @@ const LOADING_SLIDES = [
 const OPERATION_VIDEO = "loading/operation-loading.mp4";
 
 const MAX_DT = 0.05;
-
-const CONTROLS_HTML = `
-  <div class="controls-grid">
-    <span>Move</span><b>W A S D</b>
-    <span>Sprint</span><b>Shift</b>
-    <span>Jump</span><b>Space</b>
-    <span>Slide</span><b>Ctrl / C (while sprinting)</b>
-    <span>Kick</span><b>F</b>
-    <span>Shoot</span><b>Left Mouse</b>
-    <span>Weapons</span><b>1 2 3 / Q</b>
-    <span>Mute</span><b>M</b>
-  </div>`;
 
 /**
  * Game
@@ -119,6 +112,9 @@ class Game {
     this.ctx = {
       dom: this.dom,
       active: false,
+      // True on touch devices: input is gated on this instead of pointer lock,
+      // which doesn't exist on mobile (see _computeActive / Weapon._canAct).
+      touch: isTouchDevice(),
       camera: this.engine.camera,
       scene: this.engine.scene,
       audio: this.audio,
@@ -172,7 +168,7 @@ class Game {
       this._applyQuality(s.quality);
     });
     this.pauseMenu.setHandlers({
-      onResume: () => this._requestLock(),
+      onResume: () => this._resume(),
       onRestart: () => this._loadLevel(this.levelManager.currentIndex),
       onQuit: () => this._enterHub(),
     });
@@ -243,6 +239,7 @@ class Game {
       });
 
     this._bindUI();
+    this._initTouchControls();
     window.addEventListener("resize", () => {
       this.assets.retro && this.assets.retro.setViewport(window.innerWidth, window.innerHeight);
     });
@@ -275,6 +272,7 @@ class Game {
     this.menu.show();
     this._setHubLabelsVisible(true);
     this.audio.setAmbient("HUB"); // menu ambience + drum + intermittent whistle
+    this._syncTouchControls(); // hide the on-screen controls in the safehouse
   }
 
   /**
@@ -322,8 +320,8 @@ class Game {
   _revealLevel() {
     if (!this._loadingActive) return; // idempotent (onReveal + finish() both call)
     this._loadingActive = false;
-    this.ctx.active =
-      this.phase === "LEVEL" && !this.paused && document.pointerLockElement === this.dom;
+    this.ctx.active = this._computeActive();
+    this._syncTouchControls();
   }
 
   /** Build + deploy into a campaign sector (LEVEL phase). */
@@ -396,6 +394,7 @@ class Game {
     this.paused = false;
     this.state.setPhase("LEVEL");
     this._requestLock();
+    this._syncTouchControls(); // show on a touch restart; stays hidden behind a loader
     this.audio.setAmbient("LEVEL"); // level ambience (drum continues from the menu)
     // Defer the "look at all these…" bark until the world is actually up and the
     // player can see it: the loop fires it once we're a live, rendered, pointer-
@@ -424,6 +423,7 @@ class Game {
     this.phase = "RESULTS";
     this.paused = false;
     this.ctx.active = false;
+    this._syncTouchControls(); // hide the on-screen controls on the results card
     this.state.setPhase("RESULTS");
     this.pauseMenu.hide();
     this.hud.setCrosshairActive(false);
@@ -520,7 +520,11 @@ class Game {
   /** Apply the graphics-quality setting to the renderer pixel ratio. */
   _applyQuality(quality) {
     const { pixelRatio } = this.pauseMenu.qualityToRenderer(quality);
-    this.engine.renderer.setPixelRatio(Math.min(window.devicePixelRatio, pixelRatio));
+    let ratio = Math.min(window.devicePixelRatio || 1, pixelRatio);
+    // Mobile GPUs choke on retina-density rendering; cap the cost even on "High"
+    // so the on-screen-controls build stays smooth (the menu still tunes quality).
+    if (this.ctx.touch) ratio = Math.min(ratio, 1.5);
+    this.engine.renderer.setPixelRatio(ratio);
   }
 
   _bindUI() {
@@ -538,14 +542,21 @@ class Game {
     this.dom.addEventListener("click", (e) => {
       if (this.phase === "HUB") {
         this._onHubClick(e);
-      } else if (this.phase === "LEVEL" && !this.paused && document.pointerLockElement !== this.dom) {
+      } else if (
+        !this.ctx.touch && // touch play manages its own activation (no pointer lock)
+        this.phase === "LEVEL" &&
+        !this.paused &&
+        document.pointerLockElement !== this.dom
+      ) {
         this._requestLock();
       }
     });
 
     document.addEventListener("pointerlockchange", () => {
       const locked = document.pointerLockElement === this.dom;
-      if (this.phase === "LEVEL") {
+      // Pointer lock is a desktop-only concept; on touch we never request it, so
+      // this handler's pause/resume logic must not run there.
+      if (this.phase === "LEVEL" && !this.ctx.touch) {
         if (!locked && !this.paused) {
           // Soft pause when the player tabs out / hits Esc → the pause menu.
           this.paused = true;
@@ -557,7 +568,7 @@ class Game {
           this.pauseMenu.hide();
         }
       }
-      this.ctx.active = this.phase === "LEVEL" && !this.paused && locked && !this._loadingActive;
+      this.ctx.active = this._computeActive();
     });
 
     window.addEventListener("keydown", (e) => {
@@ -583,8 +594,88 @@ class Game {
 
   _requestLock() {
     this.hud.hideOverlay();
+    if (this.ctx.touch) {
+      // No pointer lock on touch — activate directly (a loader/pause still gates it).
+      this.ctx.active = this._computeActive();
+      this._syncTouchControls();
+      return;
+    }
     const p = this.dom.requestPointerLock?.();
     if (p && typeof p.catch === "function") p.catch(() => {});
+  }
+
+  /**
+   * Single source of truth for whether LEVEL input is live. Desktop requires
+   * pointer lock; touch substitutes ctx.touch (no lock exists on mobile). With
+   * touch === false this is identical to the original `… && locked` gate, so
+   * desktop behaviour is unchanged.
+   */
+  _computeActive() {
+    const locked = document.pointerLockElement === this.dom;
+    return (
+      this.phase === "LEVEL" && !this.paused && !this._loadingActive && (locked || this.ctx.touch)
+    );
+  }
+
+  /** Build + wire the on-screen touch controls. No-op (null) on desktop. */
+  _initTouchControls() {
+    if (!this.ctx.touch) {
+      this.touchControls = null;
+      return;
+    }
+    this.touchControls = new TouchControls();
+    this.touchControls.setHandlers({
+      onLook: (dx, dy) => this.player.applyLook(dx, dy, TOUCH_LOOK_SENS),
+      onMove: (keys) => {
+        for (const code in keys) this.player.keys[code] = keys[code];
+      },
+      onKeyDown: (code) => {
+        this.player.keys[code] = true;
+      },
+      onKeyUp: (code) => {
+        this.player.keys[code] = false;
+      },
+      onFireDown: () => {
+        this.weapon.triggerHeld = true;
+        this.weapon.tryFire();
+      },
+      onFireUp: () => {
+        this.weapon.triggerHeld = false;
+      },
+      onReload: () => this.weapon.reload(),
+      onSwitch: () => this.weapon.cycleWeapon(1),
+      onPause: () => this._pauseGame(),
+    });
+    this._syncTouchControls();
+  }
+
+  /** Show the touch controls only during live LEVEL play. No-op without touch. */
+  _syncTouchControls() {
+    if (!this.touchControls) return;
+    this.touchControls.setActive(this.phase === "LEVEL" && !this.paused && !this._loadingActive);
+  }
+
+  /** Explicit pause (touch Pause button — mobile has no Esc / pointer-lock loss). */
+  _pauseGame() {
+    if (this.phase !== "LEVEL" || this.paused) return;
+    this.paused = true;
+    this.state.setPhase("PAUSED");
+    this.pauseMenu.show();
+    this.ctx.active = false;
+    this._syncTouchControls();
+  }
+
+  /** Resume from the pause menu. Desktop re-locks the pointer; touch re-activates. */
+  _resume() {
+    if (this.ctx.touch) {
+      this.paused = false;
+      this.state.setPhase("LEVEL");
+      this.pauseMenu.hide();
+      this.ctx.active = this._computeActive();
+      this._syncTouchControls();
+    } else {
+      this._requestLock(); // desktop: lock → pointerlockchange unpauses
+    }
   }
 
   // ---- safehouse 3D interaction (HUB) ------------------------------------

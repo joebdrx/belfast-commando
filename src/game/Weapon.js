@@ -256,7 +256,15 @@ export class Weapon {
   }
 
   _canAct() {
-    return this.ctx && this.ctx.active && document.pointerLockElement === this.ctx.dom;
+    if (!this.ctx || !this.ctx.active) return false;
+    // Pointer lock is the desktop "engaged" signal; touch play has no lock, so
+    // ctx.touch stands in for it (the on-screen Fire button owns firing there).
+    return document.pointerLockElement === this.ctx.dom || !!this.ctx.touch;
+  }
+
+  /** Public weapon cycle for the on-screen touch UI: +1 = next owned, -1 = prev. */
+  cycleWeapon(dir = 1) {
+    this._cycleOwned(dir);
   }
 
   setWeapon(i) {
