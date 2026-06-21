@@ -14,6 +14,7 @@ const SAMPLES = {
   // player voice barks
   p_getdafout: "sfx/player/getdafout.mp3",
   p_lookatallthese: "sfx/player/lookatallthese.mp3",
+  p_gaesin: "sfx/player/gaesinireland.mp3", // spoken dialogue line (rescue VO)
   // enemy voice barks, split by MODEL type. type1 = the two young "invader"
   // models; type2 = the bald "groomer" + the turbaned "fatstabber". Within each
   // type some lines are taunts (spotting/attacking), others pain (hit/killed).
@@ -99,6 +100,12 @@ export class Audio {
     this.master = this.ctx.createGain();
     this.master.gain.value = 0.5;
     this.master.connect(this.ctx.destination);
+    // Dedicated VOICE bus: every spoken bark + dialogue VO routes here so voices
+    // share one knob, independent of guns/SFX. Sits slightly under master so the
+    // (now-lowered) barks and the dialogue clip read clearly without blaring.
+    this._voiceGain = this.ctx.createGain();
+    this._voiceGain.gain.value = 0.9;
+    this._voiceGain.connect(this.master);
     this._loadSamples();
     this._initMusic();
   }
@@ -214,7 +221,7 @@ export class Audio {
    * ready (so callers can fall back to a synth). `pos`+`listenerPos` give crude
    * distance attenuation; otherwise `gain` is used flat.
    */
-  _playBuffer(key, { gain = 0.8, pos = null, listenerPos = null, rate = 1 } = {}) {
+  _playBuffer(key, { gain = 0.8, pos = null, listenerPos = null, rate = 1, destination = null } = {}) {
     if (!this._ok() || !this.buffers[key]) return false;
     let vol = gain;
     if (pos && listenerPos) {
@@ -227,7 +234,7 @@ export class Audio {
     const g = this.ctx.createGain();
     g.gain.value = vol;
     src.connect(g);
-    g.connect(this.master);
+    g.connect(destination || this.master);
     src.start();
     src.onended = () => { try { g.disconnect(); } catch (_) { /* gone */ } };
     return true;
@@ -245,30 +252,37 @@ export class Audio {
     if (now - last < cooldown) return;
     if (Math.random() > chance) return;
     const key = pool[(Math.random() * pool.length) | 0];
-    if (!this._playBuffer(key, { gain, pos, listenerPos })) return; // not loaded yet
+    // Route every bark through the voice bus so it shares the dialogue knob.
+    if (!this._playBuffer(key, { gain, pos, listenerPos, destination: this._voiceGain })) return;
     if (player) this._playerVoiceAt = now; else this._enemyVoiceAt = now;
   }
 
   /** Player bark after an elimination (random, throttled). */
   killBark() {
-    this._bark(KILL_BARKS, { player: true, chance: 0.4, cooldown: 3.5, gain: 0.95 });
+    this._bark(KILL_BARKS, { player: true, chance: 0.4, cooldown: 3.5, gain: 0.6 });
   }
 
   /** Player one-liner as an operation begins ("look at all these…"). */
   levelStartBark() {
-    this._bark(["p_lookatallthese"], { player: true, chance: 1, cooldown: 0, gain: 0.95 });
+    this._bark(["p_lookatallthese"], { player: true, chance: 1, cooldown: 0, gain: 0.65 });
+  }
+
+  /** An actual spoken dialogue line (e.g. on a civilian rescue) — sits clearly on
+   *  the voice bus above the lowered gunfire, so the player can make it out. */
+  dialogueVO() {
+    this._playBuffer("p_gaesin", { gain: 1.0, destination: this._voiceGain });
   }
 
   /** Enemy taunt when it attacks the player — voiced by the model's type pool.
-   *  Gain 1.25 (loud); the source MP3s are loudness-normalised so all enemy lines
-   *  play at the same level. */
+   *  Routed through the voice bus; the source MP3s are loudness-normalised so all
+   *  enemy lines play at the same level. */
   enemyTaunt(pos, listenerPos, type = 1) {
-    this._bark(ENEMY_TAUNTS[type] || ENEMY_TAUNTS[1], { chance: 0.5, cooldown: 2.2, gain: 1.25, pos, listenerPos });
+    this._bark(ENEMY_TAUNTS[type] || ENEMY_TAUNTS[1], { chance: 0.5, cooldown: 2.2, gain: 0.75, pos, listenerPos });
   }
 
-  /** Enemy pain cry when hit or killed — voiced by the model's type pool (loud). */
+  /** Enemy pain cry when hit or killed — voiced by the model's type pool. */
   enemyPain(pos, listenerPos, type = 1) {
-    this._bark(ENEMY_PAIN[type] || ENEMY_PAIN[1], { chance: 0.55, cooldown: 1.6, gain: 1.25, pos, listenerPos });
+    this._bark(ENEMY_PAIN[type] || ENEMY_PAIN[1], { chance: 0.55, cooldown: 1.6, gain: 0.7, pos, listenerPos });
   }
 
   setMuted(muted) {
@@ -316,20 +330,28 @@ export class Audio {
     // Sampled gunfire: Boomstick → shotgun; everything else (pistol AND SMG) →
     // the pistol report, fired on every shot.
     const key = weapon === "Boomstick" ? "gun_shotgun" : "gun_pistol";
-    // Gunshots turned down 25% (0.9→0.675, 0.7→0.525).
-    if (this._playBuffer(key, { gain: weapon === "Boomstick" ? 0.675 : 0.525 })) return;
-    // Fallback: synth report (also -25%).
+    // Gunshots sit under the voices now (shotgun 0.55, pistol/SMG 0.42) so the
+    // dialogue VO + barks aren't drowned.
+    if (this._playBuffer(key, { gain: weapon === "Boomstick" ? 0.55 : 0.42 })) return;
+    // Fallback: synth report (matched levels).
     const dur = weapon === "Boomstick" ? 0.28 : 0.12;
     const noise = this._noise(dur);
     const lp = this.ctx.createBiquadFilter();
     lp.type = "lowpass";
     lp.frequency.setValueAtTime(weapon === "Boomstick" ? 1800 : 3200, this._now());
     noise.connect(lp);
-    this._env(lp, weapon === "Boomstick" ? 0.675 : 0.41, 0.001, dur);
+    this._env(lp, weapon === "Boomstick" ? 0.55 : 0.34, 0.001, dur);
     noise.start();
     noise.stop(this._now() + dur + 0.02);
     // Low thump body
     this._tone(weapon === "Boomstick" ? 90 : 140, 0.08, 0.4, "square");
+  }
+
+  /** Bright pickup chime when a supply crate is broken open. */
+  loot() {
+    if (!this._ok()) return;
+    this._tone(660, 0.16, 0.16, "triangle", 990); // upward glide
+    this._tone(990, 0.1, 0.18, "triangle");        // sparkle overtone
   }
 
   kick() {

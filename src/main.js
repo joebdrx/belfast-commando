@@ -294,8 +294,16 @@ class Game {
     this.menu.hide();
     this.hub.hide();
     this.score.resetAll();
+    // Resume the persisted campaign position (next uncleared sector). Legacy saves
+    // with no campaignIndex fall back to their furthest-reached sector. A dialed
+    // level-code skip still overrides.
+    const prog = this.state.getProgression();
+    const resumeIndex =
+      prog.campaignIndex > 0 ? prog.campaignIndex : Math.max(0, (prog.unlockedLevels || 1) - 1);
     const index =
-      this._pendingSkipIndex != null && this._pendingSkipIndex >= 0 ? this._pendingSkipIndex : 0;
+      this._pendingSkipIndex != null && this._pendingSkipIndex >= 0
+        ? this._pendingSkipIndex
+        : resumeIndex;
     this._pendingSkipIndex = null; // consume the skip
     this.state.startRun({ levelIndex: index });
     // The FIRST deploy from the safehouse plays the operation intro VIDEO.
@@ -459,6 +467,13 @@ class Game {
     const scoreMul = this.modifiers.getScoreMul();
     const rp = Math.round((died ? base * 0.4 : base) * scoreMul);
     this.state.addCurrency(rp);
+    // On a CLEAR, advance the persisted campaign position so the safehouse's
+    // "Start Operation" resumes the next uncleared sector. Death leaves it
+    // untouched (you retry the same sector).
+    if (!died) {
+      const prog = this.state.getProgression();
+      prog.campaignIndex = Math.min(this.levelManager.currentIndex + 1, this.levelManager.levelCount - 1);
+    }
     this.progression.save();
     this.state.endRun({ died });
 

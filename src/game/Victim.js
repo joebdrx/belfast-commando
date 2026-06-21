@@ -196,6 +196,9 @@ export class Victim {
     if (ctx.hud) ctx.hud.setInteractCallback(null);
     this._stopScream(); // she's safe now — the screaming stops
     if (ctx.audio && ctx.audio.rescueJingle) ctx.audio.rescueJingle();
+    // A spoken dialogue line (voice bus) so there's an audible "guy talking" beat
+    // the player can actually make out — slightly delayed so it follows the jingle.
+    if (ctx.audio && ctx.audio.dialogueVO) setTimeout(() => ctx.audio.dialogueVO(), 650);
     if (this._promptActive && ctx.hud) { ctx.hud.setInteractPrompt(null); this._promptActive = false; }
     if (ctx.state) {
       if (ctx.state.addCurrency) ctx.state.addCurrency(15);

@@ -96,9 +96,14 @@ class Door {
  * enemy count scale with the level index.
  */
 export class Level {
-  constructor(scene, index = 0, assets = null) {
+  constructor(scene, index = 0, assets = null, layoutSeed = null) {
     this.scene = scene;
-    this.index = index;
+    this.index = index; // campaign DIFFICULTY index (counts, mix, stat scaling)
+    // Per-run procedural-placement seed, DECOUPLED from difficulty. Defaults to
+    // the old index-derived formula so existing 3-arg callers/tests reproduce the
+    // identical layout; LevelManager passes a fresh random seed per deploy so
+    // enemy/victim/cover placement varies every run.
+    this.layoutSeed = (layoutSeed != null ? layoutSeed : 2024 + (index >>> 0) * 131) >>> 0;
     this.assets = assets;
     this.group = new THREE.Group();
     scene.add(this.group);
@@ -118,6 +123,8 @@ export class Level {
     this._director = new EnemyDirector(index || 0);
     /** @type {Array<{root:THREE.Object3D, hitbox:THREE.Box3, collider:THREE.Box3, pos:THREE.Vector3, exploded:boolean}>} */
     this.barrels = [];
+    /** @type {Array<{root:THREE.Object3D, hitbox:THREE.Box3, collider:THREE.Box3, pos:THREE.Vector3, opened:boolean, loot:object}>} */
+    this.crates = [];
 
     this.spawn = new THREE.Vector3(-12, 1.7, 38);
     this.spawnYaw = 0; // procedural grid faces -Z into the street
@@ -450,7 +457,7 @@ export class Level {
     // Player deploys on the southern street, facing north down the terraces.
     this.spawn = new THREE.Vector3(-PITCH_X / 2, 1.7, GRID_HALF_Z + 7);
 
-    const rng = mulberry32(2024 + this.index * 131);
+    const rng = mulberry32(this.layoutSeed);
 
     // --- 3×3 terraced blocks: enclosed rooms with kickable doors. ---------
     // Roughly half the blocks hide an invader; the rest are empty rooms to
@@ -487,11 +494,7 @@ export class Level {
       const z = (rng() - 0.5) * GRID_HALF_Z * 2;
       if (!this._inStreet(x, z)) continue;
       if (rng() < 0.5) {
-        this._prop("crate_supply", x, z, 1.1, 1.1, 1.1, () => {
-          const m = new THREE.Mesh(new THREE.BoxGeometry(1.1, 1.1, 1.1), this._materials.crate);
-          m.position.set(x, 0.55, z);
-          this.group.add(m);
-        });
+        this._addCrate(x, z, rng);
       } else {
         this._addBarrel(x, z);
       }
@@ -1477,6 +1480,64 @@ export class Level {
     }
   }
 
+  /**
+   * A supply crate: same destructible shape as a barrel, but kicking/shooting it
+   * BREAKS it open and drops loot instead of exploding. Loot is pre-rolled off the
+   * seeded layout RNG so it's deterministic within a run.
+   */
+  _addCrate(x, z, rng) {
+    const w = 1.1, h = 1.1, d = 1.1;
+    let root;
+    const model = this.assets && this.assets.getModel("crate_supply");
+    if (model) {
+      model.position.set(x, 0, z);
+      this.group.add(model);
+      root = model;
+    } else {
+      root = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), this._materials.crate);
+      root.position.set(x, h / 2, z);
+      this.group.add(root);
+    }
+    const collider = new THREE.Box3(
+      new THREE.Vector3(x - w / 2, 0, z - d / 2),
+      new THREE.Vector3(x + w / 2, h, z + d / 2),
+    );
+    this.colliders.push(collider);
+    const hitbox = new THREE.Box3(
+      new THREE.Vector3(x - 0.6, 0, z - 0.6),
+      new THREE.Vector3(x + 0.6, 1.15, z + 0.6),
+    );
+    const r = rng ? rng() : Math.random();
+    const loot = r < 0.45 ? { type: "ammo", amount: 12, text: "+AMMO" }
+      : r < 0.75 ? { type: "rp", amount: 10, text: "+10 RP" }
+        : { type: "health", amount: 25, text: "+25 HP" };
+    this.crates.push({ root, hitbox, collider, pos: new THREE.Vector3(x, 0.6, z), opened: false, loot });
+  }
+
+  /** Break a crate open: remove it, hand the player its loot, and pop feedback. */
+  openCrate(crate, ctx) {
+    if (this._disposed || !crate || crate.opened) return;
+    crate.opened = true;
+    this.group.remove(crate.root);
+    const ci = this.colliders.indexOf(crate.collider);
+    if (ci >= 0) this.colliders.splice(ci, 1);
+    this._activeColliders = null; // invalidate getColliders() cache (same as explodeBarrel)
+
+    const loot = crate.loot;
+    if (loot.type === "ammo") ctx.weapon.addAmmo(loot.amount);
+    else if (loot.type === "rp") ctx.state && ctx.state.addCurrency(loot.amount);
+    else if (loot.type === "health") ctx.player.heal(loot.amount);
+
+    ctx.score.add(25, "SUPPLIES");
+    ctx.audio.loot();
+    if (ctx.juice) {
+      ctx.juice.shake(0.12, 120);
+      ctx.juice.spawnImpact(crate.pos, "spark");
+    }
+    // Bus event (position-carrying) → floating "+LOOT" popup.
+    ctx.state && ctx.state.emit("loot", { text: loot.text, position: crate.pos.clone() });
+  }
+
   _addEnemy(pos, opts = {}) {
     if (!opts.archetype) opts.archetype = this._director.next();
     // ALL enemies use the rigged + animated invader; fall back to the static
@@ -1503,6 +1564,18 @@ export class Level {
       }
     }
     const e = new Enemy(pos, opts);
+    // Per-sector difficulty scaling (keyed on the campaign index, NOT the layout
+    // seed). Multiplies the freshly-loaded archetype stats so later sectors are
+    // tougher AND faster, not just more numerous. Enforcer scales too but stays
+    // kick-immune. Stacks with any per-run Modifier (applied post-build in main).
+    const diff = this.index | 0;
+    if (diff > 0) {
+      const hpMul = Math.min(2.0, 1 + diff * 0.15); // sector 6 → ~1.9x health
+      const spdMul = Math.min(1.4, 1 + diff * 0.05); // sector 6 → 1.3x speed
+      e.health *= hpMul;
+      e.speed *= spdMul;
+      e.runSpeed *= spdMul;
+    }
     this.group.add(e.group);
     this.enemies.push(e);
   }

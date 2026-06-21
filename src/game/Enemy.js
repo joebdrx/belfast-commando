@@ -4,6 +4,12 @@ import ENEMY_TYPES from "../data/enemies.json";
 
 const ENEMY_BY_ID = Object.fromEntries(ENEMY_TYPES.map((e) => [e.id, e]));
 
+// A boot deals fixed damage (not an instant kill): lethal to a gunner (60) or
+// breacher (18), a 2-kick on a base grunt (100), and never enough for the
+// enforcer (320, also knockback-immune). Lethality tapers as enemy health scales
+// per sector, so the kick stops being a guaranteed one-shot on later levels.
+const KICK_DAMAGE = 80;
+
 const _toPlayer = new THREE.Vector3();
 const _flat = new THREE.Vector3();
 const _tangent = new THREE.Vector3();
@@ -280,7 +286,7 @@ export class Enemy {
     if (this.health <= 0) this._die(dir);
   }
 
-  /** A boot to the chest: always lethal, huge knockback (Anger Foot style). */
+  /** A boot to the chest: fixed damage + huge knockback (Anger Foot style). */
   takeKick(dir) {
     if (this.dead) return;
     if (this.knockbackImmune) {
@@ -290,7 +296,7 @@ export class Enemy {
       return;
     }
     this.knock.addScaledVector(dir, 16);
-    this.takeDamage(this.health + 50, dir, 0); // guaranteed kill
+    this.takeDamage(KICK_DAMAGE, dir, 0);
   }
 
   _die(dir) {

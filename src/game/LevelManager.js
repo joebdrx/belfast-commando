@@ -90,9 +90,11 @@ export class LevelManager {
     }
     this._disposeMarker();
 
-    // Seed drives the Level's procedural RNG (and enemy/cover scaling); fall
-    // back to the index when an entry omits one.
-    this.level = new Level(this.scene, entry.seed ?? i, this.assets);
+    // Difficulty keys off the campaign index `i` (counts, archetype mix, stat
+    // scaling); the LAYOUT gets a fresh per-run seed so enemy/victim/cover
+    // placement varies every deploy (keeps the deterministic mulberry32 within a run).
+    const layoutSeed = (Math.random() * 0xffffffff) >>> 0;
+    this.level = new Level(this.scene, i, this.assets, layoutSeed);
     this._index = i;
     this.entry = entry;
 

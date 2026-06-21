@@ -171,6 +171,13 @@ export class Player {
     }
   }
 
+  /** Restore health (crate loot), clamped to the live maxHealth. Refreshes the HUD. */
+  heal(amount) {
+    if (!this.alive) return;
+    this.health = Math.min(this.maxHealth, this.health + amount);
+    if (this.ctx && this.ctx.hud) this.ctx.hud.setHealth(this.health, this.maxHealth);
+  }
+
   /**
    * First-person blood burst when the player is hit. The player has no visible
    * body, so we spray gore just in front of / below the camera where it reads as
@@ -443,16 +450,22 @@ export class Player {
       if (dist > KICK_RANGE) continue;
       _tmp.normalize();
       if (_tmp.dot(_forward) > cone) {
+        const wasAlive = !e.dead;
         e.takeKick(_tmp);
         kickPoint = e.position.clone();
-        if (e.dead) this.ctx.abilities && this.ctx.abilities.onKickKill({ distance: dist });
-        this.ctx.score.add(250, "BOOT KILL!");
+        // Kill credit ONLY when the boot actually downs the enemy — the kick is
+        // fixed-damage now, so a tanky/scaled enemy can survive it.
+        if (wasAlive && e.dead) {
+          this.ctx.abilities && this.ctx.abilities.onKickKill({ distance: dist });
+          this.ctx.score.add(250, "BOOT KILL!");
+          // Bridge a boot-kill to the run state (kills/bootKills + "kill" event
+          // with isKick so achievements + floating text light up).
+          this.ctx.state && this.ctx.state.addKill({ position: e.position.clone(), isKick: true });
+        }
+        // Boot connects (FX + juice) whether or not it kills.
         this.ctx.weapon.kickFx(e.position);
         this.ctx.audio.kick();
         this.ctx.steamFirstKick();
-        // Bridge a boot-kill to the run state (kills/bootKills + "kill" event
-        // with isKick so achievements + floating text light up) and add juice.
-        this.ctx.state && this.ctx.state.addKill({ position: e.position.clone(), isKick: true });
         if (this.ctx.juice) {
           this.ctx.juice.hitStop(70);
           this.ctx.juice.shake(0.2, 180);
@@ -472,6 +485,20 @@ export class Player {
       _tmp.normalize();
       if (_tmp.dot(_forward) > cone) {
         this.ctx.level.explodeBarrel(bl, this.ctx);
+        connected = true;
+      }
+    }
+
+    // Supply crates — a boot breaks one open for loot.
+    for (const cr of this.ctx.level.crates || []) {
+      if (cr.opened) continue;
+      _tmp.copy(cr.pos).sub(eye);
+      _tmp.y = 0;
+      const dist = _tmp.length();
+      if (dist > KICK_RANGE + 0.4) continue;
+      _tmp.normalize();
+      if (_tmp.dot(_forward) > cone) {
+        this.ctx.level.openCrate(cr, this.ctx);
         connected = true;
       }
     }

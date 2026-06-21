@@ -421,6 +421,16 @@ export class Weapon {
         if (d < blDist) { blDist = d; bestBarrel = bl; blPoint.copy(_hit); }
       }
     }
+    // Closest supply crate (shooting one breaks it open for loot)
+    let crDist = Infinity, bestCrate = null;
+    const crPoint = new THREE.Vector3();
+    for (const cr of this.ctx.level.crates || []) {
+      if (cr.opened) continue;
+      if (this.raycaster.ray.intersectBox(cr.hitbox, _hit)) {
+        const d = _origin.distanceTo(_hit);
+        if (d < crDist) { crDist = d; bestCrate = cr; crPoint.copy(_hit); }
+      }
+    }
     // Closest wall
     let wDist = Infinity;
     const wPoint = new THREE.Vector3();
@@ -432,13 +442,16 @@ export class Weapon {
       }
     }
 
-    const minD = Math.min(eDist, blDist, hasWall ? wDist : Infinity);
+    const minD = Math.min(eDist, blDist, crDist, hasWall ? wDist : Infinity);
     if (minD === Infinity) {
       _hit.copy(_origin).addScaledVector(_dir, 60);
       this._tracer(_origin, _hit);
     } else if (minD === blDist) {
       this._tracer(_origin, blPoint);
       this.ctx.level.explodeBarrel(bestBarrel, this.ctx);
+    } else if (minD === crDist) {
+      this._tracer(_origin, crPoint);
+      this.ctx.level.openCrate(bestCrate, this.ctx);
     } else if (minD === eDist) {
       const wasAlive = !bestEnemy.dead;
       _dir.copy(ePoint).sub(_origin).normalize();

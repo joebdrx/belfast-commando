@@ -68,6 +68,7 @@ class FloatingText {
       this.state.on("kill", (p) => this._spawn(this._killLabel(p), p && p.position)),
       this.state.on("breach", (p) => this._spawn("BREACH!", p && p.position)),
       this.state.on("explosion", (p) => this._spawn("BOOM!", p && p.position)),
+      this.state.on("loot", (p) => this._spawn((p && p.text) || "LOOT", p && p.position)),
     );
   }
 
