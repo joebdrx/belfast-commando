@@ -70,3 +70,78 @@ jobs:
           releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}
+
+  # Android: build a signed APK (arm64 + x86_64) and attach it to the same Release.
+  # Runs after the desktop job so the Release already exists. Signing keystore +
+  # passwords come from repo secrets (ANDROID_KEYSTORE_BASE64 / _PASSWORD /
+  # ANDROID_KEY_PASSWORD / ANDROID_KEY_ALIAS).
+  android:
+    needs: release
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android NDK + platform/build-tools
+        run: sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;27.1.12297006"
+
+      - name: Set up Rust (Android targets)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,x86_64-linux-android
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+          key: android
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Write signing config from secrets
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          cd src-tauri/gen/android
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > upload-keystore.jks
+          cat > keystore.properties <<EOF
+          storeFile=$(pwd)/upload-keystore.jks
+          storePassword=$ANDROID_KEYSTORE_PASSWORD
+          keyPassword=$ANDROID_KEY_PASSWORD
+          keyAlias=$ANDROID_KEY_ALIAS
+          EOF
+
+      - name: Build signed APK (arm64 + x86_64)
+        run: |
+          export NDK_HOME="$ANDROID_SDK_ROOT/ndk/27.1.12297006"
+          npx tauri android build --apk --target aarch64 x86_64
+
+      - name: Upload APK to the Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          APK=$(find src-tauri/gen/android/app/build/outputs/apk -path '*release*' -name '*.apk' ! -name '*unsigned*' | head -1)
+          echo "Uploading $APK to release $TAG"
+          DEST="belfast-commando_${TAG}_android.apk"
+          cp "$APK" "$DEST"
+          gh release upload "$TAG" "$DEST" --clobber

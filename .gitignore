@@ -32,3 +32,9 @@ assets/
 
 # Headless Blender furniture conversion scratch
 .furn-tmp/
+
+# Android signing — NEVER commit keystores or their passwords (CI uses GH secrets)
+*.jks
+*.keystore
+keystore.properties
+src-tauri/gen/android/keystore.properties
