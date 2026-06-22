@@ -352,16 +352,17 @@ export class Enemy {
   update(dt, ctx) {
     this._ctx = ctx; // stash for takeDamage (which has no ctx of its own)
     EnemyBehavior.tickAnim(this, dt);
+
+    // Snapshot the pre-movement position BEFORE knockback so _collideXZ resolves the
+    // knock displacement too — otherwise a hard kick can fling an enemy THROUGH a
+    // wall and leave it embedded (an un-killable, sector-blocking ghost).
+    _prevPos.copy(this.group.position);
+
     // Apply + decay knockback (HORIZONTAL stagger only — Y was flattened at source).
     if (this.knock.lengthSq() > 0.0001) {
       this.group.position.addScaledVector(this.knock, dt);
       this.knock.multiplyScalar(Math.max(0, 1 - dt * 6));
     }
-    // Vertical: gravity pulls toward the floor, hard-clamped at y=0, so an enemy
-    // can never walk through the air or sink half into the ground.
-    this._vy -= GRAVITY * dt;
-    this.group.position.y += this._vy * dt;
-    if (this.group.position.y <= 0) { this.group.position.y = 0; this._vy = 0; }
 
     // Hit-flash decay (placeholder only)
     if (this._hitFlash > 0 && this._bodyMat) {
@@ -370,22 +371,42 @@ export class Enemy {
     }
 
     if (this.dead) {
-      if (this.group.position.y < 0) this.group.position.y = 0; // corpse settles on the floor
-      if (this._pendingDetonate) {
-        this._pendingDetonate = false;
-        EnemyBehavior.detonate(this, ctx);
-      }
-      // Ragdoll-lite: topple to the ground over ~0.5s, then settle.
+      // Ragdoll-lite: topple flat over ~0.5s.
       if (this._toppleAmt < Math.PI / 2) {
         this._toppleAmt = Math.min(Math.PI / 2, this._toppleAmt + dt * 6);
         this.group.setRotationFromAxisAngle(this._toppleAxis, this._toppleAmt);
       }
+      // The mesh pivots about the feet (group origin), so a fully-toppled body would
+      // sink ~half its thickness below the floor. Lift the group as it lies down so
+      // the corpse rests flat ON the ground instead of clipping through it. A corpse
+      // killed mid-air falls to that rest height first.
+      const restY = this.radius * Math.sin(this._toppleAmt);
+      if (this.group.position.y > restY) {
+        this._vy -= GRAVITY * dt;
+        this.group.position.y = Math.max(restY, this.group.position.y + this._vy * dt);
+        if (this.group.position.y <= restY) this._vy = 0;
+      } else {
+        this.group.position.y = restY;
+        this._vy = 0;
+      }
+      // Knockback never moves a corpse (cleared in _die), but resolve the snapshot
+      // anyway so a body shoved at the instant of death can't end up inside a wall.
+      this._collideXZ(ctx, _prevPos.x, _prevPos.z);
+      if (this._pendingDetonate) {
+        this._pendingDetonate = false;
+        EnemyBehavior.detonate(this, ctx);
+      }
       return;
     }
 
+    // Vertical: gravity pulls toward the floor, hard-clamped at y=0, so an enemy
+    // can never walk through the air or sink half into the ground.
+    this._vy -= GRAVITY * dt;
+    this.group.position.y += this._vy * dt;
+    if (this.group.position.y <= 0) { this.group.position.y = 0; this._vy = 0; }
+
     // Run the AI (which moves the group), then push the enemy out of any wall it
-    // walked into so it can't clip through buildings / cars / barriers.
-    _prevPos.copy(this.group.position);
+    // walked into (or was knocked into) so it can't clip through buildings / cars.
     this._runBehavior(dt, ctx);
     this._collideXZ(ctx, _prevPos.x, _prevPos.z);
   }
@@ -482,6 +503,26 @@ export class Enemy {
       }
       this._resolveAxis(colliders, "x", dx, r);
       this._resolveAxis(colliders, "z", dz, r);
+    }
+    // Final safety: if STILL inside a wall (e.g. shoved into a concave corner or a
+    // gap between two boxes), pop out along the axis of least penetration so the
+    // enemy can never become a trapped, unreachable, sector-blocking ghost.
+    this._ejectEmbedded(colliders, r);
+  }
+
+  /** Pop the enemy out of any wall AABB it's still inside, via least penetration. */
+  _ejectEmbedded(colliders, r) {
+    const p = this.group.position;
+    const footY = p.y, headY = p.y + this.height;
+    for (const b of colliders) {
+      if (b.max.y < footY + 0.05 || b.min.y > headY) continue;
+      const minX = b.min.x - r, maxX = b.max.x + r, minZ = b.min.z - r, maxZ = b.max.z + r;
+      if (p.x > minX && p.x < maxX && p.z > minZ && p.z < maxZ) {
+        const penX = Math.min(p.x - minX, maxX - p.x);
+        const penZ = Math.min(p.z - minZ, maxZ - p.z);
+        if (penX <= penZ) p.x = p.x - minX < maxX - p.x ? minX : maxX;
+        else p.z = p.z - minZ < maxZ - p.z ? minZ : maxZ;
+      }
     }
   }
 

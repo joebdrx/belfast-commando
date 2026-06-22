@@ -243,6 +243,9 @@ class Game {
     this._victimLocators = []; // [{ el, fill, victim }]
     this._doorTip = null; // { el } reused for the "F — KICK DOOR DOWN" tip on sector 1
     this._anchorTmp = new THREE.Vector3();
+    // Pooled directional markers over the last few remaining invaders (cleanup helper).
+    this._enemyMarkersEl = document.getElementById("enemy-markers");
+    this._enemyMarkers = []; // [el]
 
     // Extraction reached → finish the level.
     this.levelManager.setOnExtract(() => this._completeLevel());
@@ -844,9 +847,49 @@ class Game {
     }
   }
 
-  /** Show/hide the whole locator layer (LEVEL only). */
+  /** Show/hide the world-anchored overlay layers (civilian locators + enemy markers; LEVEL only). */
   _setVictimLocatorsVisible(visible) {
     if (this._victimLocatorsEl) this._victimLocatorsEl.style.display = visible ? "block" : "none";
+    if (this._enemyMarkersEl) this._enemyMarkersEl.style.display = visible ? "block" : "none";
+  }
+
+  /**
+   * Directional markers over the last few remaining invaders (≤3) so a straggler
+   * hidden in a building or wedged in a corner can always be found and the sector
+   * cleared. Edge-clamped so it also points to off-screen / behind-camera enemies.
+   */
+  _updateEnemyMarkers() {
+    if (!this._enemyMarkersEl || !this.level) return;
+    const live = this.level.enemies.filter((e) => !e.dead);
+    const SHOW_AT = 3;
+    if (!live.length || live.length > SHOW_AT) {
+      for (const el of this._enemyMarkers) el.style.opacity = "0";
+      return;
+    }
+    while (this._enemyMarkers.length < live.length) {
+      const el = document.createElement("div");
+      el.className = "enemy-marker";
+      el.textContent = "◆";
+      el.style.opacity = "0";
+      this._enemyMarkersEl.appendChild(el);
+      this._enemyMarkers.push(el);
+    }
+    const cam = this.engine.camera;
+    const w = window.innerWidth, h = window.innerHeight;
+    for (let i = 0; i < this._enemyMarkers.length; i++) {
+      const el = this._enemyMarkers[i];
+      const e = live[i];
+      if (!e) { el.style.opacity = "0"; continue; }
+      this._anchorTmp.copy(e.group.position); this._anchorTmp.y += 2.0;
+      this._tmpProj.copy(this._anchorTmp).project(cam);
+      let px = (this._tmpProj.x * 0.5 + 0.5) * w;
+      let py = (-this._tmpProj.y * 0.5 + 0.5) * h;
+      if (this._tmpProj.z > 1) { px = w - px; py = h - 24; } // behind camera → mirror to bottom edge
+      const m = 16;
+      el.style.left = `${Math.min(Math.max(px, m), w - m)}px`;
+      el.style.top = `${Math.min(Math.max(py, m), h - m)}px`;
+      el.style.opacity = "1";
+    }
   }
 
   /** Project the civilian locators (only while menaced) + the door tip each frame. */
@@ -995,10 +1038,11 @@ class Game {
     this.hud.setObjective(
       remaining > 0 ? `Invaders remaining: ${remaining}` : "Sector clear — reach the extraction beacon!",
     );
-    // Civilian urgency: top-right aggregate-life bar + world-anchored locators.
-    const vMax = this.level.victimLifeMax;
-    this.hud.setCivilians(this.level.victimsRemaining, this.level.victimCount || 0, vMax > 0 ? this.level.victimLifeTotal / vMax : 0);
+    // Civilian urgency: top-right status bar (saved count + aggregate wellbeing) +
+    // world-anchored locators.
+    this.hud.setCivilians(this.level.victimCount || 0, this.level.victimsSaved, this.level.civilianWellbeing);
     this._updateVictimLocators();
+    this._updateEnemyMarkers();
   }
 }
 

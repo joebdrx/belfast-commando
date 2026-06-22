@@ -1674,6 +1674,24 @@ export class Level {
     return t;
   }
 
+  /** Civilians the player has rescued this sector (the HUD "X/total saved" count). */
+  get victimsSaved() {
+    return this.victims.filter((v) => v.rescued).length;
+  }
+
+  /** Overall civilian wellbeing in [0,1]: rescued = 1, dead = 0, at-risk = life/maxLife,
+   *  averaged over all civilians. Drives the top-right bar — it stays full when every
+   *  civilian is saved (so it never reads as if they were lost). */
+  get civilianWellbeing() {
+    if (!this.victimCount) return 0;
+    let sum = 0;
+    for (const v of this.victims) {
+      if (v.rescued) sum += 1;
+      else if (!v.dead) sum += Math.max(0, Math.min(1, v.life / v.maxLife));
+    }
+    return sum / this.victimCount;
+  }
+
   update(dt, ctx) {
     for (const d of this.doors) d.update(dt);
     for (const e of this.enemies) e.update(dt, ctx);

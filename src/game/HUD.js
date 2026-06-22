@@ -138,17 +138,27 @@ export class HUD {
    * @param {number} total civilians the sector started with
    * @param {number} lifeFrac 0..1 aggregate remaining life fraction
    */
-  setCivilians(remaining, total, lifeFrac = 1) {
+  /**
+   * Top-right civilian status. `wellbeing` (0..1) is the aggregate civilian health —
+   * rescued counts as full, so the bar stays high (green) once everyone is saved. The
+   * text reports how many were SAVED out of the total (e.g. "3/3 saved"), so a cleared
+   * bar reads as success, not loss.
+   * @param {number} total  civilians this sector started with
+   * @param {number} saved  civilians rescued so far
+   * @param {number} wellbeing  aggregate wellbeing 0..1
+   */
+  setCivilians(total, saved, wellbeing = 1) {
     if (!this.civiliansBox) return;
     if (!total) { this.civiliansBox.style.display = "none"; return; }
     this.civiliansBox.style.display = "block";
-    const pct = Math.max(0, Math.min(1, lifeFrac));
+    const pct = Math.max(0, Math.min(1, wellbeing));
     if (this.civiliansFill) {
       this.civiliansFill.style.width = `${pct * 100}%`;
-      this.civiliansFill.style.background = pct > 0.5 ? "#d6a054" : pct > 0.25 ? "#e08a2e" : "#f85149";
+      this.civiliansFill.style.background =
+        pct > 0.75 ? "#3fb950" : pct > 0.5 ? "#d6a054" : pct > 0.25 ? "#e08a2e" : "#f85149";
     }
     this.civiliansBox.classList.toggle("critical", pct > 0 && pct <= 0.25);
-    if (this.civiliansText) this.civiliansText.textContent = `${remaining}/${total} alive`;
+    if (this.civiliansText) this.civiliansText.textContent = `${saved}/${total} saved`;
   }
 
   setWeapon(name) {

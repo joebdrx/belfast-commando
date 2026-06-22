@@ -44,4 +44,26 @@ describe("civilian damage immunity (structural)", () => {
     expect(captors.length).toBeGreaterThan(0);
     for (const c of captors) expect(level.victims.includes(c)).toBe(false);
   });
+
+  it("reports SAVED count + wellbeing so a fully-rescued sector reads as success", () => {
+    const scene = new THREE.Scene();
+    const level = new Level(scene, 1, null, 7777);
+    const total = level.victimCount;
+    expect(total).toBeGreaterThan(0);
+
+    // All alive + at full life, none rescued yet → bar full, 0 saved.
+    expect(level.victimsSaved).toBe(0);
+    expect(level.civilianWellbeing).toBeCloseTo(1, 5);
+
+    // Rescue them all → wellbeing stays full (NOT drained to 0) and saved == total.
+    for (const v of level.victims) v.rescued = true;
+    expect(level.victimsSaved).toBe(total);
+    expect(level.civilianWellbeing).toBeCloseTo(1, 5);
+
+    // A death drops wellbeing below full and is excluded from the saved count.
+    level.victims[0].rescued = false;
+    level.victims[0].dead = true;
+    expect(level.victimsSaved).toBe(total - 1);
+    expect(level.civilianWellbeing).toBeCloseTo((total - 1) / total, 5);
+  });
 });

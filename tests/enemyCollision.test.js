@@ -47,3 +47,49 @@ describe("Enemy._collideXZ (wall collision)", () => {
     expect(e.group.position.x).toBe(0); // untouched — slab is below footY
   });
 });
+
+/** Full-update regression: knockback must be collision-resolved (snapshot taken
+ *  BEFORE the knock is applied), so a hard kick can't fling an enemy through a wall
+ *  and leave it embedded as an un-killable, sector-blocking ghost. */
+describe("Enemy.update knockback + corpse settling", () => {
+  function liveCtx(box) {
+    return {
+      player: { position: new THREE.Vector3(100, 0, 0) }, // far → no chase, just idles
+      level: { getColliders: () => (box ? [box] : []), lineOfSight: () => false },
+    };
+  }
+
+  it("a hard knockback into a wall does not embed the enemy", () => {
+    const e = new Enemy(new THREE.Vector3(0, 0, 0), {});
+    const box = new THREE.Box3(new THREE.Vector3(2, 0, -3), new THREE.Vector3(6, 3, 3));
+    e.group.position.set(box.min.x - 0.5, 0, 0); // just outside the -x face
+    e.knock.set(40, 0, 0); // violent shove straight into the wall
+    const ctx = liveCtx(box);
+    for (let i = 0; i < 40; i++) e.update(1 / 60, ctx);
+    const p = e.group.position;
+    const inside = p.x > box.min.x && p.x < box.max.x && p.z > box.min.z && p.z < box.max.z;
+    expect(inside).toBe(false);
+    expect(p.x).toBeLessThanOrEqual(box.min.x - e.radius + 0.06);
+  });
+
+  it("a corpse topples flat and rests ON the floor (lifted, not half-buried)", () => {
+    const e = new Enemy(new THREE.Vector3(0, 0, 0), {});
+    const ctx = liveCtx(null);
+    e.takeDamage(99999, { x: 1, y: 0, z: 0 }, 0); // kill (sets topple axis)
+    for (let i = 0; i < 60; i++) e.update(1 / 60, ctx);
+    expect(e.dead).toBe(true);
+    expect(e._toppleAmt).toBeCloseTo(Math.PI / 2, 2);
+    // Rest height = radius (the mesh pivots about the feet; lifting by ~half-thickness
+    // keeps the flat body on top of the ground rather than sunk through it).
+    expect(e.group.position.y).toBeCloseTo(e.radius, 2);
+  });
+
+  it("a corpse killed mid-air falls down to its rest height", () => {
+    const e = new Enemy(new THREE.Vector3(0, 0, 0), {});
+    const ctx = liveCtx(null);
+    e.takeDamage(99999, { x: 1, y: 0, z: 0 }, 0);
+    e.group.position.y = 4; // flung up at the moment of death
+    for (let i = 0; i < 90; i++) e.update(1 / 60, ctx);
+    expect(e.group.position.y).toBeCloseTo(e.radius, 2); // settled flat on the floor
+  });
+});

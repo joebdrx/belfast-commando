@@ -226,6 +226,26 @@ html, body {
   pointer-events: none;
   display: none;        /* JS flips to block while in LEVEL */
 }
+
+/* Directional markers over the last few remaining invaders (cleanup helper). */
+#enemy-markers {
+  position: fixed;
+  inset: 0;
+  z-index: 23;          /* just below the civilian locators */
+  pointer-events: none;
+  display: none;        /* JS flips to block while in LEVEL */
+}
+.enemy-marker {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  font-size: 16px;
+  line-height: 1;
+  color: #f85149;
+  text-shadow: 0 0 6px rgba(0, 0, 0, 0.95);
+  filter: drop-shadow(0 0 5px rgba(248, 81, 73, 0.85));
+  animation: stamina-pulse 0.7s ease-in-out infinite;
+  transition: opacity 0.12s ease;
+}
 .victim-locator {
   position: absolute;
   transform: translate(-50%, -100%);
