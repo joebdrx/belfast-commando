@@ -15,6 +15,9 @@ export class HUD {
     this.healthText = this.$("hud-health-text");
     this.staminaBar = this.$("hud-stamina");
     this.staminaFill = this.$("hud-stamina-fill");
+    this.civiliansBox = this.$("hud-civilians");
+    this.civiliansFill = this.$("hud-civilians-fill");
+    this.civiliansText = this.$("hud-civilians-text");
     this.weapon = this.$("hud-weapon");
     this.ammo = this.$("hud-ammo");
     this.objective = this.$("hud-objective");
@@ -122,6 +125,27 @@ export class HUD {
     this.staminaFill.style.width = `${pct * 100}%`;
     this.staminaFill.style.background = exhausted ? "#f85149" : pct < 0.3 ? "#d29922" : "#54b3d6";
     if (this.staminaBar) this.staminaBar.classList.toggle("exhausted", exhausted);
+  }
+
+  /**
+   * Overall civilian life bar (top-right). `lifeFrac` = aggregate remaining
+   * civilian life / max; amber → red as it drops, pulsing when critical. Hidden
+   * when the sector has no civilians.
+   * @param {number} remaining civilians still alive + unrescued
+   * @param {number} total civilians the sector started with
+   * @param {number} lifeFrac 0..1 aggregate remaining life fraction
+   */
+  setCivilians(remaining, total, lifeFrac = 1) {
+    if (!this.civiliansBox) return;
+    if (!total) { this.civiliansBox.style.display = "none"; return; }
+    this.civiliansBox.style.display = "block";
+    const pct = Math.max(0, Math.min(1, lifeFrac));
+    if (this.civiliansFill) {
+      this.civiliansFill.style.width = `${pct * 100}%`;
+      this.civiliansFill.style.background = pct > 0.5 ? "#d6a054" : pct > 0.25 ? "#e08a2e" : "#f85149";
+    }
+    this.civiliansBox.classList.toggle("critical", pct > 0 && pct <= 0.25);
+    if (this.civiliansText) this.civiliansText.textContent = `${remaining}/${total} alive`;
   }
 
   setWeapon(name) {

@@ -10,9 +10,15 @@ const ENEMY_BY_ID = Object.fromEntries(ENEMY_TYPES.map((e) => [e.id, e]));
 // per sector, so the kick stops being a guaranteed one-shot on later levels.
 const KICK_DAMAGE = 80;
 
+// Vertical physics for enemies: a light gravity + hard ground clamp so a knocked
+// enemy always settles back to the floor (never floats or sinks). Matches the
+// player's GRAVITY (Player.js) for consistent feel.
+const GRAVITY = 26;
+
 const _toPlayer = new THREE.Vector3();
 const _flat = new THREE.Vector3();
 const _tangent = new THREE.Vector3();
+const _prevPos = new THREE.Vector3(); // enemy position before AI move (collision resolve)
 
 /**
  * Enemy
@@ -74,8 +80,10 @@ export class Enemy {
     this._attackAction = null;   // the LoopOnce melee-swing action, if a clip was provided
     this._onAttackFinished = null;
 
-    // Knockback velocity (decays each frame)
+    // Knockback velocity (horizontal, decays each frame) + vertical velocity for
+    // the gravity/ground-clamp model (keeps enemies grounded after a hit).
     this.knock = new THREE.Vector3();
+    this._vy = 0;
     // Death topple animation state
     this._toppleAxis = new THREE.Vector3(1, 0, 0);
     this._toppleAmt = 0;
@@ -271,7 +279,13 @@ export class Enemy {
     if (this.dead) return;
     this._alerted = true; // attacking a guard wakes it
     this.health -= amount;
-    if (dir) this.knock.addScaledVector(dir, force);
+    // Knockback is HORIZONTAL only — bullet hit dirs carry a ±Y component (eye→
+    // impact), which used to launch enemies into the air or punch them into the
+    // floor. Flatten it so they stagger along the ground.
+    if (dir && force) {
+      _flat.set(dir.x, 0, dir.z);
+      if (_flat.lengthSq() > 1e-6) this.knock.addScaledVector(_flat.normalize(), force);
+    }
     // Flinch flash (placeholder only — mutate emissive in place, no allocation)
     if (this._bodyMat) {
       this._bodyMat.emissive.set(0xff5544);
@@ -303,6 +317,8 @@ export class Enemy {
     if (this.archetype === "breacher") this._pendingDetonate = true;
     this.dead = true;
     this.alive = false;
+    this.knock.set(0, 0, 0); // stop sliding once dead so the corpse settles in place
+    this._vy = 0;
     if (dir) {
       _flat.set(dir.x, 0, dir.z).normalize();
       // Topple around an axis perpendicular to the push.
@@ -336,11 +352,16 @@ export class Enemy {
   update(dt, ctx) {
     this._ctx = ctx; // stash for takeDamage (which has no ctx of its own)
     EnemyBehavior.tickAnim(this, dt);
-    // Apply + decay knockback (slides the corpse/enemy back).
+    // Apply + decay knockback (HORIZONTAL stagger only — Y was flattened at source).
     if (this.knock.lengthSq() > 0.0001) {
       this.group.position.addScaledVector(this.knock, dt);
       this.knock.multiplyScalar(Math.max(0, 1 - dt * 6));
     }
+    // Vertical: gravity pulls toward the floor, hard-clamped at y=0, so an enemy
+    // can never walk through the air or sink half into the ground.
+    this._vy -= GRAVITY * dt;
+    this.group.position.y += this._vy * dt;
+    if (this.group.position.y <= 0) { this.group.position.y = 0; this._vy = 0; }
 
     // Hit-flash decay (placeholder only)
     if (this._hitFlash > 0 && this._bodyMat) {
@@ -349,6 +370,7 @@ export class Enemy {
     }
 
     if (this.dead) {
+      if (this.group.position.y < 0) this.group.position.y = 0; // corpse settles on the floor
       if (this._pendingDetonate) {
         this._pendingDetonate = false;
         EnemyBehavior.detonate(this, ctx);
@@ -361,6 +383,19 @@ export class Enemy {
       return;
     }
 
+    // Run the AI (which moves the group), then push the enemy out of any wall it
+    // walked into so it can't clip through buildings / cars / barriers.
+    _prevPos.copy(this.group.position);
+    this._runBehavior(dt, ctx);
+    this._collideXZ(ctx, _prevPos.x, _prevPos.z);
+  }
+
+  /**
+   * All locomotion + attack AI (moves `this.group`). Wall collision is resolved by
+   * the caller (`update`) after this returns, so every archetype path is covered
+   * by a single resolve. Mirrors the previous inline AI block exactly.
+   */
+  _runBehavior(dt, ctx) {
     // Victim-guarding enemies menace the victim and ignore the player until the
     // player gets close or attacks them.
     if (this._guardingVictim) {
@@ -377,8 +412,7 @@ export class Enemy {
       }
     }
 
-    // Non-grunt archetypes run their own steering/attack, then bail out before
-    // the baseline grunt melee AI below.
+    // Non-grunt archetypes run their own steering/attack.
     if (this.archetype === "gunner") { EnemyBehavior.stepGunner(this, dt, ctx); return; }
     if (this.archetype === "enforcer") { EnemyBehavior.stepEnforcer(this, dt, ctx); return; }
     if (this.archetype === "breacher") { EnemyBehavior.stepBreacher(this, dt, ctx); return; }
@@ -391,22 +425,17 @@ export class Enemy {
     const canSee = dist < this.sightRange && ctx.level.lineOfSight(this.eyePosition(), playerPos);
 
     if (canSee) {
-      // Always face + close on the player.
       this.group.rotation.y = Math.atan2(_toPlayer.x, _toPlayer.z);
       _flat.copy(_toPlayer).setY(0);
       const hdist = _flat.length();
       _flat.normalize();
       if (hdist > this.meleeRange) {
-        // Charge — and telegraph the swing once inside wind-up range so the
-        // grunt visibly cocks its weapon as it closes (damage-free; the real
-        // hit still happens below in the in-range/meleeTimer path).
         this.group.position.addScaledVector(_flat, this.runSpeed * dt);
         this._setAnim("run");
         if (hdist <= this.meleeRange + EnemyBehavior.MELEE_TELEGRAPH_PAD) {
           this._telegraphSwing(ctx, dt);
         }
       } else {
-        // In range — circle the player and swing on a cooldown.
         _tangent.set(-_flat.z, 0, _flat.x).multiplyScalar(this._strafeDir);
         this.group.position.addScaledVector(_tangent, this.speed * dt);
         this._setAnim("run");
@@ -427,6 +456,51 @@ export class Enemy {
     if (this._rigRoot) {
       this._lunge = this._lunge > 0.001 ? this._lunge * Math.max(0, 1 - dt * 9) : 0;
       this._rigRoot.position.z = this._lunge;
+    }
+  }
+
+  /**
+   * Push the enemy out of static colliders after a move so it can't clip through
+   * walls (mirrors Player._resolveAxis, keyed on this.radius). Resolves X then Z;
+   * picks the face by travel direction. Substeps long displacements so fast movers
+   * (breacher) can't tunnel a thin wall in one frame. Open doors are already
+   * excluded by Level.getColliders().
+   */
+  _collideXZ(ctx, prevX, prevZ) {
+    if (!ctx.level || !ctx.level.getColliders) return;
+    const colliders = ctx.level.getColliders();
+    if (!colliders || !colliders.length) return;
+    const r = this.radius || 0.45;
+    const p = this.group.position;
+    const dx = p.x - prevX, dz = p.z - prevZ;
+    const dist = Math.hypot(dx, dz);
+    const steps = dist > r * 0.8 ? Math.min(4, Math.ceil(dist / (r * 0.8))) : 1;
+    for (let s = 1; s <= steps; s++) {
+      if (steps > 1) {
+        p.x = prevX + dx * (s / steps);
+        p.z = prevZ + dz * (s / steps);
+      }
+      this._resolveAxis(colliders, "x", dx, r);
+      this._resolveAxis(colliders, "z", dz, r);
+    }
+  }
+
+  /** One-axis push-out vs AABBs; `move` is the signed travel on that axis. */
+  _resolveAxis(colliders, axis, move, r) {
+    const p = this.group.position;
+    const footY = p.y, headY = p.y + this.height;
+    for (const b of colliders) {
+      if (b.max.y < footY + 0.05 || b.min.y > headY) continue;
+      const minX = b.min.x - r, maxX = b.max.x + r, minZ = b.min.z - r, maxZ = b.max.z + r;
+      if (p.x > minX && p.x < maxX && p.z > minZ && p.z < maxZ) {
+        if (axis === "x") {
+          if (move > 0) p.x = minX;
+          else if (move < 0) p.x = maxX;
+          else p.x = (p.x - minX < maxX - p.x) ? minX : maxX;
+        } else if (move > 0) p.z = minZ;
+        else if (move < 0) p.z = maxZ;
+        else p.z = (p.z - minZ < maxZ - p.z) ? minZ : maxZ;
+      }
     }
   }
 
@@ -515,15 +589,28 @@ export class Enemy {
     }
   }
 
-  dispose(scene) {
+  dispose(_scene) {
     if (this.mixer && this._onAttackFinished) {
       this.mixer.removeEventListener("finished", this._onAttackFinished);
       this._onAttackFinished = null;
     }
-    scene.remove(this.group);
-    this.group.traverse((o) => {
-      if (o.geometry) o.geometry.dispose();
-      if (o.material) o.material.dispose();
-    });
+    // Detach from the ACTUAL parent (level.group), not the scene — the old
+    // `scene.remove(this.group)` was a no-op (group's parent is level.group), which
+    // left a frozen, untracked, un-killable model behind when a mid-run cull
+    // (Modifiers._trimEnemies) disposed an enemy.
+    this.group.removeFromParent();
+    // Only free GPU resources for the PLACEHOLDER enemy (it builds its own
+    // geometry + materials). Rigged/static enemies are SkeletonUtils/clone(true)
+    // instances that SHARE geometry + materials with other live enemies and the
+    // AssetManager template — disposing those would corrupt the rest. Detach only.
+    if (this._bodyMat) {
+      this.group.traverse((o) => {
+        if (o.geometry) o.geometry.dispose();
+        if (o.material) {
+          const mats = Array.isArray(o.material) ? o.material : [o.material];
+          for (const m of mats) m && m.dispose && m.dispose();
+        }
+      });
+    }
   }
 }

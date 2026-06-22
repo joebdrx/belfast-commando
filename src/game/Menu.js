@@ -486,7 +486,7 @@ export class Menu {
 
     const row = this._el("div", `${PREFIX}btnrow`);
     row.appendChild(this._makeButton("Start Operation", () => {
-      this._call("onStartOperation");
+      this._renderSectors();
     }));
     row.appendChild(this._makeButton("Arsenal & Upgrades", () => {
       this._call("onUpgrades");
@@ -538,7 +538,7 @@ export class Menu {
       const empty = this._el(
         "div",
         `${PREFIX}empty`,
-        "Progression unavailable — connect a quartermaster to spend your Resistance Points.",
+        "Progression unavailable — connect a quartermaster to spend your funds.",
       );
       this.body.appendChild(empty);
       this.body.appendChild(this._makeBackRow());
@@ -584,6 +584,60 @@ export class Menu {
     this.body.appendChild(bootList);
 
     this.body.appendChild(this._makeBackRow());
+  }
+
+  /**
+   * Sector-select sub-panel: a prominent "Continue" to the current campaign
+   * position, plus a list of every sector — already-unlocked ones are deployable
+   * (replay), the rest are locked until an operation code unlocks them.
+   */
+  _renderSectors() {
+    this._view = "sectors";
+    this._clearBody();
+    this.body.appendChild(this._el("div", `${PREFIX}sub-title`, "Select Operation"));
+
+    const prog = gameState.getProgression();
+    const unlocked = (prog && prog.unlockedLevels) || 1;
+    const current = Math.min((prog && prog.campaignIndex) || 0, LEVELS.length - 1);
+
+    // Primary: continue the campaign at the current/next sector.
+    const contRow = this._el("div", `${PREFIX}btnrow`);
+    contRow.appendChild(
+      this._makeButton(`▶ Continue — Sector ${current + 1}: ${this._levelName(current)}`, () => this._call("onContinue")),
+    );
+    this.body.appendChild(contRow);
+
+    this.body.appendChild(this._el("div", `${PREFIX}section-label`, "Sectors"));
+    const list = this._el("div", `${PREFIX}list`);
+    for (let i = 0; i < LEVELS.length; i++) {
+      list.appendChild(this._sectorRow(i, unlocked, current));
+    }
+    this.body.appendChild(list);
+    this.body.appendChild(this._makeBackRow());
+  }
+
+  /** One sector row (mirrors _weaponRow's unlocked/locked disabled-button idiom). */
+  _sectorRow(i, unlocked, current) {
+    const unlockedThis = i < unlocked;
+    const item = this._el("div", `${PREFIX}item`);
+    const main = this._el("div", `${PREFIX}item-main`);
+    const name = this._el("div", `${PREFIX}item-name`, `Sector ${i + 1}: ${this._levelName(i)}`);
+    if (unlockedThis && i < current) name.appendChild(this._el("span", `${PREFIX}eq`, "✓ CLEARED"));
+    else if (unlockedThis && i === current) name.appendChild(this._el("span", `${PREFIX}eq`, "CURRENT"));
+    main.appendChild(name);
+    const meta = this._el("div", `${PREFIX}item-meta`);
+    if (unlockedThis) {
+      meta.innerHTML = "Ready to deploy";
+    } else {
+      meta.classList.add(`${PREFIX}locked`);
+      meta.innerHTML = "Locked · find the operation code";
+    }
+    main.appendChild(meta);
+    item.appendChild(main);
+    const btn = this._makeButton(unlockedThis ? "Deploy" : "Locked", () => this._call("onSelectSector", i), true);
+    btn.disabled = !unlockedThis;
+    item.appendChild(btn);
+    return item;
   }
 
   /** Story Logs sub-panel: only snippets unlocked by current progression. */
@@ -777,7 +831,7 @@ export class Menu {
     if (u.maxed) {
       meta.innerHTML = `Lv <b>${u.level}/${u.maxLevel}</b> · MAXED`;
     } else {
-      meta.innerHTML = `Lv <b>${u.level}/${u.maxLevel}</b> · Next <b>${u.nextCost} RP</b>`;
+      meta.innerHTML = `Lv <b>${u.level}/${u.maxLevel}</b> · Next <b>£${u.nextCost}</b>`;
     }
     main.appendChild(meta);
     item.appendChild(main);
@@ -809,7 +863,7 @@ export class Menu {
     const meta = this._el("div", `${PREFIX}item-meta`);
     meta.innerHTML = b.owned
       ? `Ability <b>${b.ability}</b> · Owned`
-      : `Ability <b>${b.ability}</b> · <b>${b.cost} RP</b>`;
+      : `Ability <b>${b.ability}</b> · <b>£${b.cost}</b>`;
     main.appendChild(meta);
     item.appendChild(main);
 
@@ -863,7 +917,7 @@ export class Menu {
       const prereq = (w.requires && nameById[w.requires]) || w.requires || "a prior weapon";
       meta.innerHTML = `Locked · Requires <b>${prereq}</b>`;
     } else {
-      meta.innerHTML = `Cost <b>${w.cost} RP</b>`;
+      meta.innerHTML = `Cost <b>£${w.cost}</b>`;
     }
     main.appendChild(meta);
     item.appendChild(main);
@@ -903,7 +957,7 @@ export class Menu {
     } else {
       const reason = (res && res.reason) || "unknown";
       const msg = {
-        broke: "Not enough Resistance Points",
+        broke: "Not enough funds",
         locked: "Buy the prerequisite weapon first",
         owned: "Already in your locker",
         unknown: "Unavailable",
@@ -1031,7 +1085,7 @@ export class Menu {
   /** Repaint the RP readout from the singleton. */
   _updateRp() {
     if (!this.rpReadout) return;
-    this.rpReadout.innerHTML = `Resistance Points: <b>${this._rp()}</b>`;
+    this.rpReadout.innerHTML = `Funds: <b>£${this._rp()}</b>`;
   }
 
   /** Run a handler callback if the caller supplied one (forwarding any args). */
@@ -1243,6 +1297,11 @@ export class Menu {
     this._renderUpgrades();
   }
 
+  /** Open the sector-select panel (e.g. from the 3D safehouse "deploy" fixture). */
+  openSectors() {
+    this._renderSectors();
+  }
+
   /** Open the landline level-code dial modal (e.g. from the 3D wall phone). */
   openDial() {
     if (!this.dialRoot) return;
@@ -1306,6 +1365,7 @@ export class Menu {
   refresh() {
     this._updateRp();
     if (this._view === "upgrades") this._renderUpgrades();
+    else if (this._view === "sectors") this._renderSectors();
     else if (this._view === "story") this._renderStory();
     else if (this._view === "settings") this._renderSettings();
     else if (this._view === "controls") this._renderControls();

@@ -165,6 +165,9 @@ export function stepBreacher(enemy, dt, ctx) {
  * @param {object} ctx
  */
 export function menaceVictim(enemy, dt, ctx) {
+  // Mark the victim as actively menaced (a short timer the victim decays) — its
+  // life drains while this is > 0; the captor only menaces while not alerted.
+  enemy._guardingVictim._menacedTimer = 0.3;
   const victimPos = enemy._guardingVictim.group.position;
   _toVictim.copy(victimPos).sub(enemy.group.position).setY(0);
   if (_toVictim.lengthSq() > 0.0001) {

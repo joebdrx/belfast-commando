@@ -11,6 +11,10 @@ const DESPAWN_DIST = 24;
 const FLEE_TIMEOUT = 9;
 /** Collision half-width used against level colliders while fleeing. */
 const RADIUS = 0.4;
+/** Civilian "life": drains while actively menaced by a captor. A short grace
+ *  before the drain starts, then MENACE_DPS/sec → ~14s captive before death. */
+const MENACE_DPS = 8;
+const MENACE_GRACE = 2.0;
 
 // Module-scope temps — never allocate on the hot path.
 const _tmp = new THREE.Vector3();
@@ -46,6 +50,17 @@ export class Victim {
     this._fleeTime = 0;
     this._fleeDir = new THREE.Vector3();
     this._scream = null; // looping distress-scream controller while captive
+
+    // Civilian life — depletes while a captor is actively menacing (set each frame
+    // by EnemyBehavior.menaceVictim). At 0 the civilian dies (lost, no penalty).
+    this.maxLife = 100;
+    this.life = 100;
+    this.dead = false;
+    // Short countdown refreshed each frame by an active captor (menaceVictim);
+    // > 0 means "currently being menaced". A timer (vs a per-frame flag) survives
+    // the enemies→victims update order so the HUD/locator can read it afterward.
+    this._menacedTimer = 0;
+    this._menaceGrace = MENACE_GRACE;
 
     // Animation (rigged victim) state.
     this.mixer = null;
@@ -165,6 +180,20 @@ export class Victim {
       }
     }
 
+    // --- Pre-rescue: civilian life drains while a captor is actively menacing.
+    // `_menaced` is re-asserted each frame by EnemyBehavior.menaceVictim (which
+    // runs before victims in Level.update); it pauses once the player engages the
+    // captor. A short grace, then drain — at 0 the civilian is lost (no penalty). ---
+    this._menacedTimer = Math.max(0, this._menacedTimer - dt);
+    const menaced = this._menacedTimer > 0;
+    if (menaced && !this.rescued && !this.dead) {
+      if (this._menaceGrace > 0) this._menaceGrace -= dt;
+      else {
+        this.life -= MENACE_DPS * dt;
+        if (this.life <= 0) { this._die(ctx); return; }
+      }
+    }
+
     // --- Pre-rescue: interact prompt + E-press rescue. ----------------------
     const dist = _tmp.copy(ctx.player.position).distanceTo(this.group.position);
     const inRange = dist < INTERACT_RADIUS;
@@ -184,6 +213,24 @@ export class Victim {
     if (inRange && ctx.player.keys && ctx.player.keys["KeyE"]) this._rescue(ctx);
   }
 
+  /** Civilian killed by their captors (life depleted). Lost, no penalty — just
+   *  removed from the sector (forfeits the rescue bonus). @private */
+  _die(ctx) {
+    if (this.dead || this.rescued) return;
+    this.dead = true;
+    this.life = 0;
+    this._stopScream();
+    if (this._promptActive && ctx && ctx.hud) {
+      ctx.hud.setInteractPrompt(null);
+      ctx.hud.setInteractCallback(null);
+      this._promptActive = false;
+    }
+    if (ctx && ctx.state && ctx.state.emit) {
+      ctx.state.emit("victimDied", { position: this.group.position.clone() });
+    }
+    this.removed = true; // Level.update splices + disposes the model next frame
+  }
+
   /** Stop the looping distress scream if it's playing. @private */
   _stopScream() {
     if (this._scream) { this._scream.stop(); this._scream = null; }
@@ -191,7 +238,7 @@ export class Victim {
 
   /** Trigger the rescue: rewards, dialogue, begin fleeing. @private */
   _rescue(ctx) {
-    if (this.rescued) return;
+    if (this.rescued || this.dead) return;
     this.rescued = true;
     if (ctx.hud) ctx.hud.setInteractCallback(null);
     this._stopScream(); // she's safe now — the screaming stops
@@ -202,6 +249,7 @@ export class Victim {
     if (this._promptActive && ctx.hud) { ctx.hud.setInteractPrompt(null); this._promptActive = false; }
     if (ctx.state) {
       if (ctx.state.addCurrency) ctx.state.addCurrency(15);
+      if (ctx.state.bumpStat) ctx.state.bumpStat("civiliansSaved"); // feeds end-of-sector £
       if (ctx.state.emit) ctx.state.emit("victimRescued", { position: this.group.position.clone() });
     }
     if (ctx.score) ctx.score.add(500, "CIVILIAN SAVED!");

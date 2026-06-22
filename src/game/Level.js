@@ -584,6 +584,8 @@ export class Level {
       this.enemies[this.enemies.length - 1]._guardingVictim = sv;
       placed++;
     }
+    // Total civilians this sector started with (denominator for the HUD bar text).
+    this.victimCount = this.victims.length;
   }
 
   /**
@@ -1509,7 +1511,7 @@ export class Level {
     );
     const r = rng ? rng() : Math.random();
     const loot = r < 0.45 ? { type: "ammo", amount: 12, text: "+AMMO" }
-      : r < 0.75 ? { type: "rp", amount: 10, text: "+10 RP" }
+      : r < 0.75 ? { type: "rp", amount: 10, text: "+£10" }
         : { type: "health", amount: 25, text: "+25 HP" };
     this.crates.push({ root, hitbox, collider, pos: new THREE.Vector3(x, 0.6, z), opened: false, loot });
   }
@@ -1518,6 +1520,7 @@ export class Level {
   openCrate(crate, ctx) {
     if (this._disposed || !crate || crate.opened) return;
     crate.opened = true;
+    ctx.state && ctx.state.bumpStat && ctx.state.bumpStat("cratesOpened"); // feeds end-of-sector £
     this.group.remove(crate.root);
     const ci = this.colliders.indexOf(crate.collider);
     if (ci >= 0) this.colliders.splice(ci, 1);
@@ -1643,6 +1646,25 @@ export class Level {
 
   get enemiesRemaining() {
     return this.enemies.filter((e) => !e.dead).length;
+  }
+
+  /** Civilians still alive + unrescued (drives the HUD bar + locators). */
+  get victimsRemaining() {
+    return this.victims.filter((v) => !v.rescued && !v.dead).length;
+  }
+
+  /** Aggregate remaining civilian life (sum) — the top-right bar's numerator. */
+  get victimLifeTotal() {
+    let t = 0;
+    for (const v of this.victims) if (!v.rescued && !v.dead) t += Math.max(0, v.life);
+    return t;
+  }
+
+  /** Aggregate max civilian life across the still-at-risk civilians. */
+  get victimLifeMax() {
+    let t = 0;
+    for (const v of this.victims) if (!v.rescued && !v.dead) t += v.maxLife;
+    return t;
   }
 
   update(dt, ctx) {

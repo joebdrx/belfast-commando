@@ -26,6 +26,9 @@
     <!-- Floating amber labels projected over the safehouse interactables (HUB only). -->
     <div id="hub-labels"></div>
 
+    <!-- World-anchored locators projected over menaced civilians + level tips (LEVEL only). -->
+    <div id="victim-locators"></div>
+
     <!-- Heads-up display -->
     <div id="hud">
       <div id="hud-damage"></div>
@@ -37,12 +40,17 @@
         <div id="hud-combo"></div>
       </div>
 
-      <!-- top-right: level + timer -->
+      <!-- top-right: level + timer + civilian life -->
       <div class="hud-corner top-right">
         <div id="hud-level">BELFAST · SECTOR 1</div>
         <div id="hud-timer">0:00.0</div>
         <div id="hud-objective">Breach to the exit gate</div>
         <div id="hud-opcode"></div>
+        <div id="hud-civilians" class="hud-civilians">
+          <div class="hud-label">CIVILIANS</div>
+          <div class="hud-bar hud-bar-civilians"><div id="hud-civilians-fill"></div></div>
+          <div id="hud-civilians-text"></div>
+        </div>
       </div>
 
       <!-- center crosshair (crisp CSS ticks; green tactical style) -->
