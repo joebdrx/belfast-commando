@@ -196,7 +196,12 @@ class Game {
       this._applyQuality(s.quality);
     });
     this.menu.setHandlers({
+      // "Start Operation" opens the sector-select panel (Menu handles it). These
+      // fire from that panel: Continue resumes the campaign position; Deploy jumps
+      // to a chosen already-unlocked sector.
       onStartOperation: () => this._startCampaign(),
+      onContinue: () => this._startCampaign(),
+      onSelectSector: (i) => { this._pendingSkipIndex = i; this._startCampaign(); },
       onUpgrades: () => {},
       onStoryLogs: () => {},
       onExit: () => {},
@@ -212,7 +217,14 @@ class Game {
         const code = this.levelManager.codeForIndex(index);
         const reward = 150 + index * 100;
         const { awarded } = this.progression.redeemCode(code, reward);
-        if (awarded > 0) this.menu.refresh(); // refresh the RP readout
+        // Unlock every sector up to and including the coded one for the sector
+        // selector, and aim "Continue" at it. Persist so it survives a reload.
+        const prog = this.state.getProgression();
+        prog.unlockedLevels = Math.max(prog.unlockedLevels, index + 1);
+        prog.campaignIndex = Math.max(prog.campaignIndex, index);
+        this.progression.save();
+        this.menu.refresh(); // repaint funds + sector panel if open
+        void awarded;
       },
     });
 
@@ -226,6 +238,14 @@ class Game {
     this._tmpProj = new THREE.Vector3();
     this._hubLabels = [];
     this._buildHubLabels();
+    // World-anchored civilian locators + the level-1 door tutorial tip.
+    this._victimLocatorsEl = document.getElementById("victim-locators");
+    this._victimLocators = []; // [{ el, fill, victim }]
+    this._doorTip = null; // { el } reused for the "F — KICK DOOR DOWN" tip on sector 1
+    this._anchorTmp = new THREE.Vector3();
+    // Pooled directional markers over the last few remaining invaders (cleanup helper).
+    this._enemyMarkersEl = document.getElementById("enemy-markers");
+    this._enemyMarkers = []; // pool of [{ el, enemy }] bound by enemy identity
 
     // Extraction reached → finish the level.
     this.levelManager.setOnExtract(() => this._completeLevel());
@@ -279,6 +299,7 @@ class Game {
     this.menu.refresh();
     this.menu.show();
     this._setHubLabelsVisible(true);
+    this._setVictimLocatorsVisible(false); // civilian locators are LEVEL-only
     this.audio.setAmbient("HUB"); // menu ambience + drum + intermittent whistle
     this._syncTouchControls(); // hide the on-screen controls in the safehouse
   }
@@ -357,6 +378,13 @@ class Game {
     const { entry } = this.levelManager.loadLevel(index);
     this.level = this.levelManager.level;
     this.ctx.level = this.level;
+    // World-anchored civilian locators + the level-1 door tip for this sector.
+    this._buildVictimLocators();
+    this._setVictimLocatorsVisible(true);
+    // Level-start title card: sector name + the standing objective. It fades itself
+    // out as the loading gate lifts and the live scene reveals.
+    const sectorName = (this.levelManager.name || (entry && entry.name) || `Sector ${index + 1}`).toUpperCase();
+    this.hud.showTitleCard(`SECTOR ${index + 1} · ${sectorName}`, "Eliminate the Invaders and Save the Civilians");
 
     // Fresh per-level run stats so the bonus breakdown is per-sector (kills +
     // cumulative score carry across the run; the stat flags do not).
@@ -367,6 +395,8 @@ class Game {
       barrelKills: 0,
       bootKills: 0,
       shotsFired: 0,
+      cratesOpened: 0,
+      civiliansSaved: 0,
       noDamage: true,
       levelTime: 0,
     });
@@ -461,9 +491,15 @@ class Game {
     }
     run.score = this.score.total;
 
-    // Resistance Points reward (CONTRACTS §4), boosted by any run modifier.
-    // Uses the per-sector best combo (run.bestCombo), not the cross-run total.
-    const base = Math.floor(this.score.total / 100) + run.kills * 2 + run.bestCombo * 2;
+    // £ reward (CONTRACTS §4), boosted by any run modifier. Kills, crates broken,
+    // and civilians saved all feed the end-of-sector payout (kills already counted;
+    // crates + civilians added per playtest feedback).
+    const s = run.stats || {};
+    const base = Math.floor(this.score.total / 100)
+      + run.kills * 2
+      + run.bestCombo * 2
+      + (s.cratesOpened || 0) * 3
+      + (s.civiliansSaved || 0) * 10;
     const scoreMul = this.modifiers.getScoreMul();
     const rp = Math.round((died ? base * 0.4 : base) * scoreMul);
     this.state.addCurrency(rp);
@@ -498,15 +534,18 @@ class Game {
     const outro = died ? "Belfast still needs you." : this.levelManager.outro || "";
     this.hud.showOverlay(
       title,
-      `${outro}<br/>${bonusRows}Score <b>${this.score.total.toLocaleString()}</b> &nbsp;·&nbsp; Kills <b>${run.kills}</b><br/>Resistance Points earned <b>+${rp}</b>`,
+      `${outro}<br/>${bonusRows}Score <b>${this.score.total.toLocaleString()}</b> &nbsp;·&nbsp; Kills <b>${run.kills}</b><br/>Funds earned <b>+£${rp}</b>`,
       "",
     );
-    // A clear overrides showOverlay's default backdrop with the victory art (light
-    // vignette so the hero shot reads) and plays the civilian-rescue jingle as a
-    // victory sting. Death keeps the default random loading still.
+    // Backdrop: a clear shows the victory art, death a random loading still — both
+    // with a LIGHT vignette so the background image reads clearly. Must run AFTER
+    // showOverlay (which resets the backdrop to its dark default).
     if (!died) {
-      this.hud.setOverlayBackground(VICTORY_BG, { center: 0.32, edge: 0.8 });
+      this.hud.setOverlayBackground(VICTORY_BG, { center: 0.16, edge: 0.55 });
       this.audio.rescueJingle();
+    } else {
+      const backdrop = OVERLAY_BACKDROPS[Math.floor(Math.random() * OVERLAY_BACKDROPS.length)];
+      this.hud.setOverlayBackground(backdrop, { center: 0.32, edge: 0.7 });
     }
 
     // Explicit choices: a survivable clear can push on to the next sector; every
@@ -772,6 +811,136 @@ class Game {
     }
   }
 
+  /** Build a world-anchored locator per civilian + the level-1 door tip. Rebuilt
+   *  each level (civilian sets differ). */
+  _buildVictimLocators() {
+    if (!this._victimLocatorsEl) return;
+    this._victimLocatorsEl.replaceChildren();
+    this._victimLocators = [];
+    this._doorTip = null;
+    if (!this.level) return;
+    for (const v of this.level.victims) {
+      const el = document.createElement("div");
+      el.className = "victim-locator";
+      el.style.opacity = "0";
+      const icon = document.createElement("div");
+      icon.className = "vl-icon";
+      icon.textContent = "🗣"; // screaming/alert glyph (pulses via CSS)
+      const bar = document.createElement("div");
+      bar.className = "vl-bar";
+      const fill = document.createElement("div");
+      fill.className = "vl-fill";
+      bar.appendChild(fill);
+      el.appendChild(icon);
+      el.appendChild(bar);
+      this._victimLocatorsEl.appendChild(el);
+      this._victimLocators.push({ el, fill, victim: v });
+    }
+    // Level-1 tutorial: a tip that floats over the nearest unopened door.
+    if (this.level.index === 0) {
+      const tip = document.createElement("div");
+      tip.className = "world-tip";
+      tip.textContent = "F — KICK DOOR DOWN";
+      tip.style.opacity = "0";
+      this._victimLocatorsEl.appendChild(tip);
+      this._doorTip = { el: tip };
+    }
+  }
+
+  /** Show/hide the world-anchored overlay layers (civilian locators + enemy markers; LEVEL only). */
+  _setVictimLocatorsVisible(visible) {
+    if (this._victimLocatorsEl) this._victimLocatorsEl.style.display = visible ? "block" : "none";
+    if (this._enemyMarkersEl) this._enemyMarkersEl.style.display = visible ? "block" : "none";
+  }
+
+  /**
+   * Directional markers over the last few remaining invaders (≤3) so a straggler
+   * hidden in a building or wedged in a corner can always be found and the sector
+   * cleared. Edge-clamped so it also points to off-screen / behind-camera enemies.
+   */
+  _updateEnemyMarkers() {
+    if (!this._enemyMarkersEl || !this.level) return;
+    const live = this.level.enemies.filter((e) => !e.dead);
+    const SHOW_AT = 3;
+    const targets = live.length > 0 && live.length <= SHOW_AT ? live : [];
+    // Free any marker whose enemy is dead / cleared / no longer a target — so a
+    // marker disappears the moment its enemy is killed (markers are bound to a
+    // specific enemy, never re-pointed to a different one). Hide via `display`, NOT
+    // opacity: the marker's pulse keyframes animate opacity, and a running animation
+    // overrides an inline opacity, so an opacity-hidden marker would keep pulsing.
+    for (const m of this._enemyMarkers) {
+      if (!m.enemy || !targets.includes(m.enemy)) { m.el.style.display = "none"; m.enemy = null; }
+    }
+    const cam = this.engine.camera;
+    const w = window.innerWidth, h = window.innerHeight;
+    for (const e of targets) {
+      let m = this._enemyMarkers.find((mm) => mm.enemy === e);
+      if (!m) {
+        m = this._enemyMarkers.find((mm) => !mm.enemy); // reuse a freed marker
+        if (!m) {
+          const el = document.createElement("div");
+          el.className = "enemy-marker";
+          el.textContent = "◆";
+          el.style.display = "none";
+          this._enemyMarkersEl.appendChild(el);
+          m = { el, enemy: null };
+          this._enemyMarkers.push(m);
+        }
+        m.enemy = e;
+      }
+      this._anchorTmp.copy(e.group.position); this._anchorTmp.y += 2.0;
+      this._tmpProj.copy(this._anchorTmp).project(cam);
+      let px = (this._tmpProj.x * 0.5 + 0.5) * w;
+      let py = (-this._tmpProj.y * 0.5 + 0.5) * h;
+      if (this._tmpProj.z > 1) { px = w - px; py = h - 24; } // behind camera → mirror to bottom edge
+      const mar = 16;
+      m.el.style.left = `${Math.min(Math.max(px, mar), w - mar)}px`;
+      m.el.style.top = `${Math.min(Math.max(py, mar), h - mar)}px`;
+      m.el.style.display = "block";
+    }
+  }
+
+  /** Project the civilian locators (only while menaced) + the door tip each frame. */
+  _updateVictimLocators() {
+    if (!this._victimLocatorsEl || !this.level) return;
+    const cam = this.engine.camera;
+    const w = window.innerWidth, h = window.innerHeight;
+    const project = (anchor, el) => {
+      this._tmpProj.copy(anchor).project(cam);
+      const onScreen = this._tmpProj.z < 1 &&
+        this._tmpProj.x >= -1.05 && this._tmpProj.x <= 1.05 &&
+        this._tmpProj.y >= -1.05 && this._tmpProj.y <= 1.05;
+      if (!onScreen) { el.style.opacity = "0"; return; }
+      const half = (el.offsetWidth || 60) / 2 + 6;
+      const px = (this._tmpProj.x * 0.5 + 0.5) * w;
+      el.style.left = `${Math.min(Math.max(px, half), w - half)}px`;
+      el.style.top = `${(-this._tmpProj.y * 0.5 + 0.5) * h}px`;
+      el.style.opacity = "1";
+    };
+    for (const loc of this._victimLocators) {
+      const v = loc.victim;
+      if (v.rescued || v.dead || v._menacedTimer <= 0) { loc.el.style.opacity = "0"; continue; }
+      if (loc.fill) loc.fill.style.width = `${Math.max(0, Math.min(1, v.life / v.maxLife)) * 100}%`;
+      this._anchorTmp.copy(v.group.position); this._anchorTmp.y += 1.8;
+      project(this._anchorTmp, loc.el);
+    }
+    if (this._doorTip) {
+      let near = null, best = 36; // within 6m
+      for (const d of this.level.doors) {
+        if (d.open) continue;
+        const dx = d.center.x - this.player.position.x, dz = d.center.z - this.player.position.z;
+        const ds = dx * dx + dz * dz;
+        if (ds < best) { best = ds; near = d; }
+      }
+      if (near) {
+        this._anchorTmp.copy(near.center); this._anchorTmp.y += 0.6;
+        project(this._anchorTmp, this._doorTip.el);
+      } else {
+        this._doorTip.el.style.opacity = "0";
+      }
+    }
+  }
+
   /** Raycast a HUB cursor click against the hub interactables and dispatch. */
   _onHubClick(e) {
     if (this.phase !== "HUB") return;
@@ -802,7 +971,7 @@ class Game {
   /** Map a hub interactable id to its action. */
   _dispatchHubAction(id) {
     if (id === "start") {
-      this._startCampaign();
+      this.menu.openSectors(); // open the sector-select panel (Continue / pick a sector)
     } else if (id === "upgrades") {
       this.menu.openUpgrades();
     } else if (id === "phone") {
@@ -877,6 +1046,11 @@ class Game {
     this.hud.setObjective(
       remaining > 0 ? `Invaders remaining: ${remaining}` : "Sector clear — reach the extraction beacon!",
     );
+    // Civilian urgency: top-right status bar (saved count + aggregate wellbeing) +
+    // world-anchored locators.
+    this.hud.setCivilians(this.level.victimCount || 0, this.level.victimsSaved, this.level.civilianWellbeing);
+    this._updateVictimLocators();
+    this._updateEnemyMarkers();
   }
 }
 

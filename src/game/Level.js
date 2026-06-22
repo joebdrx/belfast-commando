@@ -118,6 +118,10 @@ export class Level {
     this.enemies = [];
     /** @type {Victim[]} */
     this.victims = [];
+    // Rescued civilians that have since fled off-screen and been spliced out of
+    // `this.victims`. Tracked persistently so the "saved" count + wellbeing bar
+    // don't drop when a rescued civilian despawns.
+    this._savedDespawned = 0;
     // Archetype mix scales with sector index. Deterministic enough; uses the
     // global RNG so each run varies. Drives _addEnemy when no archetype is given.
     this._director = new EnemyDirector(index || 0);
@@ -562,9 +566,16 @@ export class Level {
     const ivx = ic.x + (rng() - 0.5) * 3;
     const ivz = ic.z + (rng() - 0.5) * 10;
     const iv = addVictim(ivx, ivz);
+    // Tag the last-added enemy as a captor: it menaces `victim`, with a random
+    // initial taunt timer so multiple captors never strike in lockstep (D2).
+    const tagCaptor = (victim) => {
+      const e = this.enemies[this.enemies.length - 1];
+      e._guardingVictim = victim;
+      e._menaceTimer = 0.4 + rng() * 1.6;
+    };
     // One captor enemy ~2m to the side — tagged so it menaces the victim.
     this._addEnemy(new THREE.Vector3(ivx + 1.5, 0, ivz), {});
-    this.enemies[this.enemies.length - 1]._guardingVictim = iv;
+    tagCaptor(iv);
 
     // --- Street victim(s) --------------------------------------------------
     // 1–2 street victims (level 0 → 1, higher levels → 2).
@@ -577,13 +588,15 @@ export class Level {
       // Keep away from the player spawn.
       if (Math.hypot(vx - this.spawn.x, vz - this.spawn.z) < 12) continue;
       const sv = addVictim(vx, vz);
-      // Two attacker enemies — both tagged so they menace the victim.
+      // Two attacker enemies — both tagged so they menace the victim (staggered).
       this._addEnemy(new THREE.Vector3(vx + 2.0, 0, vz), {});
-      this.enemies[this.enemies.length - 1]._guardingVictim = sv;
+      tagCaptor(sv);
       this._addEnemy(new THREE.Vector3(vx - 2.0, 0, vz + 1.0), {});
-      this.enemies[this.enemies.length - 1]._guardingVictim = sv;
+      tagCaptor(sv);
       placed++;
     }
+    // Total civilians this sector started with (denominator for the HUD bar text).
+    this.victimCount = this.victims.length;
   }
 
   /**
@@ -1509,7 +1522,7 @@ export class Level {
     );
     const r = rng ? rng() : Math.random();
     const loot = r < 0.45 ? { type: "ammo", amount: 12, text: "+AMMO" }
-      : r < 0.75 ? { type: "rp", amount: 10, text: "+10 RP" }
+      : r < 0.75 ? { type: "rp", amount: 10, text: "+£10" }
         : { type: "health", amount: 25, text: "+25 HP" };
     this.crates.push({ root, hitbox, collider, pos: new THREE.Vector3(x, 0.6, z), opened: false, loot });
   }
@@ -1518,6 +1531,7 @@ export class Level {
   openCrate(crate, ctx) {
     if (this._disposed || !crate || crate.opened) return;
     crate.opened = true;
+    ctx.state && ctx.state.bumpStat && ctx.state.bumpStat("cratesOpened"); // feeds end-of-sector £
     this.group.remove(crate.root);
     const ci = this.colliders.indexOf(crate.collider);
     if (ci >= 0) this.colliders.splice(ci, 1);
@@ -1645,6 +1659,45 @@ export class Level {
     return this.enemies.filter((e) => !e.dead).length;
   }
 
+  /** Civilians still alive + unrescued (drives the HUD bar + locators). */
+  get victimsRemaining() {
+    return this.victims.filter((v) => !v.rescued && !v.dead).length;
+  }
+
+  /** Aggregate remaining civilian life (sum) — the top-right bar's numerator. */
+  get victimLifeTotal() {
+    let t = 0;
+    for (const v of this.victims) if (!v.rescued && !v.dead) t += Math.max(0, v.life);
+    return t;
+  }
+
+  /** Aggregate max civilian life across the still-at-risk civilians. */
+  get victimLifeMax() {
+    let t = 0;
+    for (const v of this.victims) if (!v.rescued && !v.dead) t += v.maxLife;
+    return t;
+  }
+
+  /** Civilians the player has rescued this sector (the HUD "X/total saved" count).
+   *  Includes rescued civilians that have already fled off-screen + despawned. */
+  get victimsSaved() {
+    return this._savedDespawned + this.victims.filter((v) => v.rescued).length;
+  }
+
+  /** Overall civilian wellbeing in [0,1]: rescued = 1, dead = 0, at-risk = life/maxLife,
+   *  averaged over all civilians. Drives the top-right bar — it stays full when every
+   *  civilian is saved (so it never reads as if they were lost), counting rescued
+   *  civilians that have already despawned. */
+  get civilianWellbeing() {
+    if (!this.victimCount) return 0;
+    let sum = this._savedDespawned; // each despawned-rescued civilian counts as full
+    for (const v of this.victims) {
+      if (v.rescued) sum += 1;
+      else if (!v.dead) sum += Math.max(0, Math.min(1, v.life / v.maxLife));
+    }
+    return sum / this.victimCount;
+  }
+
   update(dt, ctx) {
     for (const d of this.doors) d.update(dt);
     for (const e of this.enemies) e.update(dt, ctx);
@@ -1653,6 +1706,9 @@ export class Level {
       const v = this.victims[i];
       v.update(dt, ctx);
       if (v.removed) {
+        // Only rescued civilians despawn (dead ones stay as corpses); keep crediting
+        // them as saved after they leave the array.
+        if (v.rescued) this._savedDespawned += 1;
         this.group.remove(v.group);
         v.dispose();
         this.victims.splice(i, 1);

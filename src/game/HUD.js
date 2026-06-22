@@ -15,6 +15,9 @@ export class HUD {
     this.healthText = this.$("hud-health-text");
     this.staminaBar = this.$("hud-stamina");
     this.staminaFill = this.$("hud-stamina-fill");
+    this.civiliansBox = this.$("hud-civilians");
+    this.civiliansFill = this.$("hud-civilians-fill");
+    this.civiliansText = this.$("hud-civilians-text");
     this.weapon = this.$("hud-weapon");
     this.ammo = this.$("hud-ammo");
     this.objective = this.$("hud-objective");
@@ -29,6 +32,9 @@ export class HUD {
     this.overlayHint = this.$("overlay-hint");
     this._overlayBackdrops = []; // pool of loading stills used as the default backdrop
     this.crosshair = this.$("crosshair");
+    this.titleCard = this.$("title-card");
+    this.titleCardTitle = this.titleCard ? this.titleCard.querySelector(".tc-title") : null;
+    this.titleCardSub = this.titleCard ? this.titleCard.querySelector(".tc-sub") : null;
     this._damageT = 0;
     // Adrenaline distortion layer (built in JS so index.html stays untouched).
     this._adrenaline = document.createElement("div");
@@ -122,6 +128,37 @@ export class HUD {
     this.staminaFill.style.width = `${pct * 100}%`;
     this.staminaFill.style.background = exhausted ? "#f85149" : pct < 0.3 ? "#d29922" : "#54b3d6";
     if (this.staminaBar) this.staminaBar.classList.toggle("exhausted", exhausted);
+  }
+
+  /**
+   * Overall civilian life bar (top-right). `lifeFrac` = aggregate remaining
+   * civilian life / max; amber → red as it drops, pulsing when critical. Hidden
+   * when the sector has no civilians.
+   * @param {number} remaining civilians still alive + unrescued
+   * @param {number} total civilians the sector started with
+   * @param {number} lifeFrac 0..1 aggregate remaining life fraction
+   */
+  /**
+   * Top-right civilian status. `wellbeing` (0..1) is the aggregate civilian health —
+   * rescued counts as full, so the bar stays high (green) once everyone is saved. The
+   * text reports how many were SAVED out of the total (e.g. "3/3 saved"), so a cleared
+   * bar reads as success, not loss.
+   * @param {number} total  civilians this sector started with
+   * @param {number} saved  civilians rescued so far
+   * @param {number} wellbeing  aggregate wellbeing 0..1
+   */
+  setCivilians(total, saved, wellbeing = 1) {
+    if (!this.civiliansBox) return;
+    if (!total) { this.civiliansBox.style.display = "none"; return; }
+    this.civiliansBox.style.display = "block";
+    const pct = Math.max(0, Math.min(1, wellbeing));
+    if (this.civiliansFill) {
+      this.civiliansFill.style.width = `${pct * 100}%`;
+      this.civiliansFill.style.background =
+        pct > 0.75 ? "#3fb950" : pct > 0.5 ? "#d6a054" : pct > 0.25 ? "#e08a2e" : "#f85149";
+    }
+    this.civiliansBox.classList.toggle("critical", pct > 0 && pct <= 0.25);
+    if (this.civiliansText) this.civiliansText.textContent = `${saved}/${total} saved`;
   }
 
   setWeapon(name) {
@@ -249,6 +286,20 @@ export class HUD {
     this._dialogue.textContent = text;
     this._dialogue.style.opacity = "1";
     this._dialogueT = ms / 1000;
+  }
+
+  /**
+   * Flash a level-start title card (big sector name + a directions sub-line) that
+   * fades itself in and out via CSS. Re-triggers cleanly if called again (forces a
+   * reflow so the animation restarts). @param {string} title @param {string} subtitle
+   */
+  showTitleCard(title, subtitle) {
+    if (!this.titleCard) return;
+    if (this.titleCardTitle) this.titleCardTitle.textContent = title || "";
+    if (this.titleCardSub) this.titleCardSub.textContent = subtitle || "";
+    this.titleCard.classList.remove("show");
+    void this.titleCard.offsetWidth; // reflow so the keyframe animation restarts
+    this.titleCard.classList.add("show");
   }
 
   showOverlay(title, body, hint) {

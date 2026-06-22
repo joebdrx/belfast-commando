@@ -218,6 +218,136 @@ html, body {
   border-top: 5px solid rgba(255, 122, 26, 0.55);
 }
 
+/* -- World-anchored civilian locators + level tips (projected each frame) -- */
+#victim-locators {
+  position: fixed;
+  inset: 0;
+  z-index: 24;          /* above the HUD, below the menu/overlay */
+  pointer-events: none;
+  display: none;        /* JS flips to block while in LEVEL */
+}
+
+/* Directional markers over the last few remaining invaders (cleanup helper). */
+#enemy-markers {
+  position: fixed;
+  inset: 0;
+  z-index: 23;          /* just below the civilian locators */
+  pointer-events: none;
+  display: none;        /* JS flips to block while in LEVEL */
+}
+.enemy-marker {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  font-size: 16px;
+  line-height: 1;
+  color: #f85149;
+  text-shadow: 0 0 6px rgba(0, 0, 0, 0.95);
+  filter: drop-shadow(0 0 5px rgba(248, 81, 73, 0.85));
+  animation: stamina-pulse 0.7s ease-in-out infinite;
+}
+.victim-locator {
+  position: absolute;
+  transform: translate(-50%, -100%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  white-space: nowrap;
+  font-family: "Arial Narrow", "Inter", system-ui, sans-serif;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #ffd27f;
+  text-shadow: 0 0 6px rgba(0, 0, 0, 0.9);
+  transition: opacity 0.12s ease;
+}
+/* Pulsing scream glyph so a menaced civilian reads as urgent. */
+.victim-locator .vl-icon {
+  font-size: 18px;
+  line-height: 1;
+  filter: drop-shadow(0 0 5px rgba(255, 90, 60, 0.9));
+  animation: stamina-pulse 0.5s ease-in-out infinite;
+}
+/* Mini life bar under the icon. */
+.victim-locator .vl-bar {
+  width: 44px;
+  height: 5px;
+  background: rgba(255, 255, 255, 0.18);
+  border: 1px solid rgba(0, 0, 0, 0.6);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.victim-locator .vl-fill {
+  height: 100%;
+  width: 100%;          /* JS overrides */
+  background: #e0563a;
+  border-radius: 2px;
+  transition: width 0.2s ease-out;
+}
+/* Plain informational tip chip (reuses the hub-label look). */
+.world-tip {
+  position: absolute;
+  transform: translate(-50%, -100%);
+  padding: 5px 12px;
+  white-space: nowrap;
+  font-family: "Arial Narrow", "Inter", system-ui, sans-serif;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--accent);
+  background: rgba(10, 11, 13, 0.82);
+  border: 1px solid rgba(255, 122, 26, 0.55);
+  border-radius: 3px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.7);
+  text-shadow: 0 0 8px var(--accent-glow);
+}
+
+/* -- Level-start title card (sector name + objective, self-fading) ---------- */
+#title-card {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: 22%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  text-align: center;
+  pointer-events: none;
+  z-index: 26; /* above locators(24)/HUD, below the pause/results overlay */
+  opacity: 0;
+}
+/* Adding .show (re)runs the fade-in → hold → fade-out animation, then settles at 0. */
+#title-card.show {
+  animation: titleCardFade 4.8s ease forwards;
+}
+#title-card .tc-title {
+  font-family: "Arial Narrow", "Inter", system-ui, sans-serif;
+  font-size: clamp(30px, 6vw, 62px);
+  font-weight: 900;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--accent);
+  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.9), 0 0 26px var(--accent-glow);
+}
+#title-card .tc-sub {
+  font-family: "Arial Narrow", "Inter", system-ui, sans-serif;
+  font-size: clamp(13px, 2vw, 20px);
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: #ece6d8;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.95);
+}
+@keyframes titleCardFade {
+  0% { opacity: 0; transform: translateY(12px); }
+  12% { opacity: 1; transform: translateY(0); }
+  72% { opacity: 1; transform: translateY(0); }
+  100% { opacity: 0; transform: translateY(-6px); }
+}
+
 /* -- Crosshair --------------------------------------------- */
 /* Centered via translate; opacity driven by JS (0 in menu, 1 playing) */
 #crosshair {
@@ -370,6 +500,32 @@ html, body {
 @keyframes stamina-pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.35; }
+}
+
+/* -- Civilian life bar (top-right; aggregate remaining civilian life) ----- */
+.hud-civilians {
+  margin-top: 10px;
+  display: none; /* JS shows it only when the sector has civilians */
+}
+/* Right-align the bar with the rest of the top-right corner. */
+.hud-civilians .hud-bar { margin-left: auto; }
+.hud-bar-civilians { height: 9px; }
+#hud-civilians-fill {
+  height: 100%;
+  width: 100%;          /* JS overrides width 0-100% */
+  background: #d6a054;  /* JS overrides colour: amber → red as life drops */
+  border-radius: 2px;
+  transition: width 0.2s ease-out, background 0.3s ease;
+}
+#hud-civilians-text {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  opacity: 0.66;
+}
+#hud-civilians.critical {
+  animation: stamina-pulse 0.55s ease-in-out infinite;
 }
 
 /* -- Weapon label ------------------------------------------ */

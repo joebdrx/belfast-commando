@@ -33,6 +33,8 @@ function freshRun(levelIndex = 0, active = false) {
       barrelKills: 0,
       bootKills: 0,
       shotsFired: 0,
+      cratesOpened: 0,
+      civiliansSaved: 0,
       noDamage: true,
       levelTime: 0,
     },

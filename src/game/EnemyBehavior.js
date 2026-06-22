@@ -13,6 +13,15 @@ const _toVictim = new THREE.Vector3();
 export const MELEE_TELEGRAPH_PAD = 3.5;
 
 /**
+ * Civilian-menacing tuning. A captor TAUNTS its civilian and only lands a discrete
+ * hit on the swing (not a continuous drain), so killing one is slow — and the
+ * civilian flees between hits, stretching it further.
+ */
+const MENACE_HIT_DMG = 8; // damage per landed taunt-strike (deliberately small)
+const MENACE_PAUSE = 1.2; // extra seconds appended to the swing clip between taunts
+const MENACE_JAB_CD = 2.2; // non-rigged fallback jab cadence (slower than combat melee)
+
+/**
  * Quantise animation advance to a fixed frame rate (PS1 stop-motion). Pure.
  * @returns {{advance:number, accum:number}} advance = dt to feed the mixer (0 or 1/fps)
  */
@@ -165,27 +174,45 @@ export function stepBreacher(enemy, dt, ctx) {
  * @param {object} ctx
  */
 export function menaceVictim(enemy, dt, ctx) {
-  const victimPos = enemy._guardingVictim.group.position;
-  _toVictim.copy(victimPos).sub(enemy.group.position).setY(0);
+  const victim = enemy._guardingVictim;
+  const pos = enemy.group.position;
+  // Mark the civilian as actively menaced (a short timer it decays) and record THIS
+  // captor's position so the civilian flees away from it. The captor only menaces
+  // while not alerted, so the player approaching peels it off → the civilian calms.
+  victim._menacedTimer = 0.3;
+  victim._threatPos.copy(pos);
+
+  _toVictim.copy(victim.group.position).sub(pos).setY(0);
+  const dist = _toVictim.length();
   if (_toVictim.lengthSq() > 0.0001) {
     enemy.group.rotation.y = Math.atan2(_toVictim.x, _toVictim.z);
   }
-  // Prefer run clip for a threatening jitter; else walk.
-  enemy._setAnim(enemy.actions && enemy.actions.run ? "run" : "walk");
 
-  enemy._menaceTimer = (enemy._menaceTimer || 0) - dt;
-  if (enemy._attackAction) {
-    // Rigged: swing the full attack animation at the victim on a cooldown.
-    if (enemy._menaceTimer <= 0 && !enemy._attacking) {
-      enemy._menaceTimer = enemy._attackClipDuration() || 2.0;
-      enemy._meleeAttack(ctx, true); // swing + lunge + audio, never damages
-    }
-  } else if (enemy._menaceTimer <= 0) {
-    // Non-rigged fallback: the cheap positional jab (visual only).
-    enemy._menaceTimer = 1.1;
-    enemy._lunge = 0.5;
-    if (ctx.audio && ctx.audio.enemyMelee) {
-      ctx.audio.enemyMelee(enemy.group.position, ctx.camera.position);
+  if (dist > enemy.meleeRange + 0.6) {
+    // CHASE the fleeing civilian — don't taunt from range. (Wall collision is
+    // resolved by Enemy.update's _collideXZ after this returns.)
+    _flat.copy(_toVictim).normalize();
+    pos.addScaledVector(_flat, enemy.runSpeed * dt);
+    enemy._setAnim(enemy.actions && enemy.actions.run ? "run" : "walk");
+  } else {
+    // In reach — taunt on a deliberate cadence; the swing LANDS a discrete hit.
+    enemy._setAnim(enemy.actions && enemy.actions.run ? "run" : "walk");
+    enemy._menaceTimer = (enemy._menaceTimer || 0) - dt;
+    if (enemy._attackAction) {
+      // Rigged: swing the full attack animation, then strike, then pause.
+      if (enemy._menaceTimer <= 0 && !enemy._attacking) {
+        enemy._menaceTimer = (enemy._attackClipDuration() || 2.0) + MENACE_PAUSE;
+        enemy._meleeAttack(ctx, true); // swing + lunge + audio, never hits the player
+        victim.takeMenaceHit(MENACE_HIT_DMG, pos, ctx); // discrete damage + knockback
+      }
+    } else if (enemy._menaceTimer <= 0) {
+      // Non-rigged fallback: a cheap positional jab that still lands the hit.
+      enemy._menaceTimer = MENACE_JAB_CD;
+      enemy._lunge = 0.5;
+      if (ctx.audio && ctx.audio.enemyMelee) {
+        ctx.audio.enemyMelee(pos, ctx.camera.position);
+      }
+      victim.takeMenaceHit(MENACE_HIT_DMG, pos, ctx);
     }
   }
 
