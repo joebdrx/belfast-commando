@@ -378,6 +378,10 @@ class Game {
     // World-anchored civilian locators + the level-1 door tip for this sector.
     this._buildVictimLocators();
     this._setVictimLocatorsVisible(true);
+    // Level-start title card: sector name + the standing objective. It fades itself
+    // out as the loading gate lifts and the live scene reveals.
+    const sectorName = (this.levelManager.name || (entry && entry.name) || `Sector ${index + 1}`).toUpperCase();
+    this.hud.showTitleCard(`SECTOR ${index + 1} · ${sectorName}`, "Eliminate the Invaders and Save the Civilians");
 
     // Fresh per-level run stats so the bonus breakdown is per-sector (kills +
     // cumulative score carry across the run; the stat flags do not).

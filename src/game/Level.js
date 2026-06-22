@@ -562,9 +562,16 @@ export class Level {
     const ivx = ic.x + (rng() - 0.5) * 3;
     const ivz = ic.z + (rng() - 0.5) * 10;
     const iv = addVictim(ivx, ivz);
+    // Tag the last-added enemy as a captor: it menaces `victim`, with a random
+    // initial taunt timer so multiple captors never strike in lockstep (D2).
+    const tagCaptor = (victim) => {
+      const e = this.enemies[this.enemies.length - 1];
+      e._guardingVictim = victim;
+      e._menaceTimer = 0.4 + rng() * 1.6;
+    };
     // One captor enemy ~2m to the side — tagged so it menaces the victim.
     this._addEnemy(new THREE.Vector3(ivx + 1.5, 0, ivz), {});
-    this.enemies[this.enemies.length - 1]._guardingVictim = iv;
+    tagCaptor(iv);
 
     // --- Street victim(s) --------------------------------------------------
     // 1–2 street victims (level 0 → 1, higher levels → 2).
@@ -577,11 +584,11 @@ export class Level {
       // Keep away from the player spawn.
       if (Math.hypot(vx - this.spawn.x, vz - this.spawn.z) < 12) continue;
       const sv = addVictim(vx, vz);
-      // Two attacker enemies — both tagged so they menace the victim.
+      // Two attacker enemies — both tagged so they menace the victim (staggered).
       this._addEnemy(new THREE.Vector3(vx + 2.0, 0, vz), {});
-      this.enemies[this.enemies.length - 1]._guardingVictim = sv;
+      tagCaptor(sv);
       this._addEnemy(new THREE.Vector3(vx - 2.0, 0, vz + 1.0), {});
-      this.enemies[this.enemies.length - 1]._guardingVictim = sv;
+      tagCaptor(sv);
       placed++;
     }
     // Total civilians this sector started with (denominator for the HUD bar text).

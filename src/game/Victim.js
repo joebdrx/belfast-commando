@@ -5,16 +5,32 @@ const INTERACT_RADIUS = 3.5;
 /** Flee speed (m/s) after rescue. Brisk run to match the rigged run animation
  *  (the new Meshy victim binds its run clip, so she sprints rather than glides). */
 const FLEE_SPEED = 4.2;
+/** Pre-rescue panic speed (m/s): a scared backpedal away from a menacing captor,
+ *  deliberately slower than the post-rescue sprint so captors can close in. */
+const FLEE_SCARED = 3.0;
+/** How far a captive may flee from where they're held before the captors herd them
+ *  back. Keeps the hostage inside the captors' ring (so they can't escape outright
+ *  and the urgency holds) while still visibly fleeing/circling = "run away & hide". */
+const FLEE_TETHER = 5.0;
 /** Despawn when this far from the player (AND behind/peripheral camera). */
 const DESPAWN_DIST = 24;
 /** Hard fallback: despawn after this long fleeing even if cornered/in-view. */
 const FLEE_TIMEOUT = 9;
 /** Collision half-width used against level colliders while fleeing. */
 const RADIUS = 0.4;
-/** Civilian "life": drains while actively menaced by a captor. A short grace
- *  before the drain starts, then MENACE_DPS/sec → ~14s captive before death. */
-const MENACE_DPS = 8;
-const MENACE_GRACE = 2.0;
+/**
+ * Civilian harm comes ONLY from a captor's taunt-strike (EnemyBehavior.menaceVictim
+ * → takeMenaceHit). The player can NEVER damage a civilian — victims live in
+ * `level.victims`, never `level.enemies`, so weapon fire / kick / barrels (which all
+ * iterate `level.enemies`) cannot touch them, and there is no `takeDamage` here.
+ * Each landed hit shoves the civilian back; a short refractory window stops two
+ * captors double-striking on the same beat.
+ */
+const KNOCK_IMPULSE = 4.0; // m/s backward shove per landed hit (decays)
+// Minimum time between ANY two landed hits on one civilian — this is the real rate
+// limiter: even with two flanking captors, a civilian can only be struck this often,
+// so wearing one down is slow (≈20-40s) and the player has time to intervene.
+const MENACE_MIN_GAP = 1.5;
 
 // Module-scope temps — never allocate on the hot path.
 const _tmp = new THREE.Vector3();
@@ -49,18 +65,25 @@ export class Victim {
     this._fleeing = false;
     this._fleeTime = 0;
     this._fleeDir = new THREE.Vector3();
+    this._anchor = new THREE.Vector3().copy(position); // captivity spot; flee is tethered to it
     this._scream = null; // looping distress-scream controller while captive
 
-    // Civilian life — depletes while a captor is actively menacing (set each frame
-    // by EnemyBehavior.menaceVictim). At 0 the civilian dies (lost, no penalty).
+    // Civilian life — stepped down by discrete captor taunt-strikes (takeMenaceHit),
+    // NOT a continuous drain. At 0 the civilian dies (lost, no penalty) and topples.
     this.maxLife = 100;
     this.life = 100;
     this.dead = false;
     // Short countdown refreshed each frame by an active captor (menaceVictim);
     // > 0 means "currently being menaced". A timer (vs a per-frame flag) survives
-    // the enemies→victims update order so the HUD/locator can read it afterward.
+    // the enemies→victims update order so the HUD/locator can read it afterward,
+    // and it drives the pre-rescue flee (run away from `_threatPos`).
     this._menacedTimer = 0;
-    this._menaceGrace = MENACE_GRACE;
+    this._threatPos = new THREE.Vector3(); // last menacing captor's position (flee away from it)
+    this._knock = new THREE.Vector3(); // decaying knockback impulse from a landed hit
+    this._hitGap = 0; // refractory timer so two captors can't double-strike on one beat
+    // Death topple (the rig has only walk/run clips — no death clip), mirrors Enemy.
+    this._toppleAxis = new THREE.Vector3(1, 0, 0);
+    this._toppleAmt = 0;
 
     // Animation (rigged victim) state.
     this.mixer = null;
@@ -130,19 +153,18 @@ export class Victim {
    */
   update(dt, ctx) {
     if (this.removed) return;
+
+    // --- Dead: topple to the ground and rest there (no death clip in the rig). ---
+    if (this.dead) { this._updateDeath(dt); return; }
+
     if (this.mixer) this.mixer.update(dt);
 
-    // --- Post-rescue: RUN away, colliding with buildings + boundary walls. ---
+    // --- Post-rescue: RUN to safety, colliding with buildings + boundary walls. ---
     if (this._fleeing) {
       this._setAnim("run");
       this._fleeTime += dt;
-      const p = this.group.position;
-      const sx = this._fleeDir.x * FLEE_SPEED * dt;
-      const sz = this._fleeDir.z * FLEE_SPEED * dt;
-      const px = p.x, pz = p.z;
-      p.x += sx; if (this._blocked(ctx, p.x, p.z)) p.x = px; // resolve X
-      p.z += sz; if (this._blocked(ctx, p.x, p.z)) p.z = pz; // resolve Z
-      if (p.x === px && p.z === pz) {
+      const blocked = this._moveAvoiding(ctx, this._fleeDir.x * FLEE_SPEED, this._fleeDir.z * FLEE_SPEED, dt);
+      if (blocked) {
         // Fully blocked (corner) — turn 90° and try to slide along next frame.
         const a = Math.atan2(this._fleeDir.x, this._fleeDir.z) + Math.PI / 2;
         this._fleeDir.set(Math.sin(a), 0, Math.cos(a));
@@ -151,6 +173,7 @@ export class Victim {
       }
 
       // Despawn: far + behind/peripheral camera, OR after a hard timeout.
+      const p = this.group.position;
       let gone = this._fleeTime > FLEE_TIMEOUT;
       if (!gone && p.distanceToSquared(ctx.player.position) > DESPAWN_DIST * DESPAWN_DIST) {
         ctx.camera.getWorldDirection(_fwd);
@@ -180,23 +203,59 @@ export class Victim {
       }
     }
 
-    // --- Pre-rescue: civilian life drains while a captor is actively menacing.
-    // `_menaced` is re-asserted each frame by EnemyBehavior.menaceVictim (which
-    // runs before victims in Level.update); it pauses once the player engages the
-    // captor. A short grace, then drain — at 0 the civilian is lost (no penalty). ---
+    // --- Timers: the menace signal (refreshed each frame by a live captor in
+    // EnemyBehavior.menaceVictim) + the landed-hit refractory window. -----------
     this._menacedTimer = Math.max(0, this._menacedTimer - dt);
-    const menaced = this._menacedTimer > 0;
-    if (menaced && !this.rescued && !this.dead) {
-      if (this._menaceGrace > 0) this._menaceGrace -= dt;
-      else {
-        this.life -= MENACE_DPS * dt;
-        if (this.life <= 0) { this._die(ctx); return; }
-      }
+    this._hitGap = Math.max(0, this._hitGap - dt);
+
+    const playerDist = _tmp.copy(ctx.player.position).distanceTo(this.group.position);
+    // The player is the rescuer, not a threat: once they're close the civilian
+    // stops fleeing and waits to be freed (this also guarantees rescuability).
+    const safeWithPlayer = playerDist < INTERACT_RADIUS;
+    const threatened = this._menacedTimer > 0 && !safeWithPlayer;
+
+    // --- Knockback: a landed hit shoves the civilian back (collision-clamped). ---
+    if (this._knock.lengthSq() > 1e-4) {
+      this._moveAvoiding(ctx, this._knock.x, this._knock.z, dt);
+      this._knock.multiplyScalar(Math.max(0, 1 - dt * 6));
+      if (this._knock.lengthSq() < 1e-4) this._knock.set(0, 0, 0);
     }
 
-    // --- Pre-rescue: interact prompt + E-press rescue. ----------------------
-    const dist = _tmp.copy(ctx.player.position).distanceTo(this.group.position);
-    const inRange = dist < INTERACT_RADIUS;
+    // --- Pre-rescue: flee + HIDE from the menacing captor (run away from it,
+    // ducking around buildings via the collision-aware slide). ------------------
+    if (threatened) {
+      this._fleeDir.copy(this.group.position).sub(this._threatPos).setY(0);
+      if (this._fleeDir.lengthSq() < 1e-4) {
+        this._fleeDir.set(Math.sin(this.group.rotation.y), 0, Math.cos(this.group.rotation.y));
+      }
+      this._fleeDir.normalize();
+      // Tether: once near the edge of the pen, bias back toward the anchor so the
+      // captive circles/cowers within the captors' ring instead of escaping.
+      _tmp.copy(this.group.position).sub(this._anchor).setY(0);
+      if (_tmp.length() > FLEE_TETHER) {
+        this._fleeDir.addScaledVector(_tmp.normalize(), -1.4);
+        if (this._fleeDir.lengthSq() < 1e-4) this._fleeDir.copy(_tmp).multiplyScalar(-1);
+        this._fleeDir.normalize();
+      }
+      const blocked = this._moveAvoiding(ctx, this._fleeDir.x * FLEE_SCARED, this._fleeDir.z * FLEE_SCARED, dt);
+      if (blocked) {
+        const a = Math.atan2(this._fleeDir.x, this._fleeDir.z) + Math.PI / 2;
+        this._fleeDir.set(Math.sin(a), 0, Math.cos(a)); // slide along the wall = hide
+      } else {
+        this.group.rotation.y = Math.atan2(this._fleeDir.x, this._fleeDir.z);
+      }
+      this._setAnim("run");
+      if (this._promptActive && ctx.hud) {
+        ctx.hud.setInteractPrompt(null);
+        ctx.hud.setInteractCallback(null);
+        this._promptActive = false;
+      }
+      return;
+    }
+
+    // --- Calm (no active captor, or the player is right here): offer rescue. ----
+    this._setAnim("walk");
+    const inRange = playerDist < INTERACT_RADIUS;
     if (inRange && !this._promptActive) {
       this._promptActive = true;
       if (ctx.hud) {
@@ -213,8 +272,58 @@ export class Victim {
     if (inRange && ctx.player.keys && ctx.player.keys["KeyE"]) this._rescue(ctx);
   }
 
-  /** Civilian killed by their captors (life depleted). Lost, no penalty — just
-   *  removed from the sector (forfeits the rescue bonus). @private */
+  /**
+   * Move by a velocity (vx,vz m/s) for `dt`, reverting any axis that would enter a
+   * collider (per-axis slide). Returns true if FULLY blocked, so the caller can turn
+   * to slide/hide along the wall. Shared by post-rescue flee, pre-rescue flee, and
+   * knockback. @private
+   */
+  _moveAvoiding(ctx, vx, vz, dt) {
+    const p = this.group.position;
+    const px = p.x, pz = p.z;
+    p.x += vx * dt; if (this._blocked(ctx, p.x, p.z)) p.x = px;
+    p.z += vz * dt; if (this._blocked(ctx, p.x, p.z)) p.z = pz;
+    return p.x === px && p.z === pz;
+  }
+
+  /**
+   * Take a discrete hit from a menacing captor — the ONLY way a civilian is harmed
+   * (the player can never damage them). Applies damage + a backward knockback shove
+   * away from the captor; a refractory window (MENACE_MIN_GAP) stops two captors
+   * striking on the same beat. At 0 life the civilian dies (lost, no penalty).
+   * @param {number} dmg
+   * @param {THREE.Vector3} fromPos  the captor's position (shove direction = away)
+   * @param {object} [ctx]           passed through to _die for emit/HUD cleanup
+   */
+  takeMenaceHit(dmg, fromPos, ctx) {
+    if (this.rescued || this.dead || this._hitGap > 0) return;
+    this._hitGap = MENACE_MIN_GAP;
+    this.life -= dmg;
+    _tmp.copy(this.group.position).sub(fromPos).setY(0);
+    if (_tmp.lengthSq() < 1e-4) {
+      _tmp.set(Math.sin(this.group.rotation.y), 0, Math.cos(this.group.rotation.y));
+    }
+    _tmp.normalize();
+    this._knock.addScaledVector(_tmp, KNOCK_IMPULSE);
+    if (this.life <= 0) this._die(ctx);
+  }
+
+  /**
+   * Death topple: lay the corpse flat over ~0.5s, then rest. The body is NEVER
+   * removed (so the sector shows the civilian lying where they fell); the mixer is
+   * left frozen on its last pose. @private
+   */
+  _updateDeath(dt) {
+    if (this._toppleAmt < Math.PI / 2) {
+      this._toppleAmt = Math.min(Math.PI / 2, this._toppleAmt + dt * 6);
+      this.group.setRotationFromAxisAngle(this._toppleAxis, this._toppleAmt);
+    }
+    if (this.group.position.y < 0) this.group.position.y = 0;
+  }
+
+  /** Civilian killed by their captors (life depleted). Lost, no penalty — forfeits
+   *  the rescue bonus. The body is NOT removed: it topples and stays lying on the
+   *  ground for the rest of the sector (death animation via _updateDeath). @private */
   _die(ctx) {
     if (this.dead || this.rescued) return;
     this.dead = true;
@@ -228,7 +337,12 @@ export class Victim {
     if (ctx && ctx.state && ctx.state.emit) {
       ctx.state.emit("victimDied", { position: this.group.position.clone() });
     }
-    this.removed = true; // Level.update splices + disposes the model next frame
+    // Begin the death topple ⊥ to the civilian's facing (rig has no death clip).
+    // NOT removed → Level.update keeps the corpse in the scene; victimsRemaining /
+    // victimLifeTotal already exclude `dead`, so the HUD + locator update correctly.
+    const ry = this.group.rotation.y;
+    this._toppleAxis.set(-Math.cos(ry), 0, Math.sin(ry));
+    this._toppleAmt = 0;
   }
 
   /** Stop the looping distress scream if it's playing. @private */

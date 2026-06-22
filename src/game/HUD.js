@@ -32,6 +32,9 @@ export class HUD {
     this.overlayHint = this.$("overlay-hint");
     this._overlayBackdrops = []; // pool of loading stills used as the default backdrop
     this.crosshair = this.$("crosshair");
+    this.titleCard = this.$("title-card");
+    this.titleCardTitle = this.titleCard ? this.titleCard.querySelector(".tc-title") : null;
+    this.titleCardSub = this.titleCard ? this.titleCard.querySelector(".tc-sub") : null;
     this._damageT = 0;
     // Adrenaline distortion layer (built in JS so index.html stays untouched).
     this._adrenaline = document.createElement("div");
@@ -273,6 +276,20 @@ export class HUD {
     this._dialogue.textContent = text;
     this._dialogue.style.opacity = "1";
     this._dialogueT = ms / 1000;
+  }
+
+  /**
+   * Flash a level-start title card (big sector name + a directions sub-line) that
+   * fades itself in and out via CSS. Re-triggers cleanly if called again (forces a
+   * reflow so the animation restarts). @param {string} title @param {string} subtitle
+   */
+  showTitleCard(title, subtitle) {
+    if (!this.titleCard) return;
+    if (this.titleCardTitle) this.titleCardTitle.textContent = title || "";
+    if (this.titleCardSub) this.titleCardSub.textContent = subtitle || "";
+    this.titleCard.classList.remove("show");
+    void this.titleCard.offsetWidth; // reflow so the keyframe animation restarts
+    this.titleCard.classList.add("show");
   }
 
   showOverlay(title, body, hint) {
