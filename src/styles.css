@@ -244,7 +244,6 @@ html, body {
   text-shadow: 0 0 6px rgba(0, 0, 0, 0.95);
   filter: drop-shadow(0 0 5px rgba(248, 81, 73, 0.85));
   animation: stamina-pulse 0.7s ease-in-out infinite;
-  transition: opacity 0.12s ease;
 }
 .victim-locator {
   position: absolute;

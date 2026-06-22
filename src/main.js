@@ -865,9 +865,11 @@ class Game {
     const targets = live.length > 0 && live.length <= SHOW_AT ? live : [];
     // Free any marker whose enemy is dead / cleared / no longer a target — so a
     // marker disappears the moment its enemy is killed (markers are bound to a
-    // specific enemy, never re-pointed to a different one).
+    // specific enemy, never re-pointed to a different one). Hide via `display`, NOT
+    // opacity: the marker's pulse keyframes animate opacity, and a running animation
+    // overrides an inline opacity, so an opacity-hidden marker would keep pulsing.
     for (const m of this._enemyMarkers) {
-      if (!m.enemy || !targets.includes(m.enemy)) { m.el.style.opacity = "0"; m.enemy = null; }
+      if (!m.enemy || !targets.includes(m.enemy)) { m.el.style.display = "none"; m.enemy = null; }
     }
     const cam = this.engine.camera;
     const w = window.innerWidth, h = window.innerHeight;
@@ -879,7 +881,7 @@ class Game {
           const el = document.createElement("div");
           el.className = "enemy-marker";
           el.textContent = "◆";
-          el.style.opacity = "0";
+          el.style.display = "none";
           this._enemyMarkersEl.appendChild(el);
           m = { el, enemy: null };
           this._enemyMarkers.push(m);
@@ -894,7 +896,7 @@ class Game {
       const mar = 16;
       m.el.style.left = `${Math.min(Math.max(px, mar), w - mar)}px`;
       m.el.style.top = `${Math.min(Math.max(py, mar), h - mar)}px`;
-      m.el.style.opacity = "1";
+      m.el.style.display = "block";
     }
   }
 
