@@ -66,4 +66,17 @@ describe("civilian damage immunity (structural)", () => {
     expect(level.victimsSaved).toBe(total - 1);
     expect(level.civilianWellbeing).toBeCloseTo((total - 1) / total, 5);
   });
+
+  it("keeps crediting rescued civilians after they flee off-screen and despawn", () => {
+    const scene = new THREE.Scene();
+    const level = new Level(scene, 1, null, 7777);
+    const total = level.victimCount;
+    // Simulate the splice path: one rescued civilian has fled away and been removed.
+    level._savedDespawned = 1;
+    level.victims.shift();
+    // The rest die, contributing 0 — isolating the despawned-saved credit.
+    for (const v of level.victims) v.dead = true;
+    expect(level.victimsSaved).toBe(1); // NOT 0 — the despawned rescue still counts
+    expect(level.civilianWellbeing).toBeCloseTo(1 / total, 5);
+  });
 });

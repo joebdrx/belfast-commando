@@ -118,6 +118,10 @@ export class Level {
     this.enemies = [];
     /** @type {Victim[]} */
     this.victims = [];
+    // Rescued civilians that have since fled off-screen and been spliced out of
+    // `this.victims`. Tracked persistently so the "saved" count + wellbeing bar
+    // don't drop when a rescued civilian despawns.
+    this._savedDespawned = 0;
     // Archetype mix scales with sector index. Deterministic enough; uses the
     // global RNG so each run varies. Drives _addEnemy when no archetype is given.
     this._director = new EnemyDirector(index || 0);
@@ -1674,17 +1678,19 @@ export class Level {
     return t;
   }
 
-  /** Civilians the player has rescued this sector (the HUD "X/total saved" count). */
+  /** Civilians the player has rescued this sector (the HUD "X/total saved" count).
+   *  Includes rescued civilians that have already fled off-screen + despawned. */
   get victimsSaved() {
-    return this.victims.filter((v) => v.rescued).length;
+    return this._savedDespawned + this.victims.filter((v) => v.rescued).length;
   }
 
   /** Overall civilian wellbeing in [0,1]: rescued = 1, dead = 0, at-risk = life/maxLife,
    *  averaged over all civilians. Drives the top-right bar — it stays full when every
-   *  civilian is saved (so it never reads as if they were lost). */
+   *  civilian is saved (so it never reads as if they were lost), counting rescued
+   *  civilians that have already despawned. */
   get civilianWellbeing() {
     if (!this.victimCount) return 0;
-    let sum = 0;
+    let sum = this._savedDespawned; // each despawned-rescued civilian counts as full
     for (const v of this.victims) {
       if (v.rescued) sum += 1;
       else if (!v.dead) sum += Math.max(0, Math.min(1, v.life / v.maxLife));
@@ -1700,6 +1706,9 @@ export class Level {
       const v = this.victims[i];
       v.update(dt, ctx);
       if (v.removed) {
+        // Only rescued civilians despawn (dead ones stay as corpses); keep crediting
+        // them as saved after they leave the array.
+        if (v.rescued) this._savedDespawned += 1;
         this.group.remove(v.group);
         v.dispose();
         this.victims.splice(i, 1);

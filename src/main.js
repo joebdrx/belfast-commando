@@ -245,7 +245,7 @@ class Game {
     this._anchorTmp = new THREE.Vector3();
     // Pooled directional markers over the last few remaining invaders (cleanup helper).
     this._enemyMarkersEl = document.getElementById("enemy-markers");
-    this._enemyMarkers = []; // [el]
+    this._enemyMarkers = []; // pool of [{ el, enemy }] bound by enemy identity
 
     // Extraction reached → finish the level.
     this.levelManager.setOnExtract(() => this._completeLevel());
@@ -862,33 +862,39 @@ class Game {
     if (!this._enemyMarkersEl || !this.level) return;
     const live = this.level.enemies.filter((e) => !e.dead);
     const SHOW_AT = 3;
-    if (!live.length || live.length > SHOW_AT) {
-      for (const el of this._enemyMarkers) el.style.opacity = "0";
-      return;
-    }
-    while (this._enemyMarkers.length < live.length) {
-      const el = document.createElement("div");
-      el.className = "enemy-marker";
-      el.textContent = "◆";
-      el.style.opacity = "0";
-      this._enemyMarkersEl.appendChild(el);
-      this._enemyMarkers.push(el);
+    const targets = live.length > 0 && live.length <= SHOW_AT ? live : [];
+    // Free any marker whose enemy is dead / cleared / no longer a target — so a
+    // marker disappears the moment its enemy is killed (markers are bound to a
+    // specific enemy, never re-pointed to a different one).
+    for (const m of this._enemyMarkers) {
+      if (!m.enemy || !targets.includes(m.enemy)) { m.el.style.opacity = "0"; m.enemy = null; }
     }
     const cam = this.engine.camera;
     const w = window.innerWidth, h = window.innerHeight;
-    for (let i = 0; i < this._enemyMarkers.length; i++) {
-      const el = this._enemyMarkers[i];
-      const e = live[i];
-      if (!e) { el.style.opacity = "0"; continue; }
+    for (const e of targets) {
+      let m = this._enemyMarkers.find((mm) => mm.enemy === e);
+      if (!m) {
+        m = this._enemyMarkers.find((mm) => !mm.enemy); // reuse a freed marker
+        if (!m) {
+          const el = document.createElement("div");
+          el.className = "enemy-marker";
+          el.textContent = "◆";
+          el.style.opacity = "0";
+          this._enemyMarkersEl.appendChild(el);
+          m = { el, enemy: null };
+          this._enemyMarkers.push(m);
+        }
+        m.enemy = e;
+      }
       this._anchorTmp.copy(e.group.position); this._anchorTmp.y += 2.0;
       this._tmpProj.copy(this._anchorTmp).project(cam);
       let px = (this._tmpProj.x * 0.5 + 0.5) * w;
       let py = (-this._tmpProj.y * 0.5 + 0.5) * h;
       if (this._tmpProj.z > 1) { px = w - px; py = h - 24; } // behind camera → mirror to bottom edge
-      const m = 16;
-      el.style.left = `${Math.min(Math.max(px, m), w - m)}px`;
-      el.style.top = `${Math.min(Math.max(py, m), h - m)}px`;
-      el.style.opacity = "1";
+      const mar = 16;
+      m.el.style.left = `${Math.min(Math.max(px, mar), w - mar)}px`;
+      m.el.style.top = `${Math.min(Math.max(py, mar), h - mar)}px`;
+      m.el.style.opacity = "1";
     }
   }
 
