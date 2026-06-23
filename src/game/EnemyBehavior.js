@@ -61,7 +61,8 @@ export function stepGunner(enemy, dt, ctx) {
   const playerPos = ctx.player.position;
   _toPlayer.copy(playerPos).sub(pos);
   const dist = _toPlayer.length();
-  const see = dist < enemy.sightRange && ctx.level.lineOfSight(enemy.eyePosition(), playerPos);
+  // Once the alarm is raised (`_hunting`) the gunner rushes regardless of sight/LOS.
+  const see = enemy._hunting || (dist < enemy.sightRange && ctx.level.lineOfSight(enemy.eyePosition(), playerPos));
   enemy.group.rotation.y = Math.atan2(_toPlayer.x, _toPlayer.z);
   _flat.copy(_toPlayer).setY(0).normalize();
 

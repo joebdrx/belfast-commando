@@ -44,10 +44,7 @@ const MODEL_DEFS = {
   // characters / enemies — stand on the ground, face +Z toward the player.
   // `darken` multiplies base colour so invaders read 25% darker (grimmer, and
   // easier to read as hostile silhouettes against the pale overcast street).
-  enemy_soldier:    { size: 1.85, fit: "height", anchor: "bottom", rotY: Math.PI, darken: 0.75 },
-  enemy_variant:    { size: 1.85, fit: "height", anchor: "bottom", rotY: Math.PI, darken: 0.75 },
   invader:          { size: 1.85, fit: "height", anchor: "bottom", rotY: Math.PI, darken: 0.75 },
-  player_fighter:   { size: 1.85, fit: "height", anchor: "bottom", rotY: Math.PI },
   // Rescuable civilian. Primary path is the rigged getVictimRig() (walk/run);
   // this static-model entry is the fallback if the rig fails to load.
   enemy_victim:     { size: 1.7, fit: "height", anchor: "bottom", rotY: 0 },
@@ -205,10 +202,19 @@ export class AssetManager {
       onProgress && onProgress(this.loaded, this.total);
     });
 
-    // Environment map, 3D models, 2D sprites, and the rigged enemy run alongside.
-    const envJob = scene ? this._loadEnvironment(scene) : Promise.resolve();
-    const skyJob = scene ? this._loadSky(scene) : Promise.resolve();
-    await Promise.all([...jobs, envJob, skyJob, this.loadModels(), this.loadSprites(), this.loadMurals(), this._loadRiggedEnemy(), this._loadArchetypeRigs(), this._loadAttackClip(), this._loadMenuActor(), this._loadPlayer2(), this.captureFacades(), this.loadFace(), this.loadHouseSide()]);
+    // 3D models, 2D sprites, and the rigged enemies run alongside.
+    await Promise.all([...jobs, this.loadModels(), this.loadSprites(), this.loadMurals(), this._loadRiggedEnemy(), this._loadArchetypeRigs(), this._loadAttackClip(), this._loadMenuActor(), this._loadPlayer2(), this.loadFace(), this.loadHouseSide()]);
+
+    // ponytail: heavy, level-only scene dressing streams DETACHED (off the await)
+    // so the loading screen + first deploy aren't gated on ~21MB. Each degrades
+    // gracefully until it lands and is swapped in: the city_map facade bake (15MB)
+    // → plain brick walls, sky.hdr → the gradient sky dome, overcast.hdr → lights-
+    // only IBL. A fast first deploy inside this window simply looks plainer.
+    if (scene) {
+      this._loadEnvironment(scene).catch(() => {});
+      this._loadSky(scene).catch(() => {});
+    }
+    this.captureFacades().catch(() => {});
   }
 
   /** Load the photo face that gets billboarded onto each enemy's head. */
@@ -514,18 +520,6 @@ export class AssetManager {
     // Rescuable civilian: same Meshy rig pipeline (walk + run armature). darken=1
     // keeps her natural-coloured so she reads as a civilian, not an enemy.
     this._victimRig = await this._loadRig("enemy_victim", "anim_victim_run", 1.0).catch(() => null);
-  }
-
-  /** A fresh clone of the rigged character for use as first-person arms,
-   *  with its bones exposed by name for posing. */
-  getFpArms() {
-    if (!this._riggedEnemy) return null;
-    const object3D = cloneSkeleton(this._riggedEnemy.scene);
-    const bones = {};
-    object3D.traverse((o) => {
-      if (o.isBone) bones[o.name] = o;
-    });
-    return { object3D, bones, height: this._riggedEnemy.height || 1.7 };
   }
 
   /**

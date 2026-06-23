@@ -13,6 +13,16 @@ const _dir = new THREE.Vector3();
 const _hit = new THREE.Vector3();
 
 /**
+ * Escalation tuning. To keep a sector from going stale while the player hunts the
+ * last few stragglers, an ALARM is raised once EITHER the player has been in the
+ * sector long enough OR enough of the garrison is down — whichever comes first.
+ * On the alarm every living invader starts HUNTING: it abandons its room/idle post
+ * and converges on the player even with no line of sight, so the fight comes to you.
+ */
+export const ALARM_TIME = 50; // seconds in-sector before the garrison mobilises
+export const ALARM_KILL_FRAC = 0.5; // ...or once half the garrison is down
+
+/**
  * Door
  * ----
  * A kickable wooden door on a hinge. Closed doors block movement (collider)
@@ -122,6 +132,12 @@ export class Level {
     // `this.victims`. Tracked persistently so the "saved" count + wellbeing bar
     // don't drop when a rescued civilian despawns.
     this._savedDespawned = 0;
+    // Escalation state (see ALARM_TIME / ALARM_KILL_FRAC). Once raised, every living
+    // invader hunts the player. `_initialEnemies` is captured lazily on the first
+    // alarm tick so it counts the fully-spawned garrison.
+    this.alarmRaised = false;
+    this._combatTime = 0;
+    this._initialEnemies = null;
     // Archetype mix scales with sector index. Deterministic enough; uses the
     // global RNG so each run varies. Drives _addEnemy when no archetype is given.
     this._director = new EnemyDirector(index || 0);
@@ -1698,8 +1714,39 @@ export class Level {
     return sum / this.victimCount;
   }
 
+  /**
+   * Advance the escalation clock and raise the alarm the moment a threshold trips.
+   * Pure of any ctx side-effects (so it's unit-testable) — returns true ONLY on the
+   * frame the alarm is newly raised, leaving the caller to fire the HUD/audio cue.
+   * @param {number} dt seconds
+   * @returns {boolean} true exactly once, when the alarm flips on
+   */
+  tickAlarm(dt) {
+    if (this.alarmRaised) return false;
+    if (this._initialEnemies == null) this._initialEnemies = this.enemies.length;
+    this._combatTime += dt;
+    const remaining = this.enemiesRemaining;
+    if (remaining === 0) return false; // sector already clear — nothing to mobilise
+    const killed = this._initialEnemies - remaining;
+    const frac = this._initialEnemies > 0 ? killed / this._initialEnemies : 0;
+    if (this._combatTime >= ALARM_TIME || frac >= ALARM_KILL_FRAC) {
+      this.alarmRaised = true;
+      for (const e of this.enemies) if (!e.dead) e._hunting = true;
+      return true;
+    }
+    return false;
+  }
+
   update(dt, ctx) {
     for (const d of this.doors) d.update(dt);
+    // Mobilise the garrison once the escalation threshold trips, then announce it.
+    if (this.tickAlarm(dt) && ctx) {
+      if (ctx.hud) ctx.hud.showDialogue("⚠ ALARM RAISED — invaders are converging on your position", 4200);
+      if (ctx.audio && ctx.audio.enemyScream && ctx.player) {
+        ctx.audio.enemyScream(ctx.player.position, ctx.camera ? ctx.camera.position : ctx.player.position);
+      }
+      if (ctx.state) ctx.state.emit("alarmRaised", {});
+    }
     for (const e of this.enemies) e.update(dt, ctx);
     // Victims: tick then splice out any that have despawned off-screen.
     for (let i = this.victims.length - 1; i >= 0; i--) {
