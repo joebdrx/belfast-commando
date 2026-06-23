@@ -27,4 +27,16 @@ export default defineConfig(async () => ({
       ignored: ["**/src-tauri/**"],
     },
   },
+  // Split three.js into its own chunk so repeat web visitors cache it across
+  // app-code updates (payload-neutral; also silences the >500KB chunk warning).
+  build: {
+    chunkSizeWarningLimit: 700,
+    rollupOptions: {
+      output: {
+        manualChunks(id: string) {
+          if (id.includes("node_modules/three")) return "three";
+        },
+      },
+    },
+  },
 }));

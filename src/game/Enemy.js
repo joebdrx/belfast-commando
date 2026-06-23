@@ -59,6 +59,7 @@ export class Enemy {
     this._guardingVictim = null; // set by Level._spawnVictims on captor enemies
     this._alerted = false;       // woken by player proximity or taking damage
     this._hunting = false;       // set by Level.tickAlarm: converge on the player even with no LOS
+    this._hitBox = new THREE.Box3(); // reused per hitscan query (getHitBox) — no per-pellet alloc
     this.health = arch.health;
     this.sightRange = arch.sightRange;
     this.meleeRange = arch.meleeRange;
@@ -266,13 +267,13 @@ export class Enemy {
     return this.group.position;
   }
 
-  /** Bounding box used for hitscan tests. Rebuilt each query (cheap). */
+  /** Bounding box used for hitscan tests. Updated in place (the sole caller —
+   *  Weapon's raycast — only reads it, never retains it), so no per-query alloc. */
   getHitBox() {
     const p = this.group.position;
-    return new THREE.Box3(
-      new THREE.Vector3(p.x - this.radius, p.y, p.z - this.radius),
-      new THREE.Vector3(p.x + this.radius, p.y + this.height, p.z + this.radius),
-    );
+    this._hitBox.min.set(p.x - this.radius, p.y, p.z - this.radius);
+    this._hitBox.max.set(p.x + this.radius, p.y + this.height, p.z + this.radius);
+    return this._hitBox;
   }
 
   /** @param {number} amount @param {THREE.Vector3} dir normalized push direction */
