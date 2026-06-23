@@ -58,6 +58,7 @@ export class Enemy {
     this._pendingDetonate = false;
     this._guardingVictim = null; // set by Level._spawnVictims on captor enemies
     this._alerted = false;       // woken by player proximity or taking damage
+    this._hunting = false;       // set by Level.tickAlarm: converge on the player even with no LOS
     this.health = arch.health;
     this.sightRange = arch.sightRange;
     this.meleeRange = arch.meleeRange;
@@ -442,10 +443,13 @@ export class Enemy {
     _toPlayer.copy(playerPos).sub(this.group.position);
     const dist = _toPlayer.length();
 
-    // Patrol when the player is far / out of sight.
+    // Patrol when the player is far / out of sight. Once the alarm is raised
+    // (`_hunting`), the enemy engages regardless of sight or line-of-sight — it
+    // leaves its room and beelines toward the player so the fight converges.
     const canSee = dist < this.sightRange && ctx.level.lineOfSight(this.eyePosition(), playerPos);
+    const engage = canSee || this._hunting;
 
-    if (canSee) {
+    if (engage) {
       this.group.rotation.y = Math.atan2(_toPlayer.x, _toPlayer.z);
       _flat.copy(_toPlayer).setY(0);
       const hdist = _flat.length();

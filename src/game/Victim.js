@@ -70,8 +70,10 @@ export class Victim {
 
     // Civilian life — stepped down by discrete captor taunt-strikes (takeMenaceHit),
     // NOT a continuous drain. At 0 the civilian dies (lost, no penalty) and topples.
-    this.maxLife = 100;
-    this.life = 100;
+    // Set high (300) so a hostage endures many taunt-strikes; combined with the
+    // flee-between-hits cadence this gives the player ample time to reach a rescue.
+    this.maxLife = 300;
+    this.life = 300;
     this.dead = false;
     // Short countdown refreshed each frame by an active captor (menaceVictim);
     // > 0 means "currently being menaced". A timer (vs a per-frame flag) survives

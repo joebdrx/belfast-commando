@@ -144,8 +144,12 @@ export class LevelManager {
       blending: THREE.AdditiveBlending,
       depthWrite: false,
     });
-    const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.6, 16, 12, 1, true), beamMat);
-    beam.position.y = 8;
+    // A tall searchlight column that shoots well up into the sky, widening as it
+    // rises, so the extraction point reads as a landmark from clear across the
+    // sector (not just a low stub near the ground).
+    const BEAM_H = 70;
+    const beam = new THREE.Mesh(new THREE.CylinderGeometry(1.6, 0.5, BEAM_H, 16, 1, true), beamMat);
+    beam.position.y = BEAM_H / 2;
     group.add(beam);
 
     // Spinning ground ring sized to the trigger radius so the volume is legible.
