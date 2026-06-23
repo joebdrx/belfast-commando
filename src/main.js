@@ -14,6 +14,7 @@ import Progression from "./game/Progression.js";
 import { LevelManager } from "./game/LevelManager.js";
 import { Hub } from "./game/Hub.js";
 import { Menu } from "./game/Menu.js";
+import { ShopTerminal } from "./game/ShopTerminal.js";
 import ComboSystem from "./game/ComboSystem.js";
 import FloatingText from "./game/FloatingText.js";
 import { Juice } from "./game/Juice.js";
@@ -100,6 +101,10 @@ class Game {
     this.floating = new FloatingText();
     this.hub = new Hub(this.engine.camera, this.assets);
     this.menu = new Menu();
+    // The laptop black-market shop: a CRT terminal overlay opened by dollying the
+    // safehouse camera into the ThinkPad. Closing it reverses the dolly.
+    this.shop = new ShopTerminal({ progression: this.progression });
+    this.shop.setOnClose(() => this.hub.restoreCamera(() => this._setHubLabelsVisible(true)));
     this.levelManager = new LevelManager(this.engine.scene, this.assets, this.state);
     this.pauseMenu = new PauseMenu();
     this.modifiers = new Modifiers(this.state);
@@ -943,7 +948,7 @@ class Game {
 
   /** Raycast a HUB cursor click against the hub interactables and dispatch. */
   _onHubClick(e) {
-    if (this.phase !== "HUB") return;
+    if (this.phase !== "HUB" || (this.shop && this.shop.isOpen())) return;
     const interactables = this.hub.getInteractables ? this.hub.getInteractables() : [];
     if (!interactables.length) return;
 
@@ -973,10 +978,18 @@ class Game {
     if (id === "start") {
       this.menu.openSectors(); // open the sector-select panel (Continue / pick a sector)
     } else if (id === "upgrades") {
-      this.menu.openUpgrades();
+      this._openLaptopShop();
     } else if (id === "phone") {
       this.menu.openDial();
     }
+  }
+
+  /** Click the upgrades fixture → dolly the camera into the laptop, then open
+   *  the CRT black-market shop overlay once the dolly settles. */
+  _openLaptopShop() {
+    if (this.shop.isOpen()) return;
+    this._setHubLabelsVisible(false);
+    this.hub.zoomToLaptop(() => this.shop.open());
   }
 
   // ---- main loop ---------------------------------------------------------

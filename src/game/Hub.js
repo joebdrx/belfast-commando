@@ -4,6 +4,11 @@ const BASE = import.meta.env.BASE_URL || "/";
 // Safehouse character display scale — the hero + ally figures are scaled up 25%.
 const MENU_CHAR_SCALE = 1.25;
 
+/** Smootherstep (6t^5-15t^4+10t^3): an eased 0→1 ramp for the laptop dolly. */
+function smoother(t) {
+  return t * t * t * (t * (t * 6 - 15) + 10);
+}
+
 /**
  * Hub
  * ---
@@ -78,6 +83,28 @@ export class Hub {
     this._tmpV = new THREE.Vector3(); // reused each frame — no per-frame alloc
     this._elapsed = 0;
     this._visible = false;
+
+    // --- Laptop "black market" zoom-in (the upgrades shop) ----------------
+    // Clicking the upgrades fixture dollies the shared camera from the idle
+    // framing into the open ThinkPad screen (narrowing fov for an optical
+    // lean-in); a CRT shop overlay then takes over. restoreCamera() reverses it.
+    this._laptopFit = null; // {center,normal,quat,w,h} of the lid, cached on place
+    this._zooming = false;
+    this._restoring = false;
+    this._atLaptop = false;
+    this._zoomT = 0; // 0 = idle framing, 1 = seated at the screen
+    this._zoomDur = 0.85; // seconds
+    this._zoomFrom = new THREE.Vector3();
+    this._zoomTo = new THREE.Vector3();
+    this._zoomLookFrom = new THREE.Vector3();
+    this._zoomLookTo = new THREE.Vector3();
+    this._tmpLook = new THREE.Vector3();
+    this._zoomFovFrom = 78;
+    this._zoomFovTo = 34;
+    this._arriveCb = null;
+    this._restoreCb = null;
+    this._reduceMotion = typeof window !== "undefined" && window.matchMedia
+      ? window.matchMedia("(prefers-reduced-motion: reduce)").matches : false;
 
     this._buildAtmosphere();
     this._buildShell();
@@ -339,6 +366,7 @@ export class Hub {
     // even if the laptop is moved/rotated).
     if (this._barProps.thinkpad && !this._barProps.laptop_screen) {
       const fit = this._fitLaptopScreen(this._barProps.thinkpad);
+      this._laptopFit = fit; // cached for the zoom-in target pose
       const w = fit ? fit.w : 0.55, h = fit ? fit.h : 0.31; // fill the whole lid
       const screen = new THREE.Mesh(
         new THREE.PlaneGeometry(w, h),
@@ -354,6 +382,9 @@ export class Hub {
       }
       this.scene.add(screen);
       this._barProps.laptop_screen = screen;
+      // The laptop itself is a clickable "upgrades" fixture: clicking it dollies
+      // the camera in and opens the black-market shop overlay.
+      this._registerInteractable(this._barProps.thinkpad, "upgrades", "Laptop — Black Market", 1.2);
     }
   }
 
@@ -575,7 +606,7 @@ export class Hub {
     const armory = place(3.9, 0.55, -4.7, 1.1);
     place(3.7, 1.45, -4.8, 0.7);
     place(-4.0, 0.5, -4.9, 1.0);
-    this._registerInteractable(armory, "upgrades", "Armory", 1.15);
+    this._registerInteractable(armory, "upgrades", "Upgrades — Black Market", 1.15);
   }
 
   /**
@@ -1113,6 +1144,40 @@ export class Hub {
       }
     }
 
+    // Camera: dolly into the laptop when summoned, hold the seated pose while the
+    // shop is open, or run the idle handheld sway around the fixed framing.
+    if (this._zooming || this._restoring) {
+      const dir = this._zooming ? 1 : -1;
+      this._zoomT = THREE.MathUtils.clamp(this._zoomT + (dir * dt) / this._zoomDur, 0, 1);
+      const e = smoother(this._zoomT);
+      this._tmpV.lerpVectors(this._zoomFrom, this._zoomTo, e);
+      this._tmpLook.lerpVectors(this._zoomLookFrom, this._zoomLookTo, e);
+      this.camera.fov = THREE.MathUtils.lerp(this._zoomFovFrom, this._zoomFovTo, e);
+      this.camera.updateProjectionMatrix();
+      this.camera.position.copy(this._tmpV);
+      this.camera.lookAt(this._tmpLook);
+      this.camera.updateMatrixWorld();
+      if (this._zooming && this._zoomT >= 1) {
+        this._zooming = false;
+        this._atLaptop = true;
+        const cb = this._arriveCb; this._arriveCb = null;
+        if (cb) cb();
+      } else if (this._restoring && this._zoomT <= 0) {
+        this._unseat();
+      }
+      return;
+    }
+    if (this._atLaptop) {
+      // Seated at the screen — hold the pose with a hair of residual breathing.
+      this._tmpV.copy(this._zoomTo);
+      this._tmpV.x += Math.sin(t * 0.5) * 0.004;
+      this._tmpV.y += Math.sin(t * 0.73) * 0.004;
+      this.camera.position.copy(this._tmpV);
+      this.camera.lookAt(this._zoomLookTo);
+      this.camera.updateMatrixWorld();
+      return;
+    }
+
     // Very slight handheld-style camera sway around the fixed pose.
     this._tmpV.copy(this._camBase);
     this._tmpV.x += Math.sin(t * 0.5) * 0.03;
@@ -1120,6 +1185,58 @@ export class Hub {
     this.camera.position.copy(this._tmpV);
     this.camera.lookAt(this._lookTarget);
     this.camera.updateMatrixWorld(); // parented camera, foreign scene — see _poseCamera
+  }
+
+  /**
+   * Dolly the shared camera from the idle framing into the open laptop screen
+   * and narrow the fov for an optical lean-in. `onArrive` fires once seated (the
+   * orchestrator opens the CRT shop overlay there). Honours reduced-motion by
+   * snapping straight to the seated pose. No-op if already zooming/seated.
+   * @param {Function} [onArrive]
+   */
+  zoomToLaptop(onArrive) {
+    if (this._zooming || this._atLaptop) { if (onArrive) onArrive(); return; }
+    this._ensureBarProps(); // make sure the laptop + its screen fit are placed
+    const fit = this._laptopFit;
+    this._zoomLookTo.copy(fit ? fit.center : new THREE.Vector3(0.40, 1.25, -2.13));
+    if (fit) this._zoomTo.copy(fit.center).addScaledVector(fit.normal, 0.62);
+    else this._zoomTo.set(0.55, 1.30, -1.52);
+    this._zoomFrom.copy(this.camera.position);
+    this._zoomLookFrom.copy(this._lookTarget);
+    this._zoomFovFrom = this.camera.fov;
+    this._arriveCb = onArrive || null;
+    this._zoomT = 0;
+    if (this._reduceMotion) {
+      this._zoomT = 1;
+      this._zooming = true; // a single update() tick seats it + fires onArrive
+      return;
+    }
+    this._zooming = true;
+  }
+
+  /**
+   * Reverse the dolly back to the idle framing + fov. `onDone` fires once the
+   * camera is home (the orchestrator re-shows the hub labels there).
+   * @param {Function} [onDone]
+   */
+  restoreCamera(onDone) {
+    if (!this._atLaptop && !this._zooming) { if (onDone) onDone(); return; }
+    this._restoreCb = onDone || null;
+    this._atLaptop = false;
+    this._zooming = false;
+    this._restoring = true;
+    if (this._reduceMotion) this._zoomT = 0; // snap home on the next tick
+  }
+
+  /** Finish a restore: clear flags, return the fov, fire the done callback. */
+  _unseat() {
+    this._restoring = false;
+    this._atLaptop = false;
+    this._zooming = false;
+    this.camera.fov = this._zoomFovFrom || 78;
+    this.camera.updateProjectionMatrix();
+    const cb = this._restoreCb; this._restoreCb = null;
+    if (cb) cb();
   }
 
   /**

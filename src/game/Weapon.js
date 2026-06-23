@@ -9,7 +9,7 @@ const _splatLocal = new THREE.Vector3();
 const _splatLook = new THREE.Vector3();
 
 /** Weapon definitions — placeholder low-poly viewmodels, distinct feel. */
-const WEAPONS = [
+export const WEAPONS = [
   // vmRotY yaws the GLB so the barrel points forward (-Z). The two gun meshes
   // happen to face opposite directions, hence opposite signs.
   { name: "Sidearm", id: "pistol", model: "weapon_pistol", vmRotY: -Math.PI / 2, color: 0x2b2b2b, damage: 34, rpm: 360, auto: false, pellets: 1, spread: 0.004, size: [0.12, 0.16, 0.4], mag: 12, reloadTime: 1.1 },
