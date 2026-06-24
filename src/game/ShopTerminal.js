@@ -78,6 +78,17 @@ export class ShopTerminal {
     this._tab = "weapons";
     /** Outstanding power/boot-log timers, cleared on close() so nothing fires after teardown. */
     this._timers = [];
+    /** @type {(()=>({left,top,width,height}|null))|null} when set, the terminal is
+     *  laid over the laptop screen (embedded mode) instead of full-screen. */
+    this._rectProvider = null;
+    // Re-project on resize, but on the NEXT frame so the engine's own resize
+    // handler updates the camera aspect first (else the rect lags one resize).
+    this._onResize = () => {
+      if (!this._open) return;
+      if (typeof requestAnimationFrame === "function") requestAnimationFrame(() => { if (this._open) this._applyRect(); });
+      else this._applyRect();
+    };
+    if (typeof window !== "undefined") window.addEventListener("resize", this._onResize);
   }
 
   // ---- public API ----------------------------------------------------------
@@ -102,8 +113,13 @@ export class ShopTerminal {
     return this._open;
   }
 
-  /** Mount (first call only), run the CRT power-on sequence, render the active tab. */
-  open() {
+  /**
+   * Mount (first call only), run the CRT power-on sequence, render the active tab.
+   * @param {(()=>({left,top,width,height}|null))} [rectProvider] when supplied,
+   *   lay the terminal over this viewport rect (the laptop screen) instead of
+   *   full-screen; re-queried on resize. Omit for the standalone full-screen CRT.
+   */
+  open(rectProvider = null) {
     this._ensureMounted();
     this._clearTimers();
     this._closing = false;
@@ -111,8 +127,33 @@ export class ShopTerminal {
     this._tab = "weapons";
     this._footerMsg("", "");
     this.root.classList.remove(`${PREFIX}hidden`);
+    this._rectProvider = typeof rectProvider === "function" ? rectProvider : null;
+    this._applyRect();
     this._renderActive(); // build listings now; they're revealed after the boot-log
     this._powerOn();
+  }
+
+  /**
+   * Embedded mode: size + position the root over the laptop-screen rect so the UI
+   * reads as the ThinkPad's display, with the 3D model framing it. Falls back to
+   * full-screen when no provider is set or the rect is unavailable (headless / fit
+   * not ready yet). @private
+   */
+  _applyRect() {
+    const root = this.root;
+    if (!root) return;
+    const rect = this._rectProvider ? this._rectProvider() : null;
+    if (!rect || !(rect.width > 0) || !(rect.height > 0)) {
+      root.classList.remove(`${PREFIX}embedded`);
+      root.style.cssText = ""; // back to the stylesheet's fixed full-screen rect
+      return;
+    }
+    root.classList.add(`${PREFIX}embedded`);
+    root.style.inset = "auto";
+    root.style.left = `${rect.left}px`;
+    root.style.top = `${rect.top}px`;
+    root.style.width = `${rect.width}px`;
+    root.style.height = `${rect.height}px`;
   }
 
   /** Play the power-off collapse, then hide the root and fire onClose(). */
@@ -124,6 +165,9 @@ export class ShopTerminal {
 
     const finish = () => {
       this.root.classList.add(`${PREFIX}hidden`);
+      this.root.classList.remove(`${PREFIX}embedded`);
+      this.root.style.cssText = ""; // drop embedded inline pos; stylesheet rules resume
+      this._rectProvider = null;
       this._power.classList.remove(`${PREFIX}on`, `${PREFIX}off`);
       this._open = false;
       this._closing = false;
@@ -180,6 +224,17 @@ export class ShopTerminal {
         color: #33ff66;
       }
       .${PREFIX}root.${PREFIX}hidden { display: none; }
+
+      /* ---- embedded mode: laid over the laptop lid ------------------------ */
+      /* Drop the freestanding CRT tube/bezel and let the phosphor screen fill
+         the panel so it reads as the ThinkPad's own display; the 3D model frames
+         it. (Root pos/size are set inline from the projected screen rect.) */
+      .${PREFIX}root.${PREFIX}embedded { background: transparent; }
+      .${PREFIX}root.${PREFIX}embedded .${PREFIX}crt {
+        inset: 0; border-radius: 5px; padding: 0; background: var(--scr-bg);
+        box-shadow: inset 0 0 36px 10px rgba(0,0,0,0.75);
+      }
+      .${PREFIX}root.${PREFIX}embedded .${PREFIX}screen { border-radius: 5px; }
 
       /* The tube: rounded glass, a chunky dark bezel (layered box-shadow:
          outer drop + ridge + inset tube falloff). CSS custom props live here. */

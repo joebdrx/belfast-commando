@@ -104,7 +104,11 @@ class Game {
     // The laptop black-market shop: a CRT terminal overlay opened by dollying the
     // safehouse camera into the ThinkPad. Closing it reverses the dolly.
     this.shop = new ShopTerminal({ progression: this.progression });
-    this.shop.setOnClose(() => this.hub.restoreCamera(() => this._setHubLabelsVisible(true)));
+    this.shop.setOnClose(() => {
+      this.hub.setLaptopScreenVisible(true); // bring the static screen back
+      this.menu.show(); // re-open the left safehouse panel
+      this.hub.restoreCamera(() => this._setHubLabelsVisible(true));
+    });
     this.levelManager = new LevelManager(this.engine.scene, this.assets, this.state);
     this.pauseMenu = new PauseMenu();
     this.modifiers = new Modifiers(this.state);
@@ -771,10 +775,14 @@ class Game {
    * never move) so the loop only re-projects them each frame.
    */
   _buildHubLabels() {
-    this._hubLabelsEl = document.getElementById("hub-labels");
+    this._hubLabelsEl = this._hubLabelsEl || document.getElementById("hub-labels");
     if (!this._hubLabelsEl) return;
     const interactables = this.hub.getInteractables ? this.hub.getInteractables() : [];
-    for (const it of interactables) {
+    // Incremental + idempotent: late-streaming fixtures (the laptop registers
+    // only once its GLB loads, after this first runs) get a label the moment
+    // they appear. _updateHubLabels re-invokes this when the count grows.
+    for (let i = this._hubLabels.length; i < interactables.length; i++) {
+      const it = interactables[i];
       const el = document.createElement("div");
       el.className = "hub-label";
       el.textContent = it.label;
@@ -791,6 +799,9 @@ class Game {
 
   /** Project each interactable's world anchor to screen space (reused temps). */
   _updateHubLabels() {
+    // Pick up any fixture that registered after the first build (e.g. the laptop).
+    const live = this.hub.getInteractables ? this.hub.getInteractables().length : 0;
+    if (live > this._hubLabels.length) this._buildHubLabels();
     if (!this._hubLabels.length) return;
     const cam = this.engine.camera;
     const w = window.innerWidth;
@@ -989,7 +1000,12 @@ class Game {
   _openLaptopShop() {
     if (this.shop.isOpen()) return;
     this._setHubLabelsVisible(false);
-    this.hub.zoomToLaptop(() => this.shop.open());
+    this.menu.hide(); // collapse the left safehouse panel while at the laptop
+    this.hub.zoomToLaptop(() => {
+      this.hub.setLaptopScreenVisible(false); // the DOM panel becomes the screen
+      // Lay the terminal over the lid; the provider re-projects on resize.
+      this.shop.open(() => this.hub.laptopScreenRect());
+    });
   }
 
   // ---- main loop ---------------------------------------------------------

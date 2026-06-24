@@ -4,6 +4,12 @@ const BASE = import.meta.env.BASE_URL || "/";
 // Safehouse character display scale — the hero + ally figures are scaled up 25%.
 const MENU_CHAR_SCALE = 1.25;
 
+// Black-market laptop framing (visual calibration knobs). Seated camera distance
+// along the screen normal — larger = pulled back, so the laptop body frames the
+// screen. Screen inset shrinks the UI inside the lid so it sits within the bezel.
+const LAPTOP_VIEW_DIST = 0.86;
+const LAPTOP_SCREEN_INSET = 0.92;
+
 /** Smootherstep (6t^5-15t^4+10t^3): an eased 0→1 ramp for the laptop dolly. */
 function smoother(t) {
   return t * t * t * (t * (t * 6 - 15) + 10);
@@ -31,6 +37,32 @@ function smoother(t) {
  * an SMG. A spare SMG also rests on the planning table, and the hero wears one
  * slung across his back.
  */
+
+/**
+ * Project a world-space quad (center + orientation quat + width/height) through a
+ * camera to an axis-aligned viewport rect {left,top,width,height} in CSS px.
+ * Exported for unit testing (the laptop-screen overlay relies on this).
+ * @returns {{left:number,top:number,width:number,height:number}}
+ */
+export function projectQuadRect(camera, center, quat, w, h, viewW, viewH) {
+  const right = new THREE.Vector3(1, 0, 0).applyQuaternion(quat);
+  const up = new THREE.Vector3(0, 1, 0).applyQuaternion(quat);
+  const corner = new THREE.Vector3();
+  const hw = w / 2, hh = h / 2;
+  camera.updateMatrixWorld();
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (let sx = -1; sx <= 1; sx += 2) {
+    for (let sy = -1; sy <= 1; sy += 2) {
+      corner.copy(center).addScaledVector(right, sx * hw).addScaledVector(up, sy * hh).project(camera);
+      const px = (corner.x * 0.5 + 0.5) * viewW;
+      const py = (-corner.y * 0.5 + 0.5) * viewH;
+      minX = Math.min(minX, px); maxX = Math.max(maxX, px);
+      minY = Math.min(minY, py); maxY = Math.max(maxY, py);
+    }
+  }
+  return { left: minX, top: minY, width: maxX - minX, height: maxY - minY };
+}
+
 export class Hub {
   /**
    * @param {THREE.PerspectiveCamera} camera the Engine-owned shared camera
@@ -357,7 +389,7 @@ export class Hub {
       this.scene.add(m);
       this._barProps[slug] = m;
     };
-    place("crt_tv", -2.75, 1.18, -5.42, 0);    // on the bar, left of the bottles, screen into the room
+    place("crt_tv", -2.75, 1.18, -5.42, Math.PI / 2); // on the bar; turned 90° so the screen faces the camera
     place("thinkpad", 0.45, 1.0, -1.95, 0.25 + Math.PI); // open on the planning table (surface y≈1.0), turned 180°
 
     // Glowing "rootkit monitor" UI overlaid on the laptop's screen. The model is a
@@ -367,7 +399,8 @@ export class Hub {
     if (this._barProps.thinkpad && !this._barProps.laptop_screen) {
       const fit = this._fitLaptopScreen(this._barProps.thinkpad);
       this._laptopFit = fit; // cached for the zoom-in target pose
-      const w = fit ? fit.w : 0.55, h = fit ? fit.h : 0.31; // fill the whole lid
+      // Inset to match the black-market UI's fit (laptopScreenRect uses the same factor).
+      const w = (fit ? fit.w : 0.35) * LAPTOP_SCREEN_INSET, h = (fit ? fit.h : 0.20) * LAPTOP_SCREEN_INSET;
       const screen = new THREE.Mesh(
         new THREE.PlaneGeometry(w, h),
         new THREE.MeshBasicMaterial({ map: this._loadTex("textures/hub_laptop_screen.jpg"), toneMapped: false }),
@@ -383,8 +416,9 @@ export class Hub {
       this.scene.add(screen);
       this._barProps.laptop_screen = screen;
       // The laptop itself is a clickable "upgrades" fixture: clicking it dollies
-      // the camera in and opens the black-market shop overlay.
-      this._registerInteractable(this._barProps.thinkpad, "upgrades", "Laptop — Black Market", 1.2);
+      // the camera in and opens the black-market shop overlay. Anchor floats the
+      // label above the open lid (like the wall phone's "Dial Code" label).
+      this._registerInteractable(this._barProps.thinkpad, "upgrades", "Black Market", 1.55);
     }
   }
 
@@ -602,11 +636,11 @@ export class Hub {
       this.scene.add(m);
       return m;
     };
-    // The large right-hand crate doubles as the clickable ARMORY (upgrades/arsenal).
-    const armory = place(3.9, 0.55, -4.7, 1.1);
+    // Stacked crates as set dressing. (The Black Market is the laptop now — the
+    // crate is no longer a separate upgrades entry point.)
+    place(3.9, 0.55, -4.7, 1.1);
     place(3.7, 1.45, -4.8, 0.7);
     place(-4.0, 0.5, -4.9, 1.0);
-    this._registerInteractable(armory, "upgrades", "Upgrades — Black Market", 1.15);
   }
 
   /**
@@ -1199,7 +1233,9 @@ export class Hub {
     this._ensureBarProps(); // make sure the laptop + its screen fit are placed
     const fit = this._laptopFit;
     this._zoomLookTo.copy(fit ? fit.center : new THREE.Vector3(0.40, 1.25, -2.13));
-    if (fit) this._zoomTo.copy(fit.center).addScaledVector(fit.normal, 0.62);
+    // ponytail: seated distance + screen inset are visual calibration knobs —
+    // pulled back from 0.62 so the laptop body frames the screen (see LAPTOP_*).
+    if (fit) this._zoomTo.copy(fit.center).addScaledVector(fit.normal, LAPTOP_VIEW_DIST);
     else this._zoomTo.set(0.55, 1.30, -1.52);
     this._zoomFrom.copy(this.camera.position);
     this._zoomLookFrom.copy(this._lookTarget);
@@ -1237,6 +1273,29 @@ export class Hub {
     this.camera.updateProjectionMatrix();
     const cb = this._restoreCb; this._restoreCb = null;
     if (cb) cb();
+  }
+
+  /** Show/hide the static "rootkit" screen texture. Hidden while the black-market
+   *  DOM panel is laid over the lid so the two don't both show through. */
+  setLaptopScreenVisible(v) {
+    const s = this._barProps && this._barProps.laptop_screen;
+    if (s) s.visible = v;
+  }
+
+  /**
+   * Project the fitted laptop-screen quad to a viewport CSS rect
+   * {left,top,width,height} in px, or null if the lid fit / window is absent. The
+   * black-market overlay lays itself over this so the UI reads as the ThinkPad's
+   * own display, with the 3D model framing it. ponytail: axis-aligned bbox of the
+   * projected corners — exact head-on (the dolly seats the camera on the screen
+   * normal); only an angled fit would need a CSS3D transform for crisp edges.
+   */
+  laptopScreenRect() {
+    const fit = this._laptopFit;
+    if (!fit || typeof window === "undefined") return null;
+    // Inset a hair inside the lid so the UI sits within the screen bezel, not over its edge.
+    const w = fit.w * LAPTOP_SCREEN_INSET, h = fit.h * LAPTOP_SCREEN_INSET;
+    return projectQuadRect(this.camera, fit.center, fit.quat, w, h, window.innerWidth, window.innerHeight);
   }
 
   /**
