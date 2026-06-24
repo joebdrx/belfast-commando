@@ -1090,9 +1090,9 @@ export class Level {
 
   /** Distant hazy hills ringing the quarter, far off on the horizon. */
   _buildBackdrop() {
-    // The Belfast city skyline (below) is the backdrop now; a couple of faint,
-    // far hills behind it just fill the lowest horizon gaps between city copies.
-    const baseR = Math.max(this.GRID_HALF_X, this.GRID_HALF_Z) + 150; // well beyond the skyline
+    // Faint, far hills form the horizon. (The old city-model skyline ring was
+    // removed — the boundary facades + fog carry the edge of the world now.)
+    const baseR = Math.max(this.GRID_HALF_X, this.GRID_HALF_Z) + 150;
     const n = 10;
     for (let i = 0; i < n; i++) {
       const a = (i / n) * Math.PI * 2;
@@ -1100,40 +1100,6 @@ export class Level {
       hill.scale.set(2.6, 0.5, 1);
       hill.position.set(Math.cos(a) * baseR, -16, Math.sin(a) * baseR);
       this.group.add(hill);
-    }
-    this._buildSkyline();
-  }
-
-  /**
-   * City skyline backdrop ringed around the map edges (Belfast city model).
-   * FOG-AFFECTED so the distant skyline dissolves into the uniform grey veil —
-   * no hard horizon edge. Each copy faces the map centre; sunk slightly to hide
-   * its base.
-   */
-  _buildSkyline() {
-    if (!this.assets) return; // each copy is a getModel probe; absent slug → no-op
-    // Distant HORIZON ring: pushed far past the playable grid so it can never
-    // interfere with the walkable area. Multiple copies of the same city model
-    // evenly ring the horizon; each is fog-affected so it fades into the grey,
-    // and frustum-culled so only the few in view ever render.
-    const RX = this.GRID_HALF_X + 150; // ≈181
-    const RZ = this.GRID_HALF_Z + 150; // ≈211
-    const COPIES = 8;
-    for (let i = 0; i < COPIES; i++) {
-      const a = (i / COPIES) * Math.PI * 2;
-      const px = Math.cos(a) * RX;
-      const pz = Math.sin(a) * RZ;
-      const m = this.assets.getModel("bldg_skyline");
-      if (!m) continue;
-      m.position.set(px, 6, pz); // raised so the city looms taller on the horizon
-      m.scale.multiplyScalar(1.35); // taller/more imposing skyline
-      m.rotation.y = Math.atan2(-px, -pz); // city facade faces the map centre
-      m.traverse((o) => {
-        if (!o.material) return;
-        const mats = Array.isArray(o.material) ? o.material : [o.material];
-        mats.forEach((mat) => { mat.fog = true; mat.needsUpdate = true; });
-      });
-      this.group.add(m);
     }
   }
 
