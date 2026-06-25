@@ -566,9 +566,17 @@ class Game {
     if (!died && !last) {
       actions.push({ label: "Next Operation", primary: true, onClick: () => this._handleResultsContinue() });
     }
+    if (died) {
+      // Retry the same sector immediately (the campaign position wasn't advanced).
+      actions.push({
+        label: "Retry Level",
+        primary: true,
+        onClick: () => this._deployWithLoading(this.levelManager.currentIndex, { video: false }),
+      });
+    }
     actions.push({
       label: "Return to Safehouse",
-      primary: died || last,
+      primary: last && !died, // on death, Retry is the primary action
       onClick: () => this._enterHub(),
     });
     this._resultsHasActions = this.hud.setOverlayActions(actions);

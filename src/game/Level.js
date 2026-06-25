@@ -22,6 +22,33 @@ export function clampInsideBounds(x, z, hx, hz, inset = 1.0) {
   };
 }
 
+/**
+ * One relaxation pass that pushes apart overlapping bodies in a roster of
+ * {x,z,r} so enemies fan out around the player instead of stacking into a single
+ * blob of meshes. Each overlapping pair splits the overlap evenly; coincident
+ * bodies get a deterministic golden-angle nudge (no NaN). Mutates in place.
+ * O(n²) over the small live roster; exported for unit testing.
+ */
+export function separateBodies(bodies) {
+  for (let i = 0; i < bodies.length; i++) {
+    const a = bodies[i];
+    for (let j = i + 1; j < bodies.length; j++) {
+      const b = bodies[j];
+      const dx = b.x - a.x, dz = b.z - a.z;
+      const min = a.r + b.r;
+      const d2 = dx * dx + dz * dz;
+      if (d2 >= min * min) continue;
+      let d = Math.sqrt(d2), ux, uz;
+      if (d > 1e-3) { ux = dx / d; uz = dz / d; }
+      else { const ang = i * 2.399963; ux = Math.cos(ang); uz = Math.sin(ang); d = 0; }
+      const push = (min - d) * 0.5; // split the overlap between the two
+      a.x -= ux * push; a.z -= uz * push;
+      b.x += ux * push; b.z += uz * push;
+    }
+  }
+  return bodies;
+}
+
 const _ray = new THREE.Ray();
 const _dir = new THREE.Vector3();
 const _hit = new THREE.Vector3();
@@ -1730,12 +1757,21 @@ export class Level {
       }
       if (ctx.state) ctx.state.emit("alarmRaised", {});
     }
-    for (const e of this.enemies) {
-      e.update(dt, ctx);
-      // Containment invariant: a live enemy may never end up outside the boundary
-      // wall (knockback tunnelling / hunting pathing could shove one past a thin
-      // wall → an unreachable, sector-blocking ghost). Clamp it back inside.
-      if (!e.dead && this._boundX) {
+    for (const e of this.enemies) e.update(dt, ctx);
+    // Enemy-enemy separation: push apart overlapping live enemies so they fan out
+    // around the player instead of stacking into one blob of meshes (no archetype
+    // steers away from its neighbours). Then re-apply the containment invariant:
+    // a live enemy may never sit outside the boundary wall (knockback / hunting
+    // pathing — or this very push — could otherwise leave an unreachable, sector-
+    // blocking ghost).
+    const live = this.enemies.filter((e) => !e.dead);
+    if (live.length > 1) {
+      const bodies = live.map((e) => ({ x: e.position.x, z: e.position.z, r: e.radius || 0.45 }));
+      separateBodies(bodies);
+      for (let i = 0; i < live.length; i++) { live[i].position.x = bodies[i].x; live[i].position.z = bodies[i].z; }
+    }
+    if (this._boundX) {
+      for (const e of live) {
         const c = clampInsideBounds(e.position.x, e.position.z, this._boundX, this._boundZ);
         e.position.x = c.x;
         e.position.z = c.z;
