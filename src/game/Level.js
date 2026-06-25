@@ -8,6 +8,20 @@ import FURNITURE from "../data/furniture.json";
 
 const BASE = import.meta.env.BASE_URL || "/";
 
+/**
+ * Clamp an XZ position inside the boundary-wall rectangle so an enemy can never
+ * sit outside the walled area (where the player can't reach it → an un-killable,
+ * sector-blocking ghost). hx/hz are the wall-centreline half-extents; `inset`
+ * keeps the body off the slab + radius. Exported for unit testing.
+ * @returns {{x:number, z:number}}
+ */
+export function clampInsideBounds(x, z, hx, hz, inset = 1.0) {
+  return {
+    x: Math.max(-hx + inset, Math.min(hx - inset, x)),
+    z: Math.max(-hz + inset, Math.min(hz - inset, z)),
+  };
+}
+
 const _ray = new THREE.Ray();
 const _dir = new THREE.Vector3();
 const _hit = new THREE.Vector3();
@@ -1111,6 +1125,9 @@ export class Level {
   _buildBoundary() {
     const BX = this.GRID_HALF_X + 12; // ~43 — just past the outer blocks
     const BZ = this.GRID_HALF_Z + 12; // ~73 — past the spawn approach (z≈68)
+    // Single source of truth for the walled play area — enemy containment clamps to this.
+    this._boundX = BX;
+    this._boundZ = BZ;
     const WH = 5; // visible cement wall height — buildings still tower above it
     const T = 0.6; // slab thickness
     const wall = this._materials.concrete;
@@ -1713,7 +1730,17 @@ export class Level {
       }
       if (ctx.state) ctx.state.emit("alarmRaised", {});
     }
-    for (const e of this.enemies) e.update(dt, ctx);
+    for (const e of this.enemies) {
+      e.update(dt, ctx);
+      // Containment invariant: a live enemy may never end up outside the boundary
+      // wall (knockback tunnelling / hunting pathing could shove one past a thin
+      // wall → an unreachable, sector-blocking ghost). Clamp it back inside.
+      if (!e.dead && this._boundX) {
+        const c = clampInsideBounds(e.position.x, e.position.z, this._boundX, this._boundZ);
+        e.position.x = c.x;
+        e.position.z = c.z;
+      }
+    }
     // Victims: tick then splice out any that have despawned off-screen.
     for (let i = this.victims.length - 1; i >= 0; i--) {
       const v = this.victims[i];
