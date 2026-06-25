@@ -11,16 +11,20 @@
  * uses). poll(dt) must be called each frame during live play.
  *
  *   Left stick   Move (push to rim = sprint)   Right stick  Look
- *   RT           Fire                          L3           Sprint (hold)
+ *   LT / L3      Sprint (hold)                 RT           Fire
  *   A            Jump                           B           Slide / crouch
  *   X            Reload                         Y           Kick
+ *   R3           Interact (E — free civilian)
  *   LB / RB      Prev / next weapon            Start        Pause
  *   Back/Share   Mute
+ *
+ * Transport-agnostic: wired or Bluetooth makes no difference — once the OS pairs
+ * the pad, the browser presents it through the same Gamepad API "standard" map.
  */
 import { joystickToKeys } from "./TouchControls.js";
 
 // Standard-mapping button indices (Xbox and DualShock 4 both report these).
-const BTN = { A: 0, B: 1, X: 2, Y: 3, LB: 4, RB: 5, RT: 7, BACK: 8, START: 9, L3: 10 };
+const BTN = { A: 0, B: 1, X: 2, Y: 3, LB: 4, RB: 5, LT: 6, RT: 7, BACK: 8, START: 9, L3: 10, R3: 11 };
 
 // Calibration knobs (tune to taste; the physical feel can't be derived on paper).
 const LOOK_DEADZONE = 0.18; // right-stick centre slop
@@ -40,6 +44,7 @@ export class Gamepad {
     this._active = false;
     this._prev = []; // previous per-button pressed states (rising/falling edges)
     this._fireHeld = false;
+    this._sprintActive = false; // LT/L3 sprint state (LT is analog, edge-detected here)
     this._wasMoving = false; // so a centred stick doesn't stomp keyboard WASD
   }
 
@@ -116,7 +121,13 @@ export class Gamepad {
     if (rising(BTN.A)) this._call("onKeyDown", "Space"); if (falling(BTN.A)) this._call("onKeyUp", "Space");
     if (rising(BTN.B)) this._call("onKeyDown", "ControlLeft"); if (falling(BTN.B)) this._call("onKeyUp", "ControlLeft");
     if (rising(BTN.Y)) this._call("onKeyDown", "KeyF"); if (falling(BTN.Y)) this._call("onKeyUp", "KeyF");
-    if (rising(BTN.L3)) this._call("onSprintDown"); if (falling(BTN.L3)) this._call("onSprintUp");
+    if (rising(BTN.R3)) this._call("onKeyDown", "KeyE"); if (falling(BTN.R3)) this._call("onKeyUp", "KeyE");
+
+    // Sprint: analog left trigger OR L3 click (edge-detected together).
+    const lt = pad.buttons[BTN.LT] ? pad.buttons[BTN.LT].value : 0;
+    const sprint = lt >= TRIGGER_THRESH || cur[BTN.L3];
+    if (sprint && !this._sprintActive) { this._sprintActive = true; this._call("onSprintDown"); }
+    else if (!sprint && this._sprintActive) { this._sprintActive = false; this._call("onSprintUp"); }
 
     // One-shot actions on the rising edge.
     if (rising(BTN.X)) this._call("onReload");
@@ -135,7 +146,8 @@ export class Gamepad {
     this._call("onKeyUp", "Space");
     this._call("onKeyUp", "ControlLeft");
     this._call("onKeyUp", "KeyF");
-    this._call("onSprintUp");
+    this._call("onKeyUp", "KeyE");
+    if (this._sprintActive) { this._sprintActive = false; this._call("onSprintUp"); }
     this._prev = [];
   }
 }

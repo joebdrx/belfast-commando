@@ -91,6 +91,22 @@ describe("Gamepad.poll", () => {
     expect(names()).not.toContain("onMove");
   });
 
+  it("sprints on the analog left trigger and releases", () => {
+    current = mkpad([0, 0, 0, 0], [], { 6: 0.7 }); // LT pulled past threshold
+    gp.poll(1 / 60);
+    expect(names()).toContain("onSprintDown");
+    calls = [];
+    current = mkpad(); // released
+    gp.poll(1 / 60);
+    expect(names()).toContain("onSprintUp");
+  });
+
+  it("interacts (KeyE) on R3 press", () => {
+    current = mkpad([0, 0, 0, 0], [11]); // R3 (right stick click)
+    gp.poll(1 / 60);
+    expect(calls).toContainEqual(["onKeyDown", "KeyE"]);
+  });
+
   it("releases held fire when deactivated", () => {
     current = mkpad([0, 0, 0, 0], [], { 7: 0.9 });
     gp.poll(1 / 60);
