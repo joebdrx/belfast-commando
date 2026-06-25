@@ -25,6 +25,7 @@ import { Abilities } from "./game/Abilities.js";
 import { Decals } from "./game/Decals.js";
 import { LoadingScreen } from "./game/LoadingScreen.js";
 import { TouchControls, isTouchDevice } from "./game/TouchControls.js";
+import { Gamepad } from "./game/Gamepad.js";
 
 // Per-pixel look speed for the on-screen touch pad (rad/px). Touch drags are
 // coarser than mouse motion, so this runs a touch hotter than the mouse default.
@@ -123,6 +124,7 @@ class Game {
     this._lastCombo = 0;
     this._resultsDied = false;
     this._muted = false;
+    this._sprintHeld = false; // sprint button/L3 held (touch or gamepad) — shared by both
 
     // Shared context passed to every system each frame. `state`/`bus`/`juice`/
     // `progression` are the new fields the extended combat code reads (guarded).
@@ -277,6 +279,7 @@ class Game {
 
     this._bindUI();
     this._initTouchControls();
+    this._initGamepad();
     window.addEventListener("resize", () => {
       this.assets.retro && this.assets.retro.setViewport(window.innerWidth, window.innerHeight);
     });
@@ -650,15 +653,18 @@ class Game {
     });
 
     window.addEventListener("keydown", (e) => {
-      if (e.code === "KeyM") {
-        this._muted = !this._muted;
-        this.audio.setMuted(this._muted);
-        const s = this.state.getProgression().settings;
-        if (s) s.muted = this._muted;
-        this.progression.save();
-        this.hud.setObjective(this._muted ? "Muted 🔇" : "Eliminate all invaders");
-      }
+      if (e.code === "KeyM") this._toggleMute();
     });
+  }
+
+  /** Toggle mute + persist (shared by the M key and the gamepad Back/Share button). */
+  _toggleMute() {
+    this._muted = !this._muted;
+    this.audio.setMuted(this._muted);
+    const s = this.state.getProgression().settings;
+    if (s) s.muted = this._muted;
+    this.progression.save();
+    this.hud.setObjective(this._muted ? "Muted 🔇" : "Eliminate all invaders");
   }
 
   _handlePrimaryClick() {
@@ -696,51 +702,62 @@ class Game {
   }
 
   /** Build + wire the on-screen touch controls. No-op (null) on desktop. */
+  /** Intent handlers shared by touch + gamepad (they report the same actions). */
+  _inputHandlers() {
+    return {
+      onLook: (dx, dy) => this.player.applyLook(dx, dy, TOUCH_LOOK_SENS),
+      onMove: (keys) => {
+        for (const code in keys) this.player.keys[code] = keys[code];
+        if (this._sprintHeld) this.player.keys["ShiftLeft"] = true;
+      },
+      onKeyDown: (code) => { this.player.keys[code] = true; },
+      onKeyUp: (code) => { this.player.keys[code] = false; },
+      onFireDown: () => {
+        this.weapon.triggerHeld = true;
+        this.weapon.tryFire();
+      },
+      onFireUp: () => { this.weapon.triggerHeld = false; },
+      onReload: () => this.weapon.reload(),
+      onSwitch: (dir = 1) => this.weapon.cycleWeapon(dir),
+      onPause: () => this._pauseGame(),
+      onMute: () => this._toggleMute(),
+      onSprintDown: () => {
+        this._sprintHeld = true;
+        this.player.keys["ShiftLeft"] = true;
+      },
+      onSprintUp: () => {
+        this._sprintHeld = false;
+        this.player.keys["ShiftLeft"] = false;
+      },
+    };
+  }
+
   _initTouchControls() {
     if (!this.ctx.touch) {
       this.touchControls = null;
       return;
     }
-    this._touchSprintBtn = false;
     this.touchControls = new TouchControls();
-    this.touchControls.setHandlers({
-      onLook: (dx, dy) => this.player.applyLook(dx, dy, TOUCH_LOOK_SENS),
-      onMove: (keys) => {
-        for (const code in keys) this.player.keys[code] = keys[code];
-        if (this._touchSprintBtn) this.player.keys["ShiftLeft"] = true;
-      },
-      onKeyDown: (code) => {
-        this.player.keys[code] = true;
-      },
-      onKeyUp: (code) => {
-        this.player.keys[code] = false;
-      },
-      onFireDown: () => {
-        this.weapon.triggerHeld = true;
-        this.weapon.tryFire();
-      },
-      onFireUp: () => {
-        this.weapon.triggerHeld = false;
-      },
-      onReload: () => this.weapon.reload(),
-      onSwitch: () => this.weapon.cycleWeapon(1),
-      onPause: () => this._pauseGame(),
-      onSprintDown: () => {
-        this._touchSprintBtn = true;
-        this.player.keys["ShiftLeft"] = true;
-      },
-      onSprintUp: () => {
-        this._touchSprintBtn = false;
-        this.player.keys["ShiftLeft"] = false;
-      },
+    // Gamepad emits radian look deltas; touch emits pixels needing TOUCH_LOOK_SENS.
+    this.touchControls.setHandlers(this._inputHandlers());
+    this._syncTouchControls();
+  }
+
+  /** Xbox / PS4 controller support (PC). Polled each frame in the LEVEL loop. */
+  _initGamepad() {
+    this.gamepad = new Gamepad();
+    this.gamepad.setHandlers({
+      ...this._inputHandlers(),
+      onLook: (dx, dy) => this.player.applyLook(dx, dy, 1), // gamepad pre-scales to radians
     });
     this._syncTouchControls();
   }
 
-  /** Show the touch controls only during live LEVEL play. No-op without touch. */
+  /** Gate the on-screen touch controls + gamepad polling to live LEVEL play. */
   _syncTouchControls() {
-    if (!this.touchControls) return;
-    this.touchControls.setActive(this.phase === "LEVEL" && !this.paused && !this._loadingActive);
+    const live = this.phase === "LEVEL" && !this.paused && !this._loadingActive;
+    if (this.gamepad) this.gamepad.setActive(live);
+    if (this.touchControls) this.touchControls.setActive(live);
   }
 
   /** Explicit pause (touch Pause button — mobile has no Esc / pointer-lock loss). */
@@ -755,7 +772,7 @@ class Game {
 
   /** Resume from the pause menu. Desktop re-locks the pointer; touch re-activates. */
   _resume() {
-    this._touchSprintBtn = false;
+    this._sprintHeld = false;
     if (this.ctx.touch) {
       this.paused = false;
       this.state.setPhase("LEVEL");
@@ -1024,6 +1041,7 @@ class Game {
     this.ctx.time = this.time;
 
     if (this.phase === "LEVEL" && this.ctx.active) {
+      this.gamepad?.poll(realDt); // controller look/move/fire — applied before player.update
       this._update(dt);
       // Apply shake AFTER player.update (Player._applyCamera rewrites the camera
       // every frame, so the offset must be layered on top here, post-update).
