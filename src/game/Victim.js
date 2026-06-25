@@ -261,7 +261,7 @@ export class Victim {
     if (inRange && !this._promptActive) {
       this._promptActive = true;
       if (ctx.hud) {
-        ctx.hud.setInteractPrompt("Press E / tap to free the civilian");
+        ctx.hud.setInteractPrompt("E / RS / Tap to Save Civilian");
         ctx.hud.setInteractCallback(() => this._rescue(ctx));
       }
     } else if (!inRange && this._promptActive) {

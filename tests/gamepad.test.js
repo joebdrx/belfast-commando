@@ -82,6 +82,7 @@ describe("Gamepad.poll", () => {
     gp.poll(1 / 60);
     let mv = calls.find((c) => c[0] === "onMove");
     expect(mv[1].KeyW).toBe(true);
+    expect(mv[1].ShiftLeft).toBe(false); // no auto-sprint from stick deflection
     calls = [];
     current = mkpad(); // centred → one release emit
     gp.poll(1 / 60);
@@ -91,12 +92,15 @@ describe("Gamepad.poll", () => {
     expect(names()).not.toContain("onMove");
   });
 
-  it("sprints on the analog left trigger and releases", () => {
-    current = mkpad([0, 0, 0, 0], [], { 6: 0.7 }); // LT pulled past threshold
+  it("sprints on the LS (L3) click and releases — not on stick deflection", () => {
+    current = mkpad([0, -1, 0, 0]); // moving at full deflection, L3 NOT pressed
+    gp.poll(1 / 60);
+    expect(names()).not.toContain("onSprintDown"); // no auto-sprint
+    current = mkpad([0, -1, 0, 0], [10]); // now LS (L3) clicked
     gp.poll(1 / 60);
     expect(names()).toContain("onSprintDown");
     calls = [];
-    current = mkpad(); // released
+    current = mkpad([0, -1, 0, 0]); // L3 released (still moving)
     gp.poll(1 / 60);
     expect(names()).toContain("onSprintUp");
   });

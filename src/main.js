@@ -761,6 +761,27 @@ class Game {
     this._syncTouchControls();
   }
 
+  /**
+   * The DOM menu currently open to controller navigation, or null. Checked each
+   * frame; the gamepad drives the returned root's buttons. Order = topmost first.
+   * @returns {{root: HTMLElement, onBack: (()=>void)|null}|null}
+   */
+  _activeMenuNav() {
+    if (this.shop && this.shop.isOpen() && this.shop.root) {
+      return { root: this.shop.root, onBack: () => this.shop.close() };
+    }
+    if (this.phase === "LEVEL" && this.paused && this.pauseMenu && this.pauseMenu.root) {
+      return { root: this.pauseMenu.root, onBack: () => this._resume() };
+    }
+    if (this.phase === "RESULTS" && this.hud.overlay && !this.hud.overlay.classList.contains("hidden")) {
+      return { root: this.hud.overlay, onBack: null }; // explicit choices; no "back"
+    }
+    if (this.phase === "HUB" && this.menu && this.menu.root) {
+      return { root: this.menu.root, onBack: () => this.menu.show() }; // B → back to main view
+    }
+    return null;
+  }
+
   /** Gate the on-screen touch controls + gamepad polling to live LEVEL play. */
   _syncTouchControls() {
     const live = this.phase === "LEVEL" && !this.paused && !this._loadingActive;
@@ -1068,6 +1089,14 @@ class Game {
     } else if (this.phase === "HUB") {
       this.hub.update(realDt);
       this._updateHubLabels();
+    }
+
+    // Controller menu navigation: whenever a DOM menu is up (pause / safehouse /
+    // laptop shop / results), let the gamepad drive its buttons. Mutually
+    // exclusive with the gameplay poll above (that only runs in live LEVEL play).
+    if (this.gamepad && !this._loadingActive) {
+      const nav = this._activeMenuNav();
+      if (nav) this.gamepad.pollMenu(nav.root, nav.onBack);
     }
 
     this.hud.update(dt);

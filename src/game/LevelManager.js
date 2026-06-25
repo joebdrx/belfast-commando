@@ -206,6 +206,7 @@ export class LevelManager {
     if (!this.armed && this.level.enemiesRemaining === 0) {
       this.armed = true;
       if (this.marker) this.marker.visible = true;
+      if (ctx && ctx.hud) ctx.hud.showTitleCard("Invaders Rooted Out", "Go to extraction beacon");
       this.state.emit("levelClear", { stats: this.state.getState().run.stats });
       this.state.emit("extractReady", {});
     }
