@@ -5,6 +5,8 @@ import DIALOGUE from "../data/dialogue.json";
 import LEVELS from "../data/levels.json";
 import { controlsGridHTML } from "./controls.js";
 import { isTouchDevice } from "./TouchControls.js";
+import { createEl } from "../utils/dom.js";
+import { BASE, SENS_MIN, SENS_MAX, SENS_STEP, QUALITY_OPTIONS, DEFAULT_SETTINGS } from "../utils/constants.js";
 
 /**
  * Build a fullscreen toggle button styled to match the game's button conventions.
@@ -57,7 +59,6 @@ function buildFullscreenButton(cls) {
  */
 
 const PREFIX = "bc-menu-";
-const BASE = import.meta.env.BASE_URL || "/";
 
 /**
  * Desktop (Tauri) build download. The native installers are published to the
@@ -70,20 +71,6 @@ const DESKTOP_RELEASES_URL = "https://github.com/joebdrx/belfast-commando/releas
 /** Static lookups so the Upgrades panel can backfill any field the provider omits. */
 const UPGRADES_BY_ID = Object.fromEntries(UPGRADES.map((u) => [u.id, u]));
 const BOOTS_BY_ID = Object.fromEntries(BOOTS.map((b) => [b.id, b]));
-
-/**
- * Settings bounds/options — kept in lock-step with PauseMenu so the safehouse and
- * the in-operation pause panel edit the same `progression.settings` identically.
- */
-const SENS_MIN = 0.0008;
-const SENS_MAX = 0.005;
-const SENS_STEP = 0.0002;
-const QUALITY_OPTIONS = [
-  { value: "low", label: "Low" },
-  { value: "medium", label: "Medium" },
-  { value: "high", label: "High" },
-];
-const DEFAULT_SETTINGS = { sensitivity: 0.0022, quality: "high", muted: false };
 
 export class Menu {
   constructor() {
@@ -129,6 +116,25 @@ export class Menu {
         position: absolute; top: 22px; right: 30px; z-index: 31;
         width: 300px; max-width: 28vw; height: auto; pointer-events: none;
         filter: drop-shadow(0 3px 12px rgba(0,0,0,0.85));
+      }
+      /* Steam wishlist teaser, bottom-right corner (mirrors the logo's framing). */
+      .${PREFIX}steam {
+        position: absolute; bottom: 26px; right: 30px; z-index: 31;
+        display: flex; align-items: center; gap: 10px;
+        padding: 9px 16px 9px 10px;
+        background: rgba(8,9,11,0.82);
+        border: 1px solid rgba(255,255,255,0.14);
+        border-radius: 8px;
+        pointer-events: none;
+        filter: drop-shadow(0 3px 12px rgba(0,0,0,0.65));
+      }
+      .${PREFIX}steam img {
+        width: 26px; height: 26px; border-radius: 50%;
+        box-shadow: 0 0 0 1px rgba(255,255,255,0.25);
+      }
+      .${PREFIX}steam span {
+        font-size: 12px; font-weight: 800; letter-spacing: 0.10em;
+        text-transform: uppercase; color: #f0ede8; white-space: nowrap;
       }
       /* LEFT vertical command panel; the right ~60% is transparent so the hub
          hero model reads behind it (CoD-lobby framing). */
@@ -387,10 +393,7 @@ export class Menu {
 
   /** Helper: create an element with optional class + text/html. */
   _el(tag, cls, text) {
-    const el = document.createElement(tag);
-    if (cls) el.className = cls;
-    if (text != null) el.textContent = text;
-    return el;
+    return createEl(tag, cls, text);
   }
 
   /** Build the root, left panel, title, RP readout, the action list and the sub-view host. */
@@ -399,9 +402,18 @@ export class Menu {
 
     // Game logo, top-right corner.
     const logo = this._el("img", `${PREFIX}logo`);
-    logo.src = `${BASE}ui/bs-logo.png`;
-    logo.alt = "Belfast Survivor";
+    logo.src = `${BASE}ui/bs-demo-logo.png`;
+    logo.alt = "Belfast Survivor Demo";
     this.root.appendChild(logo);
+
+    // Steam wishlist teaser, bottom-right corner.
+    const steamBadge = this._el("div", `${PREFIX}steam`);
+    const steamIcon = this._el("img");
+    steamIcon.src = `${BASE}ui/steam-logo.webp`;
+    steamIcon.alt = "Steam";
+    steamBadge.appendChild(steamIcon);
+    steamBadge.appendChild(this._el("span", null, "Coming Soon to Steam"));
+    this.root.appendChild(steamBadge);
 
     // The left command panel; the right side of the root is transparent so the
     // hub hero model renders behind the menu.
