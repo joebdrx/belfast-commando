@@ -56,13 +56,33 @@ const SLOT_TO_TEMPLATE = [0, null, 1, 2];
  * 4-slot pattern by grid position + sector `index`; the slot that previously
  * placed the destroyed building now yields an interior building in its place, so
  * each sector has the two anchored interiors plus one rotating breachable one.
+ *
+ * An optional sector `profile` (see SectorProfile.js) bends the breach-room
+ * density: `interiorBias > 0` promotes the next rotation slot to a breach room
+ * (denser maze, e.g. Falls Road / Ardoyne); `interiorBias < 0` reverts the
+ * rotating interior to a solid terrace (longer sightlines, e.g. Shankill / Docks).
+ * With no profile the bias is 0 — identical to the original behaviour.
  */
-export function blockPlan(col, row, index) {
+export function blockPlan(col, row, index, profile = null) {
+  // A sector may swap one block for a bespoke archetype (open arena / container
+  // yard). This wins over the interior/model rotation for that one block.
+  const special = profile && profile.special;
+  if (special && special.col === col && special.row === row) {
+    return { kind: special.kind };
+  }
   if (INTERIOR_BLOCKS.some((b) => b.col === col && b.row === row)) {
     return { kind: "interior" };
   }
   const pos = col * 2 + row; // 0..5 across the 3×2 grid
   const slot = (pos + index) % 4;
-  if (slot === COLLAPSED_SLOT) return { kind: "interior" };
+  const bias = profile ? (profile.interiorBias | 0) : 0;
+  if (slot === COLLAPSED_SLOT) {
+    // The rotating breach-room slot. A negative bias turns it back into a solid
+    // terrace; pick a template deterministically from the grid position.
+    if (bias < 0) return { kind: "model", template: MODEL_TEMPLATES[pos % MODEL_TEMPLATES.length] };
+    return { kind: "interior" };
+  }
+  // A positive bias promotes the slot after the breach slot into a second interior.
+  if (bias > 0 && slot === (COLLAPSED_SLOT + 1) % 4) return { kind: "interior" };
   return { kind: "model", template: MODEL_TEMPLATES[SLOT_TO_TEMPLATE[slot]] };
 }

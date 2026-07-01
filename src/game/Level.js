@@ -2,11 +2,11 @@ import * as THREE from "three";
 import { Enemy } from "./Enemy.js";
 import { EnemyDirector } from "./EnemyDirector.js";
 import { footprintCollider, blockPlan } from "./BuildingLayout.js";
+import { sectorProfile } from "./SectorProfile.js";
 import { Victim } from "./Victim.js";
 import { buildFacade } from "./BuildingFacade.js";
 import FURNITURE from "../data/furniture.json";
-
-const BASE = import.meta.env.BASE_URL || "/";
+import { BASE } from "../utils/constants.js";
 
 /**
  * Clamp an XZ position inside the boundary-wall rectangle so an enemy can never
@@ -275,6 +275,10 @@ export class Level {
     this.GRID_HALF_X = this.PITCH_X + this.BLOCK_W / 2; // 31
     this.GRID_HALF_Z = this.PITCH_Z / 2 + this.BLOCK_L / 2; // 61
 
+    // Per-sector layout profile: bends this one generator into a distinct "layout
+    // problem" per sector (breach density, loot mix, street pressure).
+    this.profile = sectorProfile(this.index);
+
     this._build();
   }
 
@@ -525,10 +529,16 @@ export class Level {
     // breach. Street enemies (added below) guarantee a fight regardless.
     COORDS_Z.forEach((cz, row) => {
       COORDS_X.forEach((cx, col) => {
-        const plan = blockPlan(col, row, this.index);
+        const plan = blockPlan(col, row, this.index, this.profile);
         if (plan.kind === "interior") {
-          const enemyCount = 2 + (rng() < 0.5 ? 1 : 0);
+          const enemyCount = this.profile.garrisonMin + (rng() < 0.5 ? this.profile.garrisonVar : 0);
           this._buildBlock(cx, cz, enemyCount, rng);
+        } else if (plan.kind === "arena") {
+          this._buildArenaBlock(cx, cz, rng);
+        } else if (plan.kind === "yard") {
+          this._buildYardBlock(cx, cz, rng);
+        } else if (plan.kind === "tower") {
+          this._buildTower(cx, cz);
         } else {
           this._buildModelBlock(cx, cz, plan.template, rng);
         }
@@ -548,13 +558,14 @@ export class Level {
     this._buildStreetLamps();
 
     // --- Street cover: crates + explosive barrels in the open lanes. ------
-    const coverCount = 6 + this.index * 2;
+    // The crate:barrel ratio is per-sector (Docks = barrel-dense for chains).
+    const coverCount = 6 + this.index * 2 + this.profile.coverBonus;
     let placed = 0;
     for (let guard = 0; placed < coverCount && guard < coverCount * 20; guard++) {
       const x = (rng() - 0.5) * GRID_HALF_X * 2;
       const z = (rng() - 0.5) * GRID_HALF_Z * 2;
       if (!this._inStreet(x, z)) continue;
-      if (rng() < 0.5) {
+      if (rng() < this.profile.crateRatio) {
         this._addCrate(x, z, rng);
       } else {
         this._addBarrel(x, z);
@@ -567,7 +578,7 @@ export class Level {
     this._buildCar(-PITCH_X / 2, 0);
 
     // --- Street enemies patrolling the open grid. -------------------------
-    const streetEnemies = 12 + this.index * 3;
+    const streetEnemies = 12 + this.index * 3 + this.profile.streetEnemyBonus;
     let spawned = 0;
     for (let guard = 0; spawned < streetEnemies && guard < streetEnemies * 30; guard++) {
       const x = (rng() - 0.5) * GRID_HALF_X * 2;
@@ -891,6 +902,160 @@ export class Level {
     const box = footprintCollider(cx, cz, this.BLOCK_W, h, this.BLOCK_L);
     this.colliders.push(box);
     this.losBlockers.push(box);
+  }
+
+  /**
+   * Open market square (The Markets). A WALKABLE block — no footprint collider —
+   * dressed with low market stalls (shoot/kick-over cover, no LOS block), a
+   * couple of combo toys (barrel + crate), and a small open-stall garrison. This
+   * is the sector's central combat hub: enemies on a single open plane the player
+   * can chain across. Built directly (street placement skips block footprints).
+   */
+  _buildArenaBlock(cx, cz, rng) {
+    const halfL = this.BLOCK_L / 2;
+    // Cobbled square apron (visual only, walk-over).
+    const pave = new THREE.Mesh(
+      new THREE.BoxGeometry(this.BLOCK_W + 3, 0.12, this.BLOCK_L + 3),
+      this._materials.pavement,
+    );
+    pave.position.set(cx, 0.06, cz);
+    this.group.add(pave);
+
+    const stallMat = this._materials.crate;
+    const canopyMats = [0x8a3b3b, 0x3b5a8a, 0x6a6a3b].map(
+      (c) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.9 }),
+    );
+    // 4 stalls down the long axis, alternating X side → a weaving central lane.
+    const stalls = 4;
+    for (let i = 0; i < stalls; i++) {
+      const t = (i + 0.5) / stalls;
+      const sz = cz - halfL + t * this.BLOCK_L;
+      const side = i % 2 === 0 ? -1 : 1;
+      const sx = cx + side * 3.2;
+      // Counter: low (1.0m) cover you can shoot/kick over (no LOS block).
+      this._box(2.6, 1.0, 1.2, stallMat, sx, 0.5, sz, { collider: true, los: false });
+      // Canopy: raised coloured awning (visual only — readable market silhouette).
+      const canopy = new THREE.Mesh(
+        new THREE.BoxGeometry(3.0, 0.12, 1.8),
+        canopyMats[i % canopyMats.length],
+      );
+      canopy.position.set(sx, 2.3, sz);
+      canopy.rotation.x = side * 0.12;
+      this.group.add(canopy);
+    }
+    // Combo toys.
+    this._addBarrel(cx + 1.0, cz - halfL * 0.4);
+    this._addCrate(cx - 1.0, cz + halfL * 0.5, rng);
+    // Open-stall garrison, kept to the clear central lane (away from stalls at ±3.2).
+    const garrison = this.profile.garrisonMin + (rng() < 0.5 ? this.profile.garrisonVar : 0);
+    for (let i = 0; i < garrison; i++) {
+      const ez = cz + (rng() - 0.5) * this.BLOCK_L * 0.7;
+      this._addEnemy(new THREE.Vector3(cx + (rng() - 0.5) * 3, 0, ez), {});
+    }
+  }
+
+  /**
+   * Container yard (The Docks). A WALKABLE block — no footprint collider — packed
+   * with shipping containers (tall cover + LOS blockers staggered into a maze of
+   * lanes) and barrels positioned to chain. Medium-range industrial combat.
+   *
+   * Verticality (standing on stacked containers) is intentionally out of scope:
+   * the player controller only grounds at y=0, so containers are single-height
+   * cover, not platforms. Container-top routes need player Y-on-box support first.
+   */
+  _buildYardBlock(cx, cz, rng) {
+    const halfL = this.BLOCK_L / 2;
+    // Concrete dock apron.
+    const pave = new THREE.Mesh(
+      new THREE.BoxGeometry(this.BLOCK_W + 3, 0.12, this.BLOCK_L + 3),
+      this._materials.concrete,
+    );
+    pave.position.set(cx, 0.06, cz);
+    this.group.add(pave);
+
+    const containerColors = [0xb5532a, 0x2a6b8a, 0x3f7a45, 0x9a8a2a, 0x6a4a8a];
+    // Staggered containers down the block, alternating side → walkable maze lanes.
+    const rows = 5;
+    for (let i = 0; i < rows; i++) {
+      const t = (i + 0.5) / rows;
+      const z = cz - halfL + t * this.BLOCK_L;
+      const side = i % 2 === 0 ? -1 : 1;
+      const x = cx + side * 3.0;
+      const h = 2.4 + (rng() < 0.4 ? 0.6 : 0); // slight height variety for silhouette
+      const mat = new THREE.MeshStandardMaterial({
+        color: containerColors[Math.floor(rng() * containerColors.length)],
+        roughness: 0.85, metalness: 0.2,
+      });
+      // Container: tall cover + LOS blocker. Long axis (6m) runs along Z.
+      this._box(2.4, h, 6.0, mat, x, h / 2, z, { collider: true, los: true });
+    }
+    // Mountable vantage: a 1.2m loading step beside a 2.4m platform, in the clear
+    // gap between two container rows. Hop step → platform to stand at maze-roof
+    // height for a sightline / alternate angle. (Reachable: jump apex ~1.56m.)
+    const platZ = cz - 16.8;
+    this._box(1.4, 1.2, 1.4, this._materials.crate, cx - 1.6, 0.6, platZ, { collider: true, los: false });
+    this._box(2.2, 2.4, 2.2, new THREE.MeshStandardMaterial({ color: 0x4a5a66, roughness: 0.8, metalness: 0.3 }), cx + 0.3, 1.2, platZ, { collider: true, los: true });
+
+    // Two barrels ~3m apart in the clear centre lane so a kick chains them.
+    this._addBarrel(cx - 0.5, cz - 1.5);
+    this._addBarrel(cx + 0.5, cz + 1.5);
+    this._addCrate(cx, cz + halfL * 0.6, rng);
+    // Medium-range garrison patrolling the central lane (kept off the vantage).
+    const garrison = this.profile.garrisonMin + (rng() < 0.5 ? this.profile.garrisonVar : 0);
+    for (let i = 0; i < garrison; i++) {
+      const ex = cx + (rng() - 0.5) * 2;
+      const ez = cz + (rng() - 0.5) * this.BLOCK_L * 0.7;
+      if (Math.hypot(ex - cx, ez - platZ) < 3.5) continue; // not inside the vantage stack
+      this._addEnemy(new THREE.Vector3(ex, 0, ez), {});
+    }
+  }
+
+  /**
+   * Divis Tower — the vertical finale. A terraced tower the player CLIMBS to a
+   * rooftop extraction (beacon authored at the roof in levels.json + the
+   * LevelManager height gate). Concentric shrinking solid tiers rise 1.3m each —
+   * jump-reachable per the verticalSupport apex (~1.56m) — so each tier's exposed
+   * top forms a walkable ledge ring the player ascends.
+   *
+   * The garrison defends from the GROUND/plaza: enemies hard-clamp to y=0
+   * (Enemy.js) so they can't hold ledges. This is therefore a "climb to the roof
+   * under fire from below" finale; true per-floor ledge ambushes need enemy
+   * verticality (a later AI change). Civilians come from the normal _spawnVictims
+   * pass. No full-footprint collider — the tiers ARE the collision.
+   */
+  _buildTower(cx, cz) {
+    const tops = [1.3, 2.6, 3.9, 5.2];     // ledge-ring heights; last = rooftop
+    const widths = [14, 10.5, 7, 3.5];      // shrinking → 1.75m walkable ring per tier
+    const mats = [this._materials.concrete, this._materials.brick];
+    let prevTop = 0;
+    for (let t = 0; t < tops.length; t++) {
+      const h = tops[t] - prevTop;          // this tier's box height (1.3)
+      this._box(widths[t], h, widths[t], mats[t % mats.length], cx, prevTop + h / 2, cz, { collider: true, los: true });
+      prevTop = tops[t];
+    }
+    // Distinct rooftop pad under the extraction beacon.
+    const roofY = tops[tops.length - 1];
+    const rw = widths[widths.length - 1] + 0.4;
+    const pad = new THREE.Mesh(new THREE.BoxGeometry(rw, 0.12, rw), this._materials.roof);
+    pad.position.set(cx, roofY + 0.06, cz);
+    this.group.add(pad);
+
+    // Ground garrison ringed in the plaza, clear of the tower base footprint.
+    const rad = widths[0] / 2 + 3.5;        // outside the base (±7) → in the surrounding street
+    const garrison = 3 + this.profile.garrisonMin;
+    for (let i = 0; i < garrison; i++) {
+      const a = (i / garrison) * Math.PI * 2;
+      this._addEnemy(new THREE.Vector3(cx + Math.cos(a) * rad, 0, cz + Math.sin(a) * rad), {});
+    }
+    // Ledge ambushers: one grunt holds each tier ring (y = ledge top), idling in
+    // place until the player climbs into view, then engaging — floor-by-floor.
+    // Now possible because enemies rest on box tops (Enemy vertical support). On
+    // the alarm they hunt and spill off the ledges down toward the player.
+    for (let t = 0; t < tops.length - 1; t++) { // tiers 0..2 have an exposed ring; the top is the roof pad
+      const ringR = (widths[t] + widths[t + 1]) / 4; // midpoint of the exposed ledge ring
+      const a = Math.PI * (0.25 + t * 0.6);
+      this._addEnemy(new THREE.Vector3(cx + Math.cos(a) * ringR, tops[t], cz + Math.sin(a) * ringR), { archetype: "grunt" });
+    }
   }
 
   /**

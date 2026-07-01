@@ -20,6 +20,15 @@ export function computeRefund(magSize, fraction = 0.15) {
   return Math.max(1, Math.floor(magSize * fraction));
 }
 
+/**
+ * Kick Master multiplier from its resolved upgrade effect value
+ * (`getUpgradeEffectValue("kick_master")` = perLevel * level). Scales kick
+ * range, knockback and damage. 1.0 when unowned; clamped non-negative. Pure.
+ */
+export function kickPowerMul(effectValue = 0) {
+  return 1 + Math.max(0, effectValue);
+}
+
 const ADRENALINE_SPEED_MUL = 1.25;
 const POINT_BLANK = 2.2;
 const _dir = new THREE.Vector3();

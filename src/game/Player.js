@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { DEFAULT_SETTINGS } from "../utils/constants.js";
 
 const EYE_HEIGHT = 1.7;
 const SLIDE_HEIGHT = 0.95;
@@ -40,6 +41,47 @@ const _forward = new THREE.Vector3();
 const _right = new THREE.Vector3();
 const _wish = new THREE.Vector3();
 const _tmp = new THREE.Vector3();
+const _euler = new THREE.Euler();
+
+const LAND_TOL = 0.01; // feet may be a hair below a box top and still land on it
+
+/**
+ * Vertical collision resolve. Finds the highest support surface under the player's
+ * feet — the world floor (y=0) or the top of any AABB they're standing/landing on
+ * — and the head-bump ceiling when rising into a box from below. Pure: takes the
+ * pre/post-integration vertical state and returns the corrected one.
+ *
+ * Support only latches a box when the feet were already at/above its top
+ * (`prevY >= top`), so at ground level no box ever yanks the player upward — the
+ * street plays exactly as before; box tops only matter once you've jumped onto one.
+ *
+ * @param {THREE.Box3[]} boxes  active movement colliders
+ * @param {number} px @param {number} pz  player horizontal (feet) position
+ * @param {number} prevY  feet Y before this frame's vertical integration
+ * @param {number} posY   feet Y after integration
+ * @param {number} vy     vertical velocity
+ * @param {number} eyeHeight  feet→head distance (camera height)
+ * @returns {{ y:number, vy:number, onGround:boolean }}
+ */
+export function verticalSupport(boxes, px, pz, prevY, posY, vy, eyeHeight) {
+  let support = 0; // world floor
+  let y = posY;
+  let v = vy;
+  for (const b of boxes) {
+    // Horizontal overlap, expanded by the player's radius (matches _resolveAxis).
+    if (px <= b.min.x - RADIUS || px >= b.max.x + RADIUS) continue;
+    if (pz <= b.min.z - RADIUS || pz >= b.max.z + RADIUS) continue;
+    // Land on top: feet were at/above this top and are descending onto it.
+    if (v <= 0 && prevY >= b.max.y - LAND_TOL && b.max.y > support) support = b.max.y;
+    // Head bump: rising into a box from underneath (raised walkways/ceilings).
+    if (v > 0 && prevY + eyeHeight <= b.min.y && y + eyeHeight > b.min.y) {
+      y = b.min.y - eyeHeight;
+      v = 0;
+    }
+  }
+  if (y <= support) return { y: support, vy: 0, onGround: true };
+  return { y, vy: v, onGround: false };
+}
 
 /**
  * Player
@@ -63,7 +105,7 @@ export class Player {
 
     this.yaw = 0; // face -Z, down the street into the level
     this.pitch = 0;
-    this.sensitivity = 0.0022;
+    this.sensitivity = DEFAULT_SETTINGS.sensitivity;
 
     this.eyeHeight = EYE_HEIGHT;
     this.sliding = false;
@@ -72,6 +114,7 @@ export class Player {
     this.kickCooldown = 0;
     this.kickAnim = 0; // 0..1 visual kick punch
     this.kicking = false;
+    this.kickPowerMul = 1; // raised by the "Kick Master" upgrade (set per-run by main)
 
     this.maxHealth = 100;
     this.health = 100;
@@ -322,15 +365,14 @@ export class Player {
     // Z axis
     this.pos.z += this.vel.z * dt;
     this._resolveAxis(colliders, "z");
-    // Y axis (vertical)
+    // Y axis (vertical): land on the world floor OR the top of any box the player
+    // is descending onto; head-bump on box undersides when rising.
+    const prevY = this.pos.y;
     this.pos.y += this.vel.y * dt;
-    if (this.pos.y <= 0) {
-      this.pos.y = 0;
-      this.vel.y = 0;
-      this.onGround = true;
-    } else {
-      this.onGround = false;
-    }
+    const vr = verticalSupport(colliders, this.pos.x, this.pos.z, prevY, this.pos.y, this.vel.y, this.eyeHeight);
+    this.pos.y = vr.y;
+    this.vel.y = vr.vy;
+    this.onGround = vr.onGround;
 
     // --- Kick -------------------------------------------------------------
     if (this.kickCooldown > 0) this.kickCooldown -= dt;
@@ -412,6 +454,8 @@ export class Player {
     this.kicking = true;
     this._basisFromYaw();
     const cone = this.ctx.abilities && this.ctx.abilities.kickFullRadius ? -1.1 : KICK_CONE;
+    const mul = this.kickPowerMul || 1; // Kick Master: scales range, knockback, damage
+    const range = KICK_RANGE * mul;
     let kickPoint = null;
     const eye = this.camera.position;
     let connected = false;
@@ -422,7 +466,7 @@ export class Player {
       _tmp.copy(door.center).sub(eye);
       _tmp.y = 0;
       const dist = _tmp.length();
-      if (dist > KICK_RANGE) continue;
+      if (dist > range) continue;
       _tmp.normalize();
       if (_tmp.dot(_forward) > cone) {
         door.kick();
@@ -447,11 +491,11 @@ export class Player {
       _tmp.copy(e.position).sub(eye);
       _tmp.y = 0;
       const dist = _tmp.length();
-      if (dist > KICK_RANGE) continue;
+      if (dist > range) continue;
       _tmp.normalize();
       if (_tmp.dot(_forward) > cone) {
         const wasAlive = !e.dead;
-        e.takeKick(_tmp);
+        e.takeKick(_tmp, mul);
         kickPoint = e.position.clone();
         // Kill credit ONLY when the boot actually downs the enemy — the kick is
         // fixed-damage now, so a tanky/scaled enemy can survive it.
@@ -481,7 +525,7 @@ export class Player {
       _tmp.copy(bl.pos).sub(eye);
       _tmp.y = 0;
       const dist = _tmp.length();
-      if (dist > KICK_RANGE + 0.4) continue;
+      if (dist > range + 0.4) continue;
       _tmp.normalize();
       if (_tmp.dot(_forward) > cone) {
         this.ctx.level.explodeBarrel(bl, this.ctx);
@@ -495,7 +539,7 @@ export class Player {
       _tmp.copy(cr.pos).sub(eye);
       _tmp.y = 0;
       const dist = _tmp.length();
-      if (dist > KICK_RANGE + 0.4) continue;
+      if (dist > range + 0.4) continue;
       _tmp.normalize();
       if (_tmp.dot(_forward) > cone) {
         this.ctx.level.openCrate(cr, this.ctx);
@@ -525,8 +569,8 @@ export class Player {
     // Orientation from yaw + pitch, plus a little kick "punch" dip + roll.
     const kickDip = this.kickAnim * 0.12;
     const slideRoll = this.sliding ? 0.08 : 0;
-    const euler = new THREE.Euler(this.pitch - kickDip, this.yaw, slideRoll, "YXZ");
-    this.camera.quaternion.setFromEuler(euler);
+    _euler.set(this.pitch - kickDip, this.yaw, slideRoll, "YXZ");
+    this.camera.quaternion.setFromEuler(_euler);
   }
 
   dispose() {
