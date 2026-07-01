@@ -7,6 +7,12 @@ const _hit = new THREE.Vector3();
 const _spread = new THREE.Vector3();
 const _splatLocal = new THREE.Vector3();
 const _splatLook = new THREE.Vector3();
+// Per-pellet "closest hit so far" scratch — written at most once per category
+// per _fireRay() call, read back before the next pellet overwrites them.
+const _ePoint = new THREE.Vector3();
+const _blPoint = new THREE.Vector3();
+const _crPoint = new THREE.Vector3();
+const _wPoint = new THREE.Vector3();
 
 /** Weapon definitions — placeholder low-poly viewmodels, distinct feel. */
 export const WEAPONS = [
@@ -97,6 +103,15 @@ export class Weapon {
 
     this._swayTarget = new THREE.Vector2();
     this._sway = new THREE.Vector2();
+
+    // Shared, never-mutated geometries reused across every bullet-impact decal
+    // and speck this session (one PlaneGeometry/SphereGeometry instead of one
+    // per shot). Only position/quaternion/scale differ per mesh, so sharing is
+    // safe — unlike the per-effect MATERIAL, which animates its own opacity as
+    // it fades and must stay one-per-instance (see _spawnImpact / update()).
+    this._implGeoBlood = new THREE.PlaneGeometry(0.55, 0.55);
+    this._implGeoHole = new THREE.PlaneGeometry(0.32, 0.32);
+    this._speckGeo = new THREE.SphereGeometry(0.03, 4, 4);
 
     this._buildViewmodel();
     this._bind();
@@ -403,42 +418,38 @@ export class Weapon {
 
     // Closest enemy
     let eDist = Infinity, bestEnemy = null;
-    const ePoint = new THREE.Vector3();
     for (const e of this.ctx.level.enemies) {
       if (e.dead) continue;
       if (this.raycaster.ray.intersectBox(e.getHitBox(), _hit)) {
         const d = _origin.distanceTo(_hit);
-        if (d < eDist) { eDist = d; bestEnemy = e; ePoint.copy(_hit); }
+        if (d < eDist) { eDist = d; bestEnemy = e; _ePoint.copy(_hit); }
       }
     }
     // Closest explosive barrel
     let blDist = Infinity, bestBarrel = null;
-    const blPoint = new THREE.Vector3();
     for (const bl of this.ctx.level.barrels) {
       if (bl.exploded) continue;
       if (this.raycaster.ray.intersectBox(bl.hitbox, _hit)) {
         const d = _origin.distanceTo(_hit);
-        if (d < blDist) { blDist = d; bestBarrel = bl; blPoint.copy(_hit); }
+        if (d < blDist) { blDist = d; bestBarrel = bl; _blPoint.copy(_hit); }
       }
     }
     // Closest supply crate (shooting one breaks it open for loot)
     let crDist = Infinity, bestCrate = null;
-    const crPoint = new THREE.Vector3();
     for (const cr of this.ctx.level.crates || []) {
       if (cr.opened) continue;
       if (this.raycaster.ray.intersectBox(cr.hitbox, _hit)) {
         const d = _origin.distanceTo(_hit);
-        if (d < crDist) { crDist = d; bestCrate = cr; crPoint.copy(_hit); }
+        if (d < crDist) { crDist = d; bestCrate = cr; _crPoint.copy(_hit); }
       }
     }
     // Closest wall
     let wDist = Infinity;
-    const wPoint = new THREE.Vector3();
     let hasWall = false;
     for (const b of colliders) {
       if (this.raycaster.ray.intersectBox(b, _hit)) {
         const d = _origin.distanceTo(_hit);
-        if (d < wDist) { wDist = d; wPoint.copy(_hit); hasWall = true; }
+        if (d < wDist) { wDist = d; _wPoint.copy(_hit); hasWall = true; }
       }
     }
 
@@ -447,47 +458,50 @@ export class Weapon {
       _hit.copy(_origin).addScaledVector(_dir, 60);
       this._tracer(_origin, _hit);
     } else if (minD === blDist) {
-      this._tracer(_origin, blPoint);
+      this._tracer(_origin, _blPoint);
       this.ctx.level.explodeBarrel(bestBarrel, this.ctx);
     } else if (minD === crDist) {
-      this._tracer(_origin, crPoint);
+      this._tracer(_origin, _crPoint);
       this.ctx.level.openCrate(bestCrate, this.ctx);
     } else if (minD === eDist) {
       const wasAlive = !bestEnemy.dead;
-      _dir.copy(ePoint).sub(_origin).normalize();
+      _dir.copy(_ePoint).sub(_origin).normalize();
       bestEnemy.takeDamage(w.damage, _dir, 3);
-      this._spawnImpact(ePoint, 0xb01818, true);
-      this._tracer(_origin, ePoint);
+      this._spawnImpact(_ePoint, 0xb01818, true);
+      this._tracer(_origin, _ePoint);
       // Stick a small blood splat onto the enemy body so it rides/topples with
       // the corpse. Outward normal ≈ toward the shooter (-_dir).
-      this._stickBlood(bestEnemy, ePoint, _box.copy(_dir).multiplyScalar(-1));
+      this._stickBlood(bestEnemy, _ePoint, _box.copy(_dir).multiplyScalar(-1));
       // Wounding without killing no longer scores — points come on kill only.
-      this.ctx.state && this.ctx.state.emit("hit", { position: ePoint.clone(), amount: w.damage });
-      if (this.ctx.juice) this.ctx.juice.spawnImpact(ePoint, "blood");
+      this.ctx.state && this.ctx.state.emit("hit", { position: _ePoint.clone(), amount: w.damage });
+      if (this.ctx.juice) this.ctx.juice.spawnImpact(_ePoint, "blood");
       if (wasAlive && bestEnemy.dead) {
         this.ctx.score.add(120, "KILL");
         this.ctx.audio.kill();
         // Bridge a hitscan kill to the run state ("kill" event + kills stat)
         // so achievements + floating text + RESULTS rewards see it.
-        this.ctx.state && this.ctx.state.addKill({ position: ePoint.clone(), weapon: w.name });
+        this.ctx.state && this.ctx.state.addKill({ position: _ePoint.clone(), weapon: w.name });
         if (this.ctx.juice) {
           this.ctx.juice.hitStop(45);
           this.ctx.juice.shake(0.1, 110);
         }
       }
     } else {
-      this._spawnImpact(wPoint, 0xffcc66, false);
-      this._tracer(_origin, wPoint);
+      this._spawnImpact(_wPoint, 0xffcc66, false);
+      this._tracer(_origin, _wPoint);
       // Persistent bullet-hole decal (normal ≈ toward the shooter).
       this.ctx.state && this.ctx.state.emit("surfaceHit", {
-        position: wPoint.clone(),
+        position: _wPoint.clone(),
         normal: _dir.clone().multiplyScalar(-1),
       });
     }
   }
 
   _tracer(from, to) {
-    const geo = new THREE.BufferGeometry().setFromPoints([from.clone(), to.clone()]);
+    // setFromPoints reads .x/.y/.z synchronously into the buffer; it doesn't
+    // retain the Vector3 refs, so the points don't need cloning even though
+    // `from`/`to` are shared per-pellet scratch vectors reused next call.
+    const geo = new THREE.BufferGeometry().setFromPoints([from, to]);
     const line = new THREE.Line(
       geo,
       new THREE.LineBasicMaterial({ color: 0xfff2c0, transparent: true, opacity: 0.8, fog: false }),
@@ -506,15 +520,15 @@ export class Weapon {
     const mat = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.98, depthWrite: false, fog: false });
     if (tex) { mat.map = tex; mat.alphaTest = 0.5; }
     else mat.color.set(color);
-    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(size, size), mat);
+    const mesh = new THREE.Mesh(isBlood ? this._implGeoBlood : this._implGeoHole, mat);
     mesh.position.copy(point);
     mesh.quaternion.copy(this.camera.quaternion);
     this.scene.add(mesh);
-    this._track(mesh, isBlood ? 0.8 : 0.6);
+    this._track(mesh, isBlood ? 0.8 : 0.6, false, true);
 
     for (let i = 0; i < (isBlood ? 4 : 3); i++) {
       const speck = new THREE.Mesh(
-        new THREE.SphereGeometry(0.03, 4, 4),
+        this._speckGeo,
         new THREE.MeshBasicMaterial({ color, transparent: true, fog: false }),
       );
       speck.position.copy(point);
@@ -524,7 +538,7 @@ export class Weapon {
         (Math.random() - 0.5) * 4,
       );
       this.scene.add(speck);
-      this._track(speck, 0.4, true);
+      this._track(speck, 0.4, true, true);
     }
   }
 
@@ -566,17 +580,19 @@ export class Weapon {
     g.add(splat);
   }
 
-  _track(mesh, life, gravity = false) {
+  _track(mesh, life, gravity = false, sharedGeometry = false) {
     if (this.effects.length >= MAX_EFFECTS) {
       const old = this.effects.shift();
-      this._destroy(old.mesh);
+      this._destroy(old.mesh, old.sharedGeometry);
     }
-    this.effects.push({ mesh, life, maxLife: life, gravity });
+    this.effects.push({ mesh, life, maxLife: life, gravity, sharedGeometry });
   }
 
-  _destroy(mesh) {
+  _destroy(mesh, sharedGeometry = false) {
     this.scene.remove(mesh);
-    if (mesh.geometry) mesh.geometry.dispose();
+    // Shared impact-decal/speck geometries (see constructor) outlive any single
+    // effect and are disposed once in dispose() — never per-instance here.
+    if (mesh.geometry && !sharedGeometry) mesh.geometry.dispose();
     if (mesh.material) mesh.material.dispose();
   }
 
@@ -658,14 +674,14 @@ export class Weapon {
       const t = Math.max(0, fx.life / fx.maxLife);
       if (fx.mesh.material) fx.mesh.material.opacity = t * (fx.mesh.userData.grow ? 0.7 : 1);
       if (fx.life <= 0) {
-        this._destroy(fx.mesh);
+        this._destroy(fx.mesh, fx.sharedGeometry);
         this.effects.splice(i, 1);
       }
     }
   }
 
   reset() {
-    for (const fx of this.effects) this._destroy(fx.mesh);
+    for (const fx of this.effects) this._destroy(fx.mesh, fx.sharedGeometry);
     this.effects.length = 0;
     this.cooldown = 0;
     this.triggerHeld = false;
@@ -690,5 +706,8 @@ export class Weapon {
     this.reset();
     if (this._splatGeo) { this._splatGeo.dispose(); this._splatGeo = null; }
     if (this._splatMat) { this._splatMat.dispose(); this._splatMat = null; }
+    this._implGeoBlood.dispose();
+    this._implGeoHole.dispose();
+    this._speckGeo.dispose();
   }
 }
