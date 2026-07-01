@@ -1,5 +1,7 @@
 import * as THREE from "three";
 import * as EnemyBehavior from "./EnemyBehavior.js";
+import { verticalSupport } from "./Player.js";
+import { getObjectSize } from "../utils/three.js";
 import ENEMY_TYPES from "../data/enemies.json";
 
 const ENEMY_BY_ID = Object.fromEntries(ENEMY_TYPES.map((e) => [e.id, e]));
@@ -214,7 +216,7 @@ export class Enemy {
     // Real-world size + current scale. The weapon is unparented here, so its
     // world transform equals its local one.
     mount.updateWorldMatrix(true, false);
-    const size = new THREE.Box3().setFromObject(mount).getSize(new THREE.Vector3());
+    const size = getObjectSize(mount);
     const worldScale = mount.getWorldScale(new THREE.Vector3());
 
     // Find the right-hand bone beneath the cloned skeleton.
@@ -302,17 +304,21 @@ export class Enemy {
     if (this.health <= 0) this._die(dir);
   }
 
-  /** A boot to the chest: fixed damage + huge knockback (Anger Foot style). */
-  takeKick(dir) {
+  /**
+   * A boot to the chest: fixed damage + huge knockback (Anger Foot style).
+   * `mul` is the Kick Master multiplier (1 = base) — scales damage + knockback.
+   */
+  takeKick(dir, mul = 1) {
     if (this.dead) return;
     if (this.knockbackImmune) {
       // The "unstoppable" enforcer: a boot staggers it slightly but never
-      // one-shots or flings it. Players must shoot it down.
-      this.takeDamage(28, dir, 0);
+      // one-shots or flings it. Players must shoot it down. Kick Master still
+      // raises the stagger damage, just never the (zero) knockback.
+      this.takeDamage(28 * mul, dir, 0);
       return;
     }
-    this.knock.addScaledVector(dir, 16);
-    this.takeDamage(KICK_DAMAGE, dir, 0);
+    this.knock.addScaledVector(dir, 16 * mul);
+    this.takeDamage(KICK_DAMAGE * mul, dir, 0);
   }
 
   _die(dir) {
@@ -401,11 +407,17 @@ export class Enemy {
       return;
     }
 
-    // Vertical: gravity pulls toward the floor, hard-clamped at y=0, so an enemy
-    // can never walk through the air or sink half into the ground.
+    // Vertical: gravity, then rest on the highest support — the world floor OR the
+    // top of a box the enemy stands on — so enemies hold tower ledges / container
+    // tops and fall off any edge they walk (or are kicked) over. Ground enemies
+    // have prevY≈0 so they never latch a box top: existing sectors are unchanged.
     this._vy -= GRAVITY * dt;
+    const _prevY = this.group.position.y;
     this.group.position.y += this._vy * dt;
-    if (this.group.position.y <= 0) { this.group.position.y = 0; this._vy = 0; }
+    const _boxes = ctx.level && ctx.level.getColliders ? ctx.level.getColliders() : [];
+    const _vs = verticalSupport(_boxes, this.group.position.x, this.group.position.z, _prevY, this.group.position.y, this._vy, this.height);
+    this.group.position.y = _vs.y;
+    this._vy = _vs.vy;
 
     // Run the AI (which moves the group), then push the enemy out of any wall it
     // walked into (or was knocked into) so it can't clip through buildings / cars.

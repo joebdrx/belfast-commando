@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { bootModifiers, isAdrenaline, computeRefund } from "../src/game/Abilities.js";
+import { bootModifiers, isAdrenaline, computeRefund, kickPowerMul } from "../src/game/Abilities.js";
 
 describe("bootModifiers", () => {
   it("fast_sprint boosts sprint only", () => {
@@ -33,5 +33,16 @@ describe("computeRefund", () => {
     expect(computeRefund(30)).toBe(4);
     expect(computeRefund(12)).toBe(1);
     expect(computeRefund(6)).toBe(1);
+  });
+});
+
+describe("kickPowerMul", () => {
+  it("is 1.0 unowned and scales with the upgrade value", () => {
+    expect(kickPowerMul(0)).toBe(1);
+    expect(kickPowerMul(0.45)).toBeCloseTo(1.45); // kick_master maxed (0.15 * 3)
+  });
+  it("clamps non-negative", () => {
+    expect(kickPowerMul(-5)).toBe(1);
+    expect(kickPowerMul()).toBe(1);
   });
 });

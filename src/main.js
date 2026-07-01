@@ -7,6 +7,7 @@ import { Audio } from "./game/Audio.js";
 import { HUD } from "./game/HUD.js";
 import { Score } from "./game/Score.js";
 import { Steam } from "./utils/steam.js";
+import { BASE } from "./utils/constants.js";
 
 // --- Hybrid Gameplay Loop systems (Hub → Level → Results → Hub) -------------
 import gameState from "./game/GameState.js";
@@ -21,7 +22,7 @@ import { Juice } from "./game/Juice.js";
 import { PauseMenu } from "./game/PauseMenu.js";
 import { Modifiers } from "./game/Modifiers.js";
 import { Achievements } from "./game/Achievements.js";
-import { Abilities } from "./game/Abilities.js";
+import { Abilities, kickPowerMul } from "./game/Abilities.js";
 import { Decals } from "./game/Decals.js";
 import { LoadingScreen } from "./game/LoadingScreen.js";
 import { TouchControls, isTouchDevice } from "./game/TouchControls.js";
@@ -42,8 +43,6 @@ const LOADING_SLIDES = [
 // The pre-operation loading screen plays this looping video (muted) with the logo.
 const OPERATION_VIDEO = "loading/operation-loading.mp4";
 
-// Served base ("/" in dev) — backdrops are resolved against it for CSS use.
-const BASE = import.meta.env.BASE_URL || "/";
 // Result-overlay backdrops: the victory hero art on a clear, and the loading
 // stills (picked at random) on death or anywhere else the overlay appears.
 const VICTORY_BG = `${BASE}ui/victory.jpg`;
@@ -420,6 +419,8 @@ class Game {
     // Apply the persisted "Thick Skin" upgrade to max health before reset.
     const hpBonus = this.progression.getUpgradeEffectValue("thick_skin");
     this.player.maxHealth = Math.round(100 * (1 + hpBonus));
+    // Apply the persisted "Kick Master" upgrade to kick range/knockback/damage.
+    this.player.kickPowerMul = kickPowerMul(this.progression.getUpgradeEffectValue("kick_master"));
     this.player.reset(this.levelManager.spawn, this.levelManager.spawnYaw || 0);
     this.score.reset();
 

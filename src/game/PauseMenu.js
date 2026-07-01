@@ -1,6 +1,8 @@
 import gameState from "./GameState.js";
 import { controlsGridHTML } from "./controls.js";
 import { isTouchDevice } from "./TouchControls.js";
+import { createEl } from "../utils/dom.js";
+import { SENS_MIN, SENS_MAX, SENS_STEP, QUALITY_OPTIONS, DEFAULT_SETTINGS } from "../utils/constants.js";
 
 /**
  * PauseMenu
@@ -33,21 +35,6 @@ import { isTouchDevice } from "./TouchControls.js";
  */
 
 const PREFIX = "bc-pause-";
-
-/** Mouse-sensitivity slider bounds (radians per mouse-pixel). Default is 0.0022. */
-const SENS_MIN = 0.0008;
-const SENS_MAX = 0.005;
-const SENS_STEP = 0.0002;
-
-/** Graphics-quality options: stored value (lowercase) + display label. */
-const QUALITY_OPTIONS = [
-  { value: "low", label: "Low" },
-  { value: "medium", label: "Medium" },
-  { value: "high", label: "High" },
-];
-
-/** Default settings used only if the persisted block is somehow missing. */
-const DEFAULT_SETTINGS = { sensitivity: 0.0022, quality: "high", muted: false };
 
 export class PauseMenu {
   constructor() {
@@ -185,10 +172,7 @@ export class PauseMenu {
 
   /** Helper: create an element with optional class + text. */
   _el(tag, cls, text) {
-    const el = document.createElement(tag);
-    if (cls) el.className = cls;
-    if (text != null) el.textContent = text;
-    return el;
+    return createEl(tag, cls, text);
   }
 
   /** Build the root, card, title, action buttons, and the live settings rows. */

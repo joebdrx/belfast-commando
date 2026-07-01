@@ -7,6 +7,19 @@ import gameState from "./GameState.js";
 const _tmp = new THREE.Vector3();
 
 /**
+ * Is the player inside the extraction volume? XZ disc of radius `r`, gated by a
+ * vertical tolerance `dy` around the beacon height (`center.y`). `dy = Infinity`
+ * means no height check — the original ground-level behaviour, used by every
+ * sector except a rooftop extraction (Divis Tower). Pure.
+ */
+export function withinExtraction(center, r, dy, px, py, pz) {
+  const dx = px - center.x;
+  const dz = pz - center.z;
+  if (dx * dx + dz * dz > r * r) return false;
+  return Math.abs(py - center.y) <= dy;
+}
+
+/**
  * LevelManager
  * ------------
  * The campaign layer that sits ABOVE the existing procedural `Level`. It does
@@ -103,13 +116,16 @@ export class LevelManager {
     this.extracted = false;
     this._markerTime = 0;
 
-    // Extraction volume: authored point, else run-back-to-spawn default.
+    // Extraction volume: authored point, else run-back-to-spawn default. An
+    // optional `y` lifts the beacon (rooftop extraction) and `dy` gates the
+    // trigger by height; `dy` defaults to Infinity so ground sectors are unchanged.
     const ex = entry.extraction;
     const center = ex
-      ? new THREE.Vector3(ex.x, 0, ex.z)
+      ? new THREE.Vector3(ex.x, ex.y || 0, ex.z)
       : new THREE.Vector3(this.level.spawn.x, 0, this.level.spawn.z);
     const r = ex && typeof ex.r === "number" ? ex.r : 4;
-    this.extraction = { center, r };
+    const dy = ex && typeof ex.dy === "number" ? ex.dy : Infinity;
+    this.extraction = { center, r, dy };
     this._buildMarker(center, r);
 
     // Mirror the level deploy transform for the orchestrator.
@@ -131,7 +147,7 @@ export class LevelManager {
    */
   _buildMarker(center, r) {
     const group = new THREE.Group();
-    group.position.set(center.x, 0, center.z);
+    group.position.set(center.x, center.y, center.z); // center.y lifts a rooftop beacon
     group.visible = false; // disarmed: hidden until the sector is clear
 
     // Extraction-flare green; additive + no depth-write so it reads as light.
@@ -220,12 +236,14 @@ export class LevelManager {
     }
 
     if (this.armed && !this.extracted) {
-      const p = ctx.player && ctx.player.position;
-      if (p) {
+      // Use the player's FEET (`pos`), not `position` — the latter is a getter for
+      // the camera (eye height = feet + ~1.7m). The beacon marks a floor pad, so a
+      // rooftop extraction's height gate (`dy`) must test feet, or it never arms up
+      // top. XZ is identical either way (the camera sits directly above the feet).
+      const feet = ctx.player && (ctx.player.pos || ctx.player.position);
+      if (feet) {
         const c = this.extraction.center;
-        const dx = p.x - c.x;
-        const dz = p.z - c.z;
-        if (dx * dx + dz * dz <= this.extraction.r * this.extraction.r) {
+        if (withinExtraction(c, this.extraction.r, this.extraction.dy, feet.x, feet.y, feet.z)) {
           this.extracted = true;
           this.state.emit("extracted", {});
           if (this._onExtract) this._onExtract();

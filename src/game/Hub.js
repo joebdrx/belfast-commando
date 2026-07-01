@@ -1,6 +1,7 @@
 import * as THREE from "three";
+import { getObjectSize } from "../utils/three.js";
+import { BASE } from "../utils/constants.js";
 
-const BASE = import.meta.env.BASE_URL || "/";
 // Safehouse character display scale — the hero + ally figures are scaled up 25%.
 const MENU_CHAR_SCALE = 1.25;
 
@@ -544,7 +545,7 @@ export class Hub {
 
     // Real-world size + scale (unparented → world transform == local transform).
     mount.updateMatrixWorld(true);
-    const size = new THREE.Box3().setFromObject(mount).getSize(new THREE.Vector3());
+    const size = getObjectSize(mount);
     const worldScale = mount.getWorldScale(new THREE.Vector3());
 
     // weapon_ak's barrel is its longest axis (native +X). qFwd points it down the

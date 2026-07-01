@@ -4,8 +4,8 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { MeshoptDecoder } from "three/examples/jsm/libs/meshopt_decoder.module.js";
 import { clone as cloneSkeleton } from "three/examples/jsm/utils/SkeletonUtils.js";
 import { RetroMaterial } from "./RetroMaterial.js";
-
-const BASE = import.meta.env.BASE_URL || "/";
+import { getObjectSize } from "../utils/three.js";
+import { BASE } from "../utils/constants.js";
 
 /**
  * AssetManager
@@ -416,7 +416,7 @@ export class AssetManager {
         tmp.clipAction(clips.walk).play();
         tmp.update(0.2);
         base.scene.updateMatrixWorld(true);
-        height = new THREE.Box3().setFromObject(base.scene).getSize(new THREE.Vector3()).y || 1.7;
+        height = getObjectSize(base.scene).y || 1.7;
         tmp.stopAllAction();
       }
       this._riggedEnemy = { scene: base.scene, clips, height };
@@ -484,7 +484,7 @@ export class AssetManager {
       tmp.clipAction(clips.walk).play();
       tmp.update(0.2);
       base.scene.updateMatrixWorld(true);
-      height = new THREE.Box3().setFromObject(base.scene).getSize(new THREE.Vector3()).y || 1.7;
+      height = getObjectSize(base.scene).y || 1.7;
       tmp.stopAllAction();
     }
     return { scene: base.scene, clips, height };
@@ -582,7 +582,7 @@ export class AssetManager {
         tmp.clipAction(clips.walk).play();
         tmp.update(0.2);
         base.scene.updateMatrixWorld(true);
-        height = new THREE.Box3().setFromObject(base.scene).getSize(new THREE.Vector3()).y || 1.7;
+        height = getObjectSize(base.scene).y || 1.7;
         tmp.stopAllAction();
       }
       this._menuActor = { scene: base.scene, clips, height };
@@ -614,7 +614,7 @@ export class AssetManager {
         tmp.clipAction(clip).play();
         tmp.update(0.01);
         base.scene.updateMatrixWorld(true);
-        height = new THREE.Box3().setFromObject(base.scene).getSize(new THREE.Vector3()).y || 1.7;
+        height = getObjectSize(base.scene).y || 1.7;
         tmp.stopAllAction();
       }
       this._player2 = { scene: base.scene, height };

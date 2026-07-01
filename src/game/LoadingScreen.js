@@ -1,4 +1,5 @@
-const BASE = import.meta.env.BASE_URL || "/";
+import { BASE } from "../utils/constants.js";
+
 const PREFIX = "bc-load-";
 
 /**

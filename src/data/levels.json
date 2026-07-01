@@ -76,9 +76,9 @@
     "code": "0451",
     "name": "Divis Tower",
     "seed": 6,
-    "intro": "Operation: Crown the Divis. Last invader command post in the city is up top. Finish it.",
+    "intro": "Operation: Crown the Divis. Last invader command post in the city is up top. Climb it and finish them.",
     "outro": "Divis is ours. Belfast is liberated — green, orange and all. Now get to the chopper.",
-    "extraction": { "x": -12, "z": -62, "r": 6 },
+    "extraction": { "x": 0, "z": 33, "y": 5.2, "r": 4, "dy": 1.2 },
     "modifierChance": 0.75,
     "par": 90
   }
