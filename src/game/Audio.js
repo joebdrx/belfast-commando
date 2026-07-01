@@ -1,4 +1,4 @@
-const BASE = import.meta.env.BASE_URL || "/";
+import { BASE } from "../utils/constants.js";
 
 /**
  * Sampled SFX (public/sfx/). Guns + explosion replace the synth versions; the
