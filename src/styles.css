@@ -621,6 +621,20 @@ html, body {
   font-weight: 700;
 }
 
+.result-grade {
+  display: inline-block;
+  margin: 10px 0 4px;
+  color: rgba(240, 237, 232, 0.92);
+  font-size: 17px;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+}
+
+.result-grade b {
+  font-size: 32px;
+  text-shadow: 0 0 20px rgba(255, 122, 26, 0.65);
+}
+
 /* -- Controls grid ----------------------------------------- */
 /* Injected by JS as .controls-grid inside #overlay-body */
 .controls-grid {

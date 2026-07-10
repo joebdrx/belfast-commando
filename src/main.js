@@ -27,6 +27,7 @@ import { Decals } from "./game/Decals.js";
 import { LoadingScreen } from "./game/LoadingScreen.js";
 import { TouchControls, isTouchDevice } from "./game/TouchControls.js";
 import { Gamepad } from "./game/Gamepad.js";
+import { evaluateSectorPerformance, formatMissionTime } from "./game/CampaignPerformance.js";
 
 // Per-pixel look speed for the on-screen touch pad (rad/px). Touch drags are
 // coarser than mouse motion, so this runs a touch hotter than the mouse default.
@@ -423,6 +424,8 @@ class Game {
     this.player.kickPowerMul = kickPowerMul(this.progression.getUpgradeEffectValue("kick_master"));
     this.player.reset(this.levelManager.spawn, this.levelManager.spawnYaw || 0);
     this.score.reset();
+    // Score.total carries through a multi-sector run; grading is per operation.
+    this._sectorScoreStart = this.score.total;
 
     // Roll + apply a per-run modifier (e.g. "Rainy Night") AFTER spawn/reset, so
     // it scales the fresh enemies + player knobs.
@@ -508,6 +511,7 @@ class Game {
     // and civilians saved all feed the end-of-sector payout (kills already counted;
     // crates + civilians added per playtest feedback).
     const s = run.stats || {};
+    const sectorScore = Math.max(0, this.score.total - (this._sectorScoreStart || 0));
     const base = Math.floor(this.score.total / 100)
       + run.kills * 2
       + run.bestCombo * 2
@@ -519,9 +523,30 @@ class Game {
     // On a CLEAR, advance the persisted campaign position so the safehouse's
     // "Start Operation" resumes the next uncleared sector. Death leaves it
     // untouched (you retry the same sector).
+    const performance = evaluateSectorPerformance({
+      died,
+      score: sectorScore,
+      time: this.score.levelTime,
+      civiliansSaved: s.civiliansSaved || 0,
+      civiliansTotal: this.level ? this.level.victimCount || 0 : 0,
+      noDamage: !!s.noDamage,
+    }, entry);
     if (!died) {
       const prog = this.state.getProgression();
-      prog.campaignIndex = Math.min(this.levelManager.currentIndex + 1, this.levelManager.levelCount - 1);
+      const lastSector = !this.levelManager.hasNext();
+      prog.unlockedLevels = Math.max(
+        prog.unlockedLevels || 1,
+        Math.min(this.levelManager.currentIndex + 2, this.levelManager.levelCount),
+      );
+      prog.campaignIndex = lastSector ? 0 : this.levelManager.currentIndex + 1;
+      if (lastSector) prog.campaignCompletions = (prog.campaignCompletions || 0) + 1;
+      this.progression.recordSectorResult(entry.id, {
+        died: false,
+        score: sectorScore,
+        time: this.score.levelTime,
+        rank: performance.rank,
+        medals: performance.medals,
+      });
     }
     this.progression.save();
     this.state.endRun({ died });
@@ -545,9 +570,12 @@ class Game {
     this._resultsCampaignDone = last && !died;
 
     const outro = died ? "Belfast still needs you." : this.levelManager.outro || "";
+    const gradeRow = died
+      ? ""
+      : `<span class="result-grade">RANK <b>${performance.rank}</b> &nbsp;·&nbsp; ${"★".repeat(performance.medals)}${"☆".repeat(3 - performance.medals)}</span><br/>Operation ${formatMissionTime(this.score.levelTime)} &nbsp;·&nbsp; Sector score <b>${sectorScore.toLocaleString()}</b><br/>`;
     this.hud.showOverlay(
       title,
-      `${outro}<br/>${bonusRows}Score <b>${this.score.total.toLocaleString()}</b> &nbsp;·&nbsp; Kills <b>${run.kills}</b><br/>Funds earned <b>+£${rp}</b>`,
+      `${outro}<br/>${gradeRow}${bonusRows}Campaign score <b>${this.score.total.toLocaleString()}</b> &nbsp;·&nbsp; Kills <b>${run.kills}</b><br/>Funds earned <b>+£${rp}</b>`,
       "",
     );
     // Backdrop: a clear shows the victory art, death a random loading still — both

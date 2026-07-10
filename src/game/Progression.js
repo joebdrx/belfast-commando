@@ -2,6 +2,7 @@ import gameState from "./GameState.js";
 import UPGRADES from "../data/upgrades.json";
 import BOOTS from "../data/boots.json";
 import WEAPONS from "../data/weapons.json";
+import { mergeSectorRecord } from "./CampaignPerformance.js";
 
 /**
  * Progression
@@ -272,6 +273,25 @@ class Progression {
   getActiveBootAbility() {
     const boot = this.getEquippedBoot();
     return boot ? boot.ability : "none";
+  }
+
+  // ---- campaign records -------------------------------------------------
+
+  /** Persist a successful sector attempt and return its merged best record. */
+  recordSectorResult(levelId, attempt) {
+    if (!levelId || !attempt || attempt.died) return null;
+    const prog = this.state.getProgression();
+    if (!prog.sectorRecords || typeof prog.sectorRecords !== "object") prog.sectorRecords = {};
+    const record = mergeSectorRecord(prog.sectorRecords[levelId], attempt);
+    prog.sectorRecords[levelId] = record;
+    this.save();
+    return record;
+  }
+
+  /** Read-only snapshot used by the sector-select UI. */
+  getSectorRecord(levelId) {
+    const records = this.state.getProgression().sectorRecords;
+    return (records && records[levelId]) || null;
   }
 
   /**

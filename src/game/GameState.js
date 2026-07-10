@@ -51,6 +51,8 @@ function freshProgression() {
     redeemedCodes: [], // level codes already cashed in for RP (no farming on re-entry)
     unlockedLevels: 1, // highest campaign index reachable (1-based count)
     campaignIndex: 0, // next sector to deploy into from the safehouse (0-based; advances on a clear)
+    sectorRecords: {}, // { levelId: { clears, bestScore, bestTime, bestRank, medals } }
+    campaignCompletions: 0,
     achievements: {}, // { achievementId: true }
     settings: { sensitivity: 0.0022, quality: "high", muted: false },
     version: 3,
