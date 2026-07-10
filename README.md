@@ -74,10 +74,19 @@ sudo apt install libwebkit2gtk-4.1-dev libsoup-3.0-dev build-essential \
 
 ## Campaign
 
-The game now ships as a seven-operation campaign. Every sector bends the shared
-procedural city generator into a different combat map: the Falls Road breach
-maze, Shankill street gauntlet, Markets arena, Docks container yard, Ardoyne
-tenement maze, Short Strand siege pocket, and the vertical Divis Tower finale.
+The game now ships as a seven-operation campaign. Each sector uses its own
+authored map blueprint; procedural generation dresses those skeletons without
+changing their learnable routes or encounter pacing.
+
+| Operation | Topology | Combat rhythm |
+| --- | --- | --- |
+| Falls Road | Serpentine residential blocks | Breach rooms, cross courtyards, then reverse across the map |
+| Shankill | Long two-sided gauntlet | Layered checkpoints and escalating long sightlines |
+| The Markets | Hub-and-spoke district | Central arena with four flanking approaches |
+| The Docks | Parallel industrial flanks | Container lanes, explosive chains, and side switching |
+| Ardoyne | Dense nested loops | Short-range alley slaloms and repeated route choices |
+| Short Strand | Defensive siege ring | Break an encirclement and collapse toward the central stronghold |
+| Divis Tower | Vertical ascent | Fight through ruins and checkpoints before climbing the rooftop objective |
 
 Clears unlock the next operation and bank persistent Resistance Points for
 weapons, boots, and upgrades. Each operation also tracks a best score, best time,
