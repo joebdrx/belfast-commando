@@ -7,6 +7,7 @@ import { controlsGridHTML } from "./controls.js";
 import { isTouchDevice } from "./TouchControls.js";
 import { createEl } from "../utils/dom.js";
 import { BASE, SENS_MIN, SENS_MAX, SENS_STEP, QUALITY_OPTIONS, DEFAULT_SETTINGS } from "../utils/constants.js";
+import { formatMissionTime } from "./CampaignPerformance.js";
 
 /**
  * Build a fullscreen toggle button styled to match the game's button conventions.
@@ -619,7 +620,13 @@ export class Menu {
     );
     this.body.appendChild(contRow);
 
-    this.body.appendChild(this._el("div", `${PREFIX}section-label`, "Sectors"));
+    const records = (prog && prog.sectorRecords) || {};
+    const medals = Object.values(records).reduce((sum, record) => sum + Math.min(3, Number(record.medals) || 0), 0);
+    const completions = Number(prog && prog.campaignCompletions) || 0;
+    const mastery = completions > 0
+      ? `Campaign mastery · ${medals}/${LEVELS.length * 3} medals · ${completions} liberation${completions === 1 ? "" : "s"}`
+      : `Campaign mastery · ${medals}/${LEVELS.length * 3} medals`;
+    this.body.appendChild(this._el("div", `${PREFIX}section-label`, mastery));
     const list = this._el("div", `${PREFIX}list`);
     for (let i = 0; i < LEVELS.length; i++) {
       list.appendChild(this._sectorRow(i, unlocked, current));
@@ -631,15 +638,26 @@ export class Menu {
   /** One sector row (mirrors _weaponRow's unlocked/locked disabled-button idiom). */
   _sectorRow(i, unlocked, current) {
     const unlockedThis = i < unlocked;
+    const entry = LEVELS[i] || {};
+    const progression = this._providers.progression;
+    const record = progression && typeof progression.getSectorRecord === "function"
+      ? progression.getSectorRecord(entry.id)
+      : null;
     const item = this._el("div", `${PREFIX}item`);
     const main = this._el("div", `${PREFIX}item-main`);
     const name = this._el("div", `${PREFIX}item-name`, `Sector ${i + 1}: ${this._levelName(i)}`);
-    if (unlockedThis && i < current) name.appendChild(this._el("span", `${PREFIX}eq`, "✓ CLEARED"));
+    if (record) name.appendChild(this._el("span", `${PREFIX}eq`, `${"★".repeat(record.medals || 0)}${"☆".repeat(3 - (record.medals || 0))} · RANK ${record.bestRank}`));
+    else if (unlockedThis && i < current) name.appendChild(this._el("span", `${PREFIX}eq`, "✓ CLEARED"));
     else if (unlockedThis && i === current) name.appendChild(this._el("span", `${PREFIX}eq`, "CURRENT"));
     main.appendChild(name);
     const meta = this._el("div", `${PREFIX}item-meta`);
     if (unlockedThis) {
-      meta.innerHTML = "Ready to deploy";
+      const map = entry.mapStyle || "Belfast combat sector";
+      const best = record
+        ? ` · Best ${Number(record.bestScore || 0).toLocaleString()} / ${formatMissionTime(record.bestTime)}`
+        : ` · Par ${formatMissionTime(entry.par)}`;
+      meta.textContent = `${map}${best}`;
+      meta.title = entry.mastery || "";
     } else {
       meta.classList.add(`${PREFIX}locked`);
       meta.innerHTML = "Locked · find the operation code";

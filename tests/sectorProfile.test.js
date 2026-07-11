@@ -79,10 +79,9 @@ describe("special block archetypes (arena / yard)", () => {
   it("Divis builds a tall climbable tower at its centre block", () => {
     const divis = new Level(new THREE.Scene(), 6, null, 1234);
     expect(divis.enemies.length).toBeGreaterThan(0);
-    // A tower tier reaches the rooftop height (~5.2m) centred on the col1,row1
-    // block (cx=0, cz≈33) — no ordinary building/footprint collider gets that tall.
+    // The authored Divis blueprint places its tower at the map centre.
     const tower = divis.colliders.some(
-      (b) => b.max.y > 5 && Math.abs((b.min.x + b.max.x) / 2) < 2 && Math.abs((b.min.z + b.max.z) / 2 - 33) < 3,
+      (b) => b.max.y > 5 && Math.abs((b.min.x + b.max.x) / 2) < 2 && Math.abs((b.min.z + b.max.z) / 2) < 2,
     );
     expect(tower).toBe(true);
     // Ledge ambushers are seated up on the tier rings (floor-by-floor garrison).

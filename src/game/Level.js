@@ -1,8 +1,9 @@
 import * as THREE from "three";
 import { Enemy } from "./Enemy.js";
 import { EnemyDirector } from "./EnemyDirector.js";
-import { footprintCollider, blockPlan } from "./BuildingLayout.js";
+import { footprintCollider } from "./BuildingLayout.js";
 import { sectorProfile } from "./SectorProfile.js";
+import { mapBlueprint } from "./MapBlueprints.js";
 import { Victim } from "./Victim.js";
 import { buildFacade } from "./BuildingFacade.js";
 import FURNITURE from "../data/furniture.json";
@@ -139,12 +140,9 @@ class Door {
 /**
  * Level
  * -----
- * Procedurally assembles an OPEN Belfast quarter: a 3×3 grid of red-brick
- * building blocks separated by a navigable street grid. Each block is an
- * enclosed room (walls + ceiling + pitched roof) entered by kicking its door.
- * Enemies patrol the streets and hole up inside the buildings — the sector is
- * cleared (level complete) only when every invader is down. Difficulty and the
- * enemy count scale with the level index.
+ * Builds an authored campaign-map skeleton and procedurally dresses it. Every
+ * sector owns different dimensions, topology, landmarks, routes, encounters,
+ * deploy/extraction relationship, cover rhythm, and civilian placements.
  */
 export class Level {
   constructor(scene, index = 0, assets = null, layoutSeed = null) {
@@ -259,24 +257,27 @@ export class Level {
     this._muralMats = ["mural_ulster", "mural_ira"]
       .map((n) => tex(n, { repeat: [1, 1], roughness: 0.9, color: 0xb0aaa2 }));
 
-    // Grid geometry shared across builders. Buildings are tall, long terraces:
-    // narrow frontage (X) and a long run (Z), so they line the north–south
-    // streets the player walks down.
+    // Per-sector authored blueprint. Builders share a vocabulary, but the map
+    // skeleton and combat flow are deliberately different for every operation.
+    this.blueprint = mapBlueprint(this.index);
     this.CEIL_H = 3.2; // interior apartment ceiling height
     this.WALL_H = 3.6; // exterior wall height — sits just above the ceiling so the
                        // roof caps right on top (no hollow shell above the room)
-    this.BLOCK_W = 14; // frontage width (X)
-    this.BLOCK_L = 56; // 4× the original 14m run (Z)
-    this.STREET = 10; // lane width between blocks
-    this.PITCH_X = this.BLOCK_W + this.STREET; // 24
-    this.PITCH_Z = this.BLOCK_L + this.STREET; // 66
-    this.COORDS_X = [-this.PITCH_X, 0, this.PITCH_X]; // 3 columns: -24, 0, +24
-    this.COORDS_Z = [-this.PITCH_Z / 2, this.PITCH_Z / 2]; // 2 rows: -33, +33
-    this.GRID_HALF_X = this.PITCH_X + this.BLOCK_W / 2; // 31
-    this.GRID_HALF_Z = this.PITCH_Z / 2 + this.BLOCK_L / 2; // 61
+    this.BLOCK_W = this.blueprint.blockW;
+    this.BLOCK_L = this.blueprint.blockL;
+    this.STREET = this.blueprint.street;
+    this.PITCH_X = this.blueprint.pitchX;
+    this.PITCH_Z = this.blueprint.pitchZ;
+    this.COORDS_X = this.blueprint.coordsX;
+    this.COORDS_Z = this.blueprint.coordsZ;
+    this.GRID_HALF_X = this.blueprint.halfX;
+    this.GRID_HALF_Z = this.blueprint.halfZ;
+    this._blockSites = this.blueprint.blocks;
+    this.spawn.set(this.blueprint.spawn[0], 1.7, this.blueprint.spawn[1]);
+    this.spawnYaw = this.blueprint.spawnYaw || 0;
 
-    // Per-sector layout profile: bends this one generator into a distinct "layout
-    // problem" per sector (breach density, loot mix, street pressure).
+    // Difficulty profile remains responsible for garrison size and combat tuning;
+    // spatial identity now lives entirely in the blueprint above.
     this.profile = sectorProfile(this.index);
 
     this._build();
@@ -472,17 +473,8 @@ export class Level {
 
   /** Place street lamps zig-zagging down the two inner N-S lanes + by the spawn. */
   _buildStreetLamps() {
-    const lx = this.PITCH_X / 2; // ~12, lane centre between the column blocks
-    const zs = [-42, -14, 14, 42];
-    for (const lane of [-lx, lx]) {
-      zs.forEach((z, i) => {
-        const edge = i % 2 === 0 ? -3.5 : 3.5; // alternate sides of the lane
-        this._streetLamp(lane + edge, z, edge < 0 ? 1 : -1); // arm reaches over the street
-      });
-    }
-    // Two lamps lighting the spawn approach so the player doesn't start in the dark.
-    this._streetLamp(this.spawn.x - 5, this.spawn.z - 5, 1);
-    this._streetLamp(this.spawn.x + 5, this.spawn.z - 5, -1);
+    this.blueprint.lamps.forEach(([x, z], i) => this._streetLamp(x, z, i % 2 === 0 ? 1 : -1));
+    this._streetLamp(this.spawn.x - 3.5, this.spawn.z - 3, 1);
   }
 
   _box(w, h, d, mat, x, y, z, { collider = true, los = false } = {}) {
@@ -507,7 +499,7 @@ export class Level {
   }
 
   _buildProcedural() {
-    const { COORDS_X, COORDS_Z, PITCH_X, PITCH_Z, GRID_HALF_X, GRID_HALF_Z } = this;
+    const { GRID_HALF_X, GRID_HALF_Z } = this;
 
     // --- Ground: wet tarmac covering the whole quarter + the spawn approach.
     const groundSize = (Math.max(GRID_HALF_X, GRID_HALF_Z) + 30) * 2;
@@ -519,31 +511,35 @@ export class Level {
     floor.position.set(0, 0, 0);
     this.group.add(floor);
 
-    // Player deploys on the southern street, facing north down the terraces.
-    this.spawn = new THREE.Vector3(-PITCH_X / 2, 1.7, GRID_HALF_Z + 7);
-
     const rng = mulberry32(this.layoutSeed);
 
-    // --- 3×3 terraced blocks: enclosed rooms with kickable doors. ---------
-    // Roughly half the blocks hide an invader; the rest are empty rooms to
-    // breach. Street enemies (added below) guarantee a fight regardless.
-    COORDS_Z.forEach((cz, row) => {
-      COORDS_X.forEach((cx, col) => {
-        const plan = blockPlan(col, row, this.index, this.profile);
-        if (plan.kind === "interior") {
-          const enemyCount = this.profile.garrisonMin + (rng() < 0.5 ? this.profile.garrisonVar : 0);
-          this._buildBlock(cx, cz, enemyCount, rng);
-        } else if (plan.kind === "arena") {
-          this._buildArenaBlock(cx, cz, rng);
-        } else if (plan.kind === "yard") {
-          this._buildYardBlock(cx, cz, rng);
-        } else if (plan.kind === "tower") {
-          this._buildTower(cx, cz);
-        } else {
-          this._buildModelBlock(cx, cz, plan.template, rng);
-        }
-      });
-    });
+    // --- Authored sector skeleton. ----------------------------------------
+    for (const plan of this.blueprint.blocks) {
+      const cx = plan.x, cz = plan.z;
+      if (plan.kind === "interior") {
+        const enemyCount = this.profile.garrisonMin + (rng() < 0.5 ? this.profile.garrisonVar : 0);
+        this._buildBlock(cx, cz, enemyCount, rng);
+      } else if (plan.kind === "arena") {
+        this._buildArenaBlock(cx, cz, rng);
+      } else if (plan.kind === "yard") {
+        this._buildYardBlock(cx, cz, rng);
+      } else if (plan.kind === "tower") {
+        this._buildTower(cx, cz);
+      } else if (plan.kind === "checkpoint") {
+        this._buildCheckpointBlock(cx, cz, rng);
+      } else if (plan.kind === "courtyard") {
+        this._buildCourtyardBlock(cx, cz, rng);
+      } else if (plan.kind === "alley") {
+        this._buildAlleyBlock(cx, cz, rng);
+      } else if (plan.kind === "stronghold") {
+        this._buildStrongholdBlock(cx, cz, rng);
+      } else if (plan.kind === "ruins") {
+        this._buildRuinsBlock(cx, cz, rng);
+      } else {
+        const templates = ["bldg_terrace", "bldg_shop", "bldg_church"];
+        this._buildModelBlock(cx, cz, plan.template || templates[(plan.col + plan.row + this.index) % templates.length], rng);
+      }
+    }
 
     // --- Street network paint + far horizon. ------------------------------
     this._buildRoadPaint();
@@ -557,40 +553,24 @@ export class Level {
     // --- Warm street lamps pooling light down the lanes (night). ---
     this._buildStreetLamps();
 
-    // --- Street cover: crates + explosive barrels in the open lanes. ------
-    // The crate:barrel ratio is per-sector (Docks = barrel-dense for chains).
-    const coverCount = 6 + this.index * 2 + this.profile.coverBonus;
-    let placed = 0;
-    for (let guard = 0; placed < coverCount && guard < coverCount * 20; guard++) {
-      const x = (rng() - 0.5) * GRID_HALF_X * 2;
-      const z = (rng() - 0.5) * GRID_HALF_Z * 2;
-      if (!this._inStreet(x, z)) continue;
-      if (rng() < this.profile.crateRatio) {
-        this._addCrate(x, z, rng);
-      } else {
-        this._addBarrel(x, z);
-      }
-      placed++;
+    // --- Authored cover beats and encounter zones. ------------------------
+    for (const [x, z, kind] of this.blueprint.cover) {
+      if (kind === "barrel") this._addBarrel(x, z);
+      else if (kind === "car") this._buildCar(x, z);
+      else this._addCrate(x, z, rng);
     }
-
-    // Burnt-out car roadblocks at the two cross-street intersections (cover + LOS).
-    this._buildCar(PITCH_X / 2, 0);
-    this._buildCar(-PITCH_X / 2, 0);
-
-    // --- Street enemies patrolling the open grid. -------------------------
-    const streetEnemies = 12 + this.index * 3 + this.profile.streetEnemyBonus;
-    let spawned = 0;
-    for (let guard = 0; spawned < streetEnemies && guard < streetEnemies * 30; guard++) {
-      const x = (rng() - 0.5) * GRID_HALF_X * 2;
-      const z = (rng() - 0.5) * GRID_HALF_Z * 2;
-      if (!this._inStreet(x, z)) continue;
-      if (Math.hypot(x - this.spawn.x, z - this.spawn.z) < 9) continue; // not on top of spawn
-      const patrol = [
-        new THREE.Vector3(x, 0, z - 3.5),
-        new THREE.Vector3(x, 0, z + 3.5),
-      ];
-      this._addEnemy(new THREE.Vector3(x, 0, z), { patrol });
-      spawned++;
+    for (const [zx, zz, count] of this.blueprint.encounterZones) {
+      for (let i = 0; i < count; i++) {
+        const a = (i / count) * Math.PI * 2 + rng() * 0.35;
+        const radius = 1.5 + (i % 2) * 1.2;
+        const x = zx + Math.cos(a) * radius;
+        const z = zz + Math.sin(a) * radius;
+        const horizontal = Math.abs(Math.cos(a)) > 0.5;
+        const patrol = horizontal
+          ? [new THREE.Vector3(x - 3, 0, z), new THREE.Vector3(x + 3, 0, z)]
+          : [new THREE.Vector3(x, 0, z - 3), new THREE.Vector3(x, 0, z + 3)];
+        this._addEnemy(new THREE.Vector3(x, 0, z), { patrol });
+      }
     }
 
     // --- Set-dressing props + sectarian wall murals. ----------------------
@@ -609,8 +589,6 @@ export class Level {
    * @param {()=>number} rng  Seeded RNG from _buildProcedural.
    */
   _spawnVictims(rng) {
-    const { PITCH_X, PITCH_Z } = this;
-
     // Helper: add a victim at (vx, vz). Prefer the rigged (animated) victim so
     // she runs rather than slides; fall back to a static model, then a capsule.
     const addVictim = (vx, vz) => {
@@ -622,46 +600,20 @@ export class Level {
       return v;
     };
 
-    // --- Interior victim ---------------------------------------------------
-    // Interior blocks at col0/row1 (cx=-24, cz=+33) and col2/row0 (cx=+24, cz=-33).
-    // Pick one at random via the seeded RNG.
-    const interiorCentres = [
-      { x: -PITCH_X, z: PITCH_Z / 2 },
-      { x: PITCH_X,  z: -PITCH_Z / 2 },
-    ];
-    const ic = interiorCentres[rng() < 0.5 ? 0 : 1];
-    // Place the victim slightly inside the footprint, offset from dead centre.
-    const ivx = ic.x + (rng() - 0.5) * 3;
-    const ivz = ic.z + (rng() - 0.5) * 10;
-    const iv = addVictim(ivx, ivz);
-    // Tag the last-added enemy as a captor: it menaces `victim`, with a random
-    // initial taunt timer so multiple captors never strike in lockstep (D2).
     const tagCaptor = (victim) => {
       const e = this.enemies[this.enemies.length - 1];
       e._guardingVictim = victim;
       e._menaceTimer = 0.4 + rng() * 1.6;
     };
-    // One captor enemy ~2m to the side — tagged so it menaces the victim.
-    this._addEnemy(new THREE.Vector3(ivx + 1.5, 0, ivz), {});
-    tagCaptor(iv);
 
-    // --- Street victim(s) --------------------------------------------------
-    // 1–2 street victims (level 0 → 1, higher levels → 2).
-    const streetCount = this.index > 0 ? 2 : 1;
-    let placed = 0;
-    for (let guard = 0; placed < streetCount && guard < streetCount * 40; guard++) {
-      const vx = (rng() - 0.5) * this.GRID_HALF_X * 1.8;
-      const vz = (rng() - 0.5) * this.GRID_HALF_Z * 1.8;
-      if (!this._inStreet(vx, vz)) continue;
-      // Keep away from the player spawn.
-      if (Math.hypot(vx - this.spawn.x, vz - this.spawn.z) < 12) continue;
-      const sv = addVictim(vx, vz);
-      // Two attacker enemies — both tagged so they menace the victim (staggered).
-      this._addEnemy(new THREE.Vector3(vx + 2.0, 0, vz), {});
-      tagCaptor(sv);
-      this._addEnemy(new THREE.Vector3(vx - 2.0, 0, vz + 1.0), {});
-      tagCaptor(sv);
-      placed++;
+    for (const [vx, vz, placement] of this.blueprint.civilians) {
+      const victim = addVictim(vx, vz);
+      const captors = placement === "interior" ? 1 : 2;
+      for (let i = 0; i < captors; i++) {
+        const side = i === 0 ? 1 : -1;
+        this._addEnemy(new THREE.Vector3(vx + side * 1.8, 0, vz + i * 0.8), {});
+        tagCaptor(victim);
+      }
     }
     // Total civilians this sector started with (denominator for the HUD bar text).
     this.victimCount = this.victims.length;
@@ -952,6 +904,74 @@ export class Level {
       const ez = cz + (rng() - 0.5) * this.BLOCK_L * 0.7;
       this._addEnemy(new THREE.Vector3(cx + (rng() - 0.5) * 3, 0, ez), {});
     }
+  }
+
+  /** Shankill/Short Strand checkpoint: layered cover with offset firing gaps. */
+  _buildCheckpointBlock(cx, cz, rng) {
+    const pave = this._box(this.BLOCK_W + 3, 0.12, this.BLOCK_L + 3, this._materials.tarmac, cx, 0.06, cz, { collider: false });
+    pave.receiveShadow = true;
+    const rows = [-this.BLOCK_L * 0.27, 0, this.BLOCK_L * 0.27];
+    rows.forEach((off, i) => {
+      const gapSide = i % 2 === 0 ? -1 : 1;
+      const segW = Math.max(2.2, this.BLOCK_W * 0.34);
+      this._box(segW, 1.05, 1.1, this._materials.concrete, cx - gapSide * this.BLOCK_W * 0.24, 0.525, cz + off, { los: false });
+      this._box(segW * 0.7, 1.05, 1.1, this._materials.concrete, cx + gapSide * this.BLOCK_W * 0.3, 0.525, cz + off, { los: false });
+    });
+    this._addCrate(cx + this.BLOCK_W * 0.25, cz - this.BLOCK_L * 0.38, rng);
+  }
+
+  /** Falls/Markets/Divis courtyard: readable loop with four deliberate entrances. */
+  _buildCourtyardBlock(cx, cz, rng) {
+    this._box(this.BLOCK_W + 3, 0.12, this.BLOCK_L + 3, this._materials.pavement, cx, 0.06, cz, { collider: false });
+    const h = 1.25;
+    const sideLen = Math.max(3, this.BLOCK_L * 0.3);
+    for (const zOff of [-this.BLOCK_L * 0.32, this.BLOCK_L * 0.32]) {
+      this._box(1.0, h, sideLen, this._materials.brick, cx - this.BLOCK_W * 0.38, h / 2, cz + zOff, { los: false });
+      this._box(1.0, h, sideLen, this._materials.brick, cx + this.BLOCK_W * 0.38, h / 2, cz + zOff, { los: false });
+    }
+    this._box(this.BLOCK_W * 0.45, h, 1.0, this._materials.brick, cx, h / 2, cz - this.BLOCK_L * 0.44, { los: false });
+    this._box(this.BLOCK_W * 0.45, h, 1.0, this._materials.brick, cx, h / 2, cz + this.BLOCK_L * 0.44, { los: false });
+    this._addBarrel(cx, cz);
+    this._addCrate(cx - 2.2, cz + 2.0, rng);
+  }
+
+  /** Ardoyne alley: alternating choke gaps create a compact close-range slalom. */
+  _buildAlleyBlock(cx, cz, rng) {
+    this._box(this.BLOCK_W + 2, 0.12, this.BLOCK_L + 2, this._materials.concrete, cx, 0.06, cz, { collider: false });
+    const rows = 5;
+    for (let i = 0; i < rows; i++) {
+      const z = cz - this.BLOCK_L * 0.4 + (i / (rows - 1)) * this.BLOCK_L * 0.8;
+      const side = i % 2 === 0 ? -1 : 1;
+      this._box(this.BLOCK_W * 0.66, 2.2, 0.65, this._materials.brickDark, cx + side * this.BLOCK_W * 0.18, 1.1, z, { los: true });
+    }
+    this._addCrate(cx, cz - 2, rng);
+  }
+
+  /** Short Strand objective room: concentric defensive ring around extraction. */
+  _buildStrongholdBlock(cx, cz, rng) {
+    this._box(this.BLOCK_W + 4, 0.12, this.BLOCK_L + 4, this._materials.concrete, cx, 0.06, cz, { collider: false });
+    const ringX = this.BLOCK_W * 0.36, ringZ = this.BLOCK_L * 0.32;
+    this._box(this.BLOCK_W * 0.5, 1.1, 1.0, this._materials.crate, cx, 0.55, cz - ringZ, { los: false });
+    this._box(this.BLOCK_W * 0.5, 1.1, 1.0, this._materials.crate, cx, 0.55, cz + ringZ, { los: false });
+    this._box(1.0, 1.1, this.BLOCK_L * 0.35, this._materials.crate, cx - ringX, 0.55, cz, { los: false });
+    this._box(1.0, 1.1, this.BLOCK_L * 0.35, this._materials.crate, cx + ringX, 0.55, cz, { los: false });
+    this._addBarrel(cx - 2, cz);
+    this._addBarrel(cx + 2, cz);
+    this._addCrate(cx, cz + 3, rng);
+  }
+
+  /** Divis approach ruins: broken-height cover supports flanking and jump angles. */
+  _buildRuinsBlock(cx, cz, rng) {
+    this._box(this.BLOCK_W + 3, 0.12, this.BLOCK_L + 3, this._materials.concrete, cx, 0.06, cz, { collider: false });
+    const pieces = [
+      [-0.32, -0.34, 0.7, 0.42], [0.3, -0.18, 1.25, 0.34],
+      [-0.18, 0.12, 1.8, 0.38], [0.34, 0.34, 0.9, 0.46],
+    ];
+    for (const [nx, nz, h, span] of pieces) {
+      this._box(this.BLOCK_W * span, h, 0.8, this._materials.brickDark,
+        cx + nx * this.BLOCK_W, h / 2, cz + nz * this.BLOCK_L, { los: h > 1.4 });
+    }
+    this._addCrate(cx + 1.5, cz, rng);
   }
 
   /**
@@ -1477,10 +1497,15 @@ export class Level {
   _inStreet(x, z) {
     const mx = this.BLOCK_W / 2 + 0.8;
     const mz = this.BLOCK_L / 2 + 0.8;
-    for (const cz of this.COORDS_Z) {
-      for (const cx of this.COORDS_X) {
-        if (Math.abs(x - cx) < mx && Math.abs(z - cz) < mz) return false;
-      }
+    for (const block of this._blockSites) {
+      if (!["model", "interior"].includes(block.kind)) continue;
+      if (Math.abs(x - block.x) < mx && Math.abs(z - block.z) < mz) return false;
+    }
+    // Open landmark cells remain navigable, but avoid their actual low walls,
+    // containers, cars, and authored cover when scattering random dressing.
+    for (const box of this.colliders) {
+      if (box.max.y < 0.3) continue;
+      if (x > box.min.x - 0.5 && x < box.max.x + 0.5 && z > box.min.z - 0.5 && z < box.max.z + 0.5) return false;
     }
     return true;
   }
@@ -1514,28 +1539,28 @@ export class Level {
     const halfL = this.BLOCK_L / 2;
     let count = 0;
     const maxMurals = 4 + this.index;
-    for (const cz of this.COORDS_Z) {
-      for (const cx of this.COORDS_X) {
-        if (count >= maxMurals || rng() > 0.5) continue;
-        const tex = murals[(rng() * murals.length) | 0];
-        const size = 3.0 + rng() * 1.6;
-        const mesh = new THREE.Mesh(
-          new THREE.PlaneGeometry(size, size),
-          new THREE.MeshStandardMaterial({
-            map: tex,
-            roughness: 0.95,
-            metalness: 0,
-            polygonOffset: true,
-            polygonOffsetFactor: -2,
-          }),
-        );
-        // Just proud of the long east wall's outer face, facing the street.
-        const oz = (rng() - 0.5) * halfL; // anywhere along the long terrace
-        mesh.position.set(cx + halfW + 0.33, 0.2 + size / 2, cz + oz);
-        mesh.rotation.y = -Math.PI / 2;
-        this.group.add(mesh);
-        count++;
-      }
+    for (const block of this._blockSites) {
+      if (!["model", "interior"].includes(block.kind)) continue;
+      const cx = block.x, cz = block.z;
+      if (count >= maxMurals || rng() > 0.5) continue;
+      const tex = murals[(rng() * murals.length) | 0];
+      const size = 3.0 + rng() * 1.6;
+      const mesh = new THREE.Mesh(
+        new THREE.PlaneGeometry(size, size),
+        new THREE.MeshStandardMaterial({
+          map: tex,
+          roughness: 0.95,
+          metalness: 0,
+          polygonOffset: true,
+          polygonOffsetFactor: -2,
+        }),
+      );
+      // Just proud of the long east wall's outer face, facing the street.
+      const oz = (rng() - 0.5) * halfL;
+      mesh.position.set(cx + halfW + 0.33, 0.2 + size / 2, cz + oz);
+      mesh.rotation.y = -Math.PI / 2;
+      this.group.add(mesh);
+      count++;
     }
   }
 
@@ -1560,32 +1585,11 @@ export class Level {
       }
     };
 
-    // Phone booth standing ON the pavement apron at the east edge of the
-    // cx=-24 block (apron x∈[-32.5,-15.5]; building face at x=-17), facing the
-    // street. x=-16.2 sits in the ~1.5m pavement strip, clear of the building.
-    place("prop_phone_booth", -16.2, 52, -Math.PI / 2, [0.5, 0.5, 2.4]);
-
-    // Heavier, collidable street furniture for cover + a populated feel. Each
-    // sits on a pavement edge (just off a building face) or in an open lane,
-    // with a footprint collider [hw(x), hd(z), h(y)] hugging the model. Traffic
-    // cones stay collider-free (footprint null). Positions are hand-placed and
-    // verified against the block/apron spans so nothing clips a building.
-    const furniture = [
-      ["prop_wheelie_bin", -16.2, 24.0, -Math.PI / 2, [0.34, 0.34, 1.0]],
-      ["prop_wheelie_bin", -16.2, 25.3, -Math.PI / 2, [0.34, 0.34, 1.0]],
-      ["prop_wheelie_bin", 8.0, -22.0, Math.PI / 2, [0.34, 0.34, 1.0]],
-      ["prop_wheelie_bin", -8.0, 40.0, -Math.PI / 2, [0.34, 0.34, 1.0]],
-      ["prop_bicycle", -16.3, -20.0, 0, [0.26, 0.9, 1.0]],
-      ["prop_bicycle", 16.3, 30.0, 0, [0.26, 0.9, 1.0]],
-      ["crate_supply", -12.0, 14.0, 0.3, [0.55, 0.55, 1.1]],
-      ["crate_supply", 12.0, -14.0, -0.4, [0.55, 0.55, 1.1]],
-      ["sandbag_barricade", -12.0, 48.0, 0, [0.9, 0.55, 1.0]],
-      ["sandbag_barricade", 12.0, 18.0, Math.PI / 2, [0.55, 0.9, 1.0]],
-      ["prop_traffic_cone", -12.0, 11.0, 0, null],
-      ["prop_traffic_cone", -12.0, 17.0, 0, null],
-      ["prop_traffic_cone", 12.0, -11.0, 0, null],
-    ];
-    for (const [slug, fx, fz, fry, fp] of furniture) place(slug, fx, fz, fry, fp);
+    // A recognizable phone fixture near deploy anchors the player's mental map.
+    const phoneX = this.spawn.x + 4.5, phoneZ = this.spawn.z - 5;
+    if (this._inStreet(phoneX, phoneZ)) {
+      place("prop_phone_booth", phoneX, phoneZ, -Math.PI / 2, [0.5, 0.5, 2.4]);
+    }
 
     // Sandbag barricades as occasional street cover.
     for (let i = 0; i < 2 + this.index; i++) {

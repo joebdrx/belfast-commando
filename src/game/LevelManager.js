@@ -119,7 +119,12 @@ export class LevelManager {
     // Extraction volume: authored point, else run-back-to-spawn default. An
     // optional `y` lifts the beacon (rooftop extraction) and `dy` gates the
     // trigger by height; `dy` defaults to Infinity so ground sectors are unchanged.
-    const ex = entry.extraction;
+    // Map blueprints own spatial truth. levels.json keeps a mirrored extraction
+    // for tooling/back-compat, while runtime prefers the built map's authored pad.
+    const authored = this.level.blueprint && this.level.blueprint.extraction;
+    const ex = authored
+      ? { x: authored[0], z: authored[1], r: authored[2], y: authored[3], dy: authored[4] }
+      : entry.extraction;
     const center = ex
       ? new THREE.Vector3(ex.x, ex.y || 0, ex.z)
       : new THREE.Vector3(this.level.spawn.x, 0, this.level.spawn.z);

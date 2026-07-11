@@ -6,9 +6,12 @@
     "name": "Falls Road",
     "seed": 0,
     "intro": "Operation: Reclaim the Falls. Doors in, invaders out — same as always.",
+    "mapStyle": "Residential breach maze",
+    "mastery": "Clear every room before extraction",
     "outro": "The Falls is ours again. On to the next street, lads.",
-    "extraction": { "x": -12, "z": 60, "r": 5 },
-    "par": 50
+    "extraction": { "x": 31.5, "z": -78, "r": 5 },
+    "par": 50,
+    "scoreTarget": 6500
   },
   {
     "id": "shankill",
@@ -17,10 +20,13 @@
     "name": "Shankill",
     "seed": 1,
     "intro": "Operation: Hold the Shankill. Davy's people are with us now — don't shoot the orange sashes.",
+    "mapStyle": "Barricaded street gauntlet",
+    "mastery": "Keep the combo alive across the long sightlines",
     "outro": "Shankill's clear. Never thought I'd cheer for an Orangeman. Aye, needs must.",
-    "extraction": { "x": 12, "z": -58, "r": 5 },
+    "extraction": { "x": 0, "z": -76, "r": 5 },
     "modifierChance": 0.35,
-    "par": 55
+    "par": 55,
+    "scoreTarget": 8500
   },
   {
     "id": "the_markets",
@@ -29,10 +35,13 @@
     "name": "The Markets",
     "seed": 2,
     "intro": "Operation: Take the Markets. Tight wee streets — keep your back to a wall.",
+    "mapStyle": "Market-square arena",
+    "mastery": "Control the square and rescue every civilian",
     "outro": "The Markets are back in business. Belfast trade, not invader loot.",
-    "extraction": { "x": -12, "z": -58, "r": 4.5 },
+    "extraction": { "x": -33, "z": -43, "r": 5 },
     "modifierChance": 0.5,
-    "par": 60
+    "par": 60,
+    "scoreTarget": 10500
   },
   {
     "id": "the_docks",
@@ -41,10 +50,13 @@
     "name": "The Docks",
     "seed": 3,
     "intro": "Operation: Storm the Docks. They came off boats — send them back the same way.",
+    "mapStyle": "Explosive container yard",
+    "mastery": "Chain barrel detonations through the yard",
     "outro": "The Docks are sealed. Nothing foreign sailing into Belfast tonight.",
-    "extraction": { "x": -12, "z": 0, "r": 4.5 },
+    "extraction": { "x": 42, "z": -59, "r": 5 },
     "modifierChance": 0.4,
-    "par": 65
+    "par": 65,
+    "scoreTarget": 12500
   },
   {
     "id": "ardoyne",
@@ -53,10 +65,13 @@
     "name": "Ardoyne",
     "seed": 4,
     "intro": "Operation: Break the Ardoyne line. They've dug in deep — kick harder.",
+    "mapStyle": "Close-quarters tenement maze",
+    "mastery": "Breach fast and finish without taking damage",
     "outro": "Ardoyne stands. The line held, so it did.",
-    "extraction": { "x": 0, "z": -64, "r": 5 },
+    "extraction": { "x": 18, "z": -73, "r": 5 },
     "modifierChance": 0.6,
-    "par": 70
+    "par": 70,
+    "scoreTarget": 14500
   },
   {
     "id": "short_strand",
@@ -65,10 +80,13 @@
     "name": "Short Strand",
     "seed": 5,
     "intro": "Operation: Relieve the Short Strand. Outnumbered, surrounded — perfect.",
+    "mapStyle": "Besieged defensive pocket",
+    "mastery": "Break the encirclement under par time",
     "outro": "Short Strand holds out, like it always has. Both flags flying now.",
-    "extraction": { "x": 12, "z": 58, "r": 4.5 },
+    "extraction": { "x": 0, "z": 0, "r": 5 },
     "modifierChance": 0.5,
-    "par": 75
+    "par": 75,
+    "scoreTarget": 17000
   },
   {
     "id": "divis_tower",
@@ -77,9 +95,12 @@
     "name": "Divis Tower",
     "seed": 6,
     "intro": "Operation: Crown the Divis. Last invader command post in the city is up top. Climb it and finish them.",
+    "mapStyle": "Vertical tower assault",
+    "mastery": "Clear every tier and extract from the roof",
     "outro": "Divis is ours. Belfast is liberated — green, orange and all. Now get to the chopper.",
-    "extraction": { "x": 0, "z": 33, "y": 5.2, "r": 4, "dy": 1.2 },
+    "extraction": { "x": 0, "z": 0, "y": 5.2, "r": 4, "dy": 1.2 },
     "modifierChance": 0.75,
-    "par": 90
+    "par": 90,
+    "scoreTarget": 21000
   }
 ]
