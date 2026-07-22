@@ -419,7 +419,7 @@ export class Hub {
       // The laptop itself is a clickable "upgrades" fixture: clicking it dollies
       // the camera in and opens the black-market shop overlay. Anchor floats the
       // label above the open lid (like the wall phone's "Dial Code" label).
-      this._registerInteractable(this._barProps.thinkpad, "upgrades", "Black Market", 1.55);
+      this._registerInteractable(this._barProps.thinkpad, "upgrades", "Click Laptop · Black Market", 1.55);
     }
   }
 

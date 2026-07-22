@@ -218,6 +218,29 @@ html, body {
   border-top: 5px solid rgba(255, 122, 26, 0.55);
 }
 
+/* The laptop is a primary shop entrance, not set dressing. Give its locator a
+   stronger button-like treatment and a quiet pulse while preserving canvas
+   raycasts (the label layer itself remains pointer-events:none). */
+.hub-label[data-action="upgrades"] {
+  padding: 8px 14px;
+  color: #dff8ff;
+  background: rgba(5, 18, 22, 0.94);
+  border: 2px solid rgba(79, 214, 255, 0.82);
+  box-shadow: 0 0 0 1px rgba(0,0,0,0.75), 0 0 22px rgba(79,214,255,0.28);
+  text-shadow: 0 0 9px rgba(79,214,255,0.66);
+  animation: hub-laptop-callout 1.8s ease-in-out infinite;
+}
+.hub-label[data-action="upgrades"]::after {
+  border-top-color: rgba(79, 214, 255, 0.82);
+}
+@keyframes hub-laptop-callout {
+  0%, 100% { box-shadow: 0 0 0 1px rgba(0,0,0,0.75), 0 0 14px rgba(79,214,255,0.20); }
+  50% { box-shadow: 0 0 0 1px rgba(0,0,0,0.75), 0 0 28px rgba(79,214,255,0.44); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .hub-label[data-action="upgrades"] { animation: none; }
+}
+
 /* -- World-anchored civilian locators + level tips (projected each frame) -- */
 #victim-locators {
   position: fixed;

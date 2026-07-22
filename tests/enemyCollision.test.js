@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import * as THREE from "three";
-import { Enemy } from "../src/game/Enemy.js";
+import { corpseSupportY, Enemy } from "../src/game/Enemy.js";
 
 /**
  * Group A1 regression: enemies must collide with static level geometry the same
@@ -91,5 +91,52 @@ describe("Enemy.update knockback + corpse settling", () => {
     e.group.position.y = 4; // flung up at the moment of death
     for (let i = 0; i < 90; i++) e.update(1 / 60, ctx);
     expect(e.group.position.y).toBeCloseTo(e.radius, 2); // settled flat on the floor
+  });
+
+  it("uses a valid topple axis when damage arrives vertically", () => {
+    const e = new Enemy(new THREE.Vector3(0, 0, 0), {});
+    const ctx = liveCtx(null);
+    e.takeDamage(99999, { x: 0, y: -1, z: 0 }, 0);
+    for (let i = 0; i < 60; i++) e.update(1 / 60, ctx);
+    expect(e._toppleAxis.length()).toBeCloseTo(1, 5);
+    expect(Number.isFinite(e.group.quaternion.w)).toBe(true);
+    expect(e.group.position.y).toBeCloseTo(e.radius, 2);
+  });
+
+  it("settles on an elevated support instead of hanging or falling through it", () => {
+    const ledge = new THREE.Box3(
+      new THREE.Vector3(-2, 0, -2),
+      new THREE.Vector3(2, 1.2, 2),
+    );
+    const e = new Enemy(new THREE.Vector3(0, 1.2, 0), {});
+    const ctx = liveCtx(ledge);
+    e.takeDamage(99999, { x: 1, y: 0, z: 0 }, 0);
+    for (let i = 0; i < 60; i++) e.update(1 / 60, ctx);
+    expect(e.group.position.y).toBeCloseTo(1.2 + e.radius, 2);
+  });
+
+  it("grounds the actual model bounds after the approximate topple", () => {
+    const model = new THREE.Group();
+    const body = new THREE.Mesh(new THREE.BoxGeometry(0.6, 1.8, 0.4));
+    body.position.y = 0.9;
+    model.add(body);
+    const e = new Enemy(new THREE.Vector3(0, 0, 0), { model });
+    const ctx = liveCtx(null);
+    e.takeDamage(99999, { x: 1, y: 0, z: 0 }, 0);
+    for (let i = 0; i < 60; i++) e.update(1 / 60, ctx);
+
+    const bounds = new THREE.Box3().setFromObject(e.group, true);
+    expect(bounds.min.y).toBeCloseTo(0, 4);
+    expect(e._corpseRestOffset).not.toBeNull();
+  });
+});
+
+describe("corpseSupportY", () => {
+  it("ignores an overlapping wall whose top is above the corpse", () => {
+    const wall = new THREE.Box3(
+      new THREE.Vector3(-1, 0, -1),
+      new THREE.Vector3(1, 4, 1),
+    );
+    expect(corpseSupportY([wall], 0, 0, 0.4, 0.45)).toBe(0);
   });
 });

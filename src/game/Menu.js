@@ -8,6 +8,7 @@ import { isTouchDevice } from "./TouchControls.js";
 import { createEl } from "../utils/dom.js";
 import { BASE, SENS_MIN, SENS_MAX, SENS_STEP, QUALITY_OPTIONS, DEFAULT_SETTINGS } from "../utils/constants.js";
 import { formatMissionTime } from "./CampaignPerformance.js";
+import { createCatalogThumbnail } from "./CatalogVisuals.js";
 
 /**
  * Build a fullscreen toggle button styled to match the game's button conventions.
@@ -60,6 +61,25 @@ function buildFullscreenButton(cls) {
  */
 
 const PREFIX = "bc-menu-";
+const INTRO_SEEN_KEY = "bc.prologue.seen.v1";
+
+export function shouldShowPrologue(storage) {
+  if (!storage || typeof storage.getItem !== "function") return true;
+  try {
+    return storage.getItem(INTRO_SEEN_KEY) !== "1";
+  } catch {
+    return true;
+  }
+}
+
+function markPrologueSeen(storage) {
+  if (!storage || typeof storage.setItem !== "function") return;
+  try {
+    storage.setItem(INTRO_SEEN_KEY, "1");
+  } catch {
+    // Private browsing/storage denial should never block entry to the menu.
+  }
+}
 
 /**
  * Desktop (Tauri) build download. The native installers are published to the
@@ -218,6 +238,17 @@ export class Menu {
         margin-top: 8px; font-size: 12px; letter-spacing: 0.04em;
         color: rgba(240,237,232,0.55);
       }
+      .${PREFIX}laptop-cta {
+        border-color: rgba(79,214,255,0.52); border-left-color: #4fd6ff;
+        color: #dff8ff; background: rgba(79,214,255,0.07);
+      }
+      .${PREFIX}laptop-cta:hover {
+        color: #071014; background: #4fd6ff; border-color: #4fd6ff;
+      }
+      .${PREFIX}laptop-hint {
+        margin: 7px 2px 2px; font-size: 11px; line-height: 1.4;
+        color: rgba(240,237,232,0.52);
+      }
       .${PREFIX}list { display: flex; flex-direction: column; gap: 10px; text-align: left; }
       .${PREFIX}section-label {
         font-size: 12px; font-weight: 800; letter-spacing: 0.18em;
@@ -231,6 +262,23 @@ export class Menu {
         border: 1px solid rgba(255,255,255,0.10);
         border-left: 2px solid rgba(255,122,26,0.5);
         border-radius: 3px;
+      }
+      .${PREFIX}thumb {
+        position: relative; flex: 0 0 78px; width: 78px; height: 58px;
+        display: grid; place-items: center; overflow: hidden;
+        color: #ffc566; background: rgba(255,122,26,0.07);
+        border: 1px solid rgba(255,122,26,0.34);
+        box-shadow: inset 0 0 18px rgba(255,122,26,0.08);
+      }
+      .${PREFIX}thumb::after {
+        content: ""; position: absolute; inset: 0; pointer-events: none;
+        background: repeating-linear-gradient(transparent 0 4px, rgba(0,0,0,0.16) 4px 5px);
+      }
+      .${PREFIX}thumb svg { width: 66px; height: 44px; }
+      .${PREFIX}thumb span {
+        position: absolute; right: 4px; bottom: 2px;
+        font: 800 8px/1 "Courier New", monospace; letter-spacing: 0.12em;
+        color: rgba(240,237,232,0.48);
       }
       .${PREFIX}item-main { flex: 1 1 auto; min-width: 0; }
       .${PREFIX}item-name {
@@ -254,6 +302,22 @@ export class Menu {
         border: 1px solid rgba(255,255,255,0.10);
         border-radius: 3px;
       }
+      .${PREFIX}prologue {
+        padding: 18px; text-align: left;
+        background: linear-gradient(145deg, rgba(255,122,26,0.10), rgba(255,255,255,0.025));
+        border: 1px solid rgba(255,122,26,0.34); border-left: 3px solid #ff7a1a;
+        box-shadow: inset 0 0 28px rgba(0,0,0,0.24);
+      }
+      .${PREFIX}prologue-date {
+        margin-bottom: 11px; color: #ffc566;
+        font: 800 10px/1.4 "Courier New", monospace;
+        letter-spacing: 0.12em; text-transform: uppercase;
+      }
+      .${PREFIX}prologue-copy {
+        margin: 0 0 11px; font-size: 13px; line-height: 1.55;
+        color: rgba(240,237,232,0.82);
+      }
+      .${PREFIX}prologue-copy:last-child { margin-bottom: 0; }
       .${PREFIX}story-head {
         display: flex; align-items: center; gap: 10px; margin-bottom: 8px;
       }
@@ -264,6 +328,7 @@ export class Menu {
       }
       .${PREFIX}faction.ira { background: #2f9e44; }
       .${PREFIX}faction.ulster { background: #e07b1a; }
+      .${PREFIX}faction.resistance { color: #0b0c0d; background: #ffc566; }
       .${PREFIX}line {
         font-size: 13.5px; line-height: 1.5; color: rgba(240,237,232,0.82);
         font-style: italic;
@@ -388,6 +453,21 @@ export class Menu {
       .${PREFIX}key-enter { color: #0b0c0d; background: #ff7a1a; border-color: #ff7a1a; }
       .${PREFIX}key-enter:hover { background: #ffa24d; }
       .${PREFIX}dialclose { margin-top: 14px; }
+
+      /* Phone/tablet safehouse: the command surface becomes a real full-screen
+         menu. Hiding the decorative room behind it prevents world callouts and
+         the hero art from competing with long briefing/catalogue copy. */
+      @media (max-width: 600px) {
+        .${PREFIX}panel {
+          width: 100%; min-width: 0; max-width: none; box-sizing: border-box;
+          padding: 42px 28px 108px;
+          background: #08090b;
+        }
+        .${PREFIX}logo { width: 118px; max-width: 31vw; top: 28px; right: 18px; }
+        .${PREFIX}steam { right: 16px; bottom: 14px; }
+        .${PREFIX}item { flex-wrap: wrap; }
+        .${PREFIX}item-main { flex-basis: calc(100% - 90px); }
+      }
     `;
     document.head.appendChild(style);
   }
@@ -505,6 +585,10 @@ export class Menu {
       this._call("onUpgrades");
       this._renderUpgrades();
     }));
+    row.appendChild(this._makeButton("Story & Briefing", () => {
+      this._call("onStoryLogs");
+      this._renderStory();
+    }));
     row.appendChild(this._makeButton("Settings", () => {
       this._renderSettings();
     }));
@@ -529,6 +613,33 @@ export class Menu {
     }
   }
 
+  /** First-run context card: identity, conflict and stakes before any deployment. */
+  _renderPrologue() {
+    const prologue = DIALOGUE.find((entry) => entry.kind === "prologue");
+    if (!prologue) {
+      this._renderMain();
+      return;
+    }
+    this._view = "prologue";
+    this._clearBody();
+    this.body.appendChild(this._el("div", `${PREFIX}sub-title`, prologue.title || "Resistance Briefing"));
+
+    const card = this._el("div", `${PREFIX}prologue`);
+    if (prologue.date) card.appendChild(this._el("div", `${PREFIX}prologue-date`, prologue.date));
+    for (const paragraph of prologue.lines || []) {
+      card.appendChild(this._el("p", `${PREFIX}prologue-copy`, paragraph));
+    }
+    this.body.appendChild(card);
+
+    const actions = this._el("div", `${PREFIX}btnrow`);
+    actions.style.marginTop = "16px";
+    actions.appendChild(this._makeButton("Enter Safehouse  ›", () => {
+      markPrologueSeen(typeof window !== "undefined" ? window.localStorage : null);
+      this._renderMain();
+    }));
+    this.body.appendChild(actions);
+  }
+
   /** True when running inside the native Tauri desktop shell (not the browser). */
   _inTauri() {
     return typeof window !== "undefined" && ("__TAURI_INTERNALS__" in window || "__TAURI__" in window);
@@ -545,6 +656,18 @@ export class Menu {
     this._clearBody();
 
     this.body.appendChild(this._el("div", `${PREFIX}sub-title`, "Arsenal & Upgrades"));
+
+    // The laptop was previously only discoverable as a differently-styled world
+    // label on the transparent side of the scene. Mirror the action inside the
+    // established left command panel so it is unmistakably interactive.
+    const laptopCta = this._makeButton("Open Black Market Laptop  ›", () => this._call("onOpenLaptopShop"), true);
+    laptopCta.classList.add(`${PREFIX}laptop-cta`);
+    this.body.appendChild(laptopCta);
+    this.body.appendChild(this._el(
+      "div",
+      `${PREFIX}laptop-hint`,
+      "The glowing laptop on the planning table opens the full quartermaster terminal.",
+    ));
 
     const prog = this._providers.progression;
     if (!prog || typeof prog.listUpgrades !== "function") {
@@ -675,7 +798,7 @@ export class Menu {
     this._view = "story";
     this._clearBody();
 
-    this.body.appendChild(this._el("div", `${PREFIX}sub-title`, "Story Logs"));
+    this.body.appendChild(this._el("div", `${PREFIX}sub-title`, "Story & Briefing"));
 
     const prog = gameState.getProgression();
     const unlocked = DIALOGUE.filter((d) => this._meetsRequirement(d.requires, prog));
@@ -854,6 +977,8 @@ export class Menu {
   _upgradeRow(u, prog) {
     const item = this._el("div", `${PREFIX}item`);
 
+    item.appendChild(createCatalogThumbnail(document, u.id, `${PREFIX}thumb`));
+
     const main = this._el("div", `${PREFIX}item-main`);
     main.appendChild(this._el("div", `${PREFIX}item-name`, u.name));
     main.appendChild(this._el("div", `${PREFIX}item-desc`, u.desc));
@@ -881,6 +1006,8 @@ export class Menu {
   /** A single boot row: Buy if unowned/affordable, Equip if owned, Equipped if active. */
   _bootRow(b, prog) {
     const item = this._el("div", `${PREFIX}item`);
+
+    item.appendChild(createCatalogThumbnail(document, b.id, `${PREFIX}thumb`));
 
     const main = this._el("div", `${PREFIX}item-main`);
     const name = this._el("div", `${PREFIX}item-name`, b.name);
@@ -930,6 +1057,8 @@ export class Menu {
    */
   _weaponRow(w, prog, nameById) {
     const item = this._el("div", `${PREFIX}item`);
+
+    item.appendChild(createCatalogThumbnail(document, w.id, `${PREFIX}thumb`));
 
     const main = this._el("div", `${PREFIX}item-main`);
     const name = this._el("div", `${PREFIX}item-name`, w.name);
@@ -1002,12 +1131,15 @@ export class Menu {
   /** A single story snippet: speaker, faction badge, lines. */
   _storyRow(snip) {
     const wrap = this._el("div", `${PREFIX}story`);
+    if (snip.title) wrap.appendChild(this._el("div", `${PREFIX}prologue-date`, snip.title));
     const head = this._el("div", `${PREFIX}story-head`);
     head.appendChild(this._el("span", `${PREFIX}speaker`, snip.speaker));
+    const factionClass = snip.faction === "ira" ? "ira" : snip.faction === "ulster" ? "ulster" : "resistance";
+    const factionLabel = snip.faction === "ira" ? "IRA" : snip.faction === "ulster" ? "Ulster" : "Joint Resistance";
     const faction = this._el(
       "span",
-      `${PREFIX}faction ${snip.faction === "ira" ? "ira" : "ulster"}`,
-      snip.faction === "ira" ? "IRA" : "Ulster",
+      `${PREFIX}faction ${factionClass}`,
+      factionLabel,
     );
     head.appendChild(faction);
     wrap.appendChild(head);
@@ -1311,7 +1443,9 @@ export class Menu {
 
   /** Show the menu (resets to the main view) and make it interactive. */
   show() {
-    this._renderMain();
+    const storage = typeof window !== "undefined" ? window.localStorage : null;
+    if (shouldShowPrologue(storage)) this._renderPrologue();
+    else this._renderMain();
     this._updateRp();
     this.root.classList.remove(`${PREFIX}hidden`);
   }

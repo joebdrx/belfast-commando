@@ -562,6 +562,7 @@ export class Level {
       else this._addCrate(x, z, rng);
     }
     for (const [zx, zz, count] of this.blueprint.encounterZones) {
+      const fireteam = this._director.nextSquad(count);
       for (let i = 0; i < count; i++) {
         const a = (i / count) * Math.PI * 2 + rng() * 0.35;
         const radius = 1.5 + (i % 2) * 1.2;
@@ -571,7 +572,7 @@ export class Level {
         const patrol = horizontal
           ? [new THREE.Vector3(x - 3, 0, z), new THREE.Vector3(x + 3, 0, z)]
           : [new THREE.Vector3(x, 0, z - 3), new THREE.Vector3(x, 0, z + 3)];
-        this._addEnemy(new THREE.Vector3(x, 0, z), { patrol });
+        this._addEnemy(new THREE.Vector3(x, 0, z), { patrol, archetype: fireteam[i] });
       }
     }
 
@@ -623,9 +624,10 @@ export class Level {
     for (const [vx, vz, placement] of this.blueprint.civilians) {
       const victim = addVictim(vx, vz);
       const captors = placement === "interior" ? 1 : 2;
+      const fireteam = this._director.nextSquad(captors);
       for (let i = 0; i < captors; i++) {
         const side = i === 0 ? 1 : -1;
-        this._addEnemy(new THREE.Vector3(vx + side * 1.8, 0, vz + i * 0.8), {});
+        this._addEnemy(new THREE.Vector3(vx + side * 1.8, 0, vz + i * 0.8), { archetype: fireteam[i] });
         tagCaptor(victim);
       }
     }
@@ -774,8 +776,10 @@ export class Level {
       const j = Math.floor(rng() * (i + 1));
       [order[i], order[j]] = [order[j], order[i]];
     }
-    for (let k = 0; k < Math.min(enemyCount, N); k++) {
-      this._addEnemy(new THREE.Vector3(cx, 0, roomZ(order[k])), {});
+    const garrisonCount = Math.min(enemyCount, N);
+    const fireteam = this._director.nextSquad(garrisonCount);
+    for (let k = 0; k < garrisonCount; k++) {
+      this._addEnemy(new THREE.Vector3(cx, 0, roomZ(order[k])), { archetype: fireteam[k] });
     }
 
     // Furnish each room as a low apartment (data-driven layout, door approach +
@@ -914,9 +918,10 @@ export class Level {
     this._addCrate(cx - 1.0, cz + halfL * 0.5, rng);
     // Open-stall garrison, kept to the clear central lane (away from stalls at ±3.2).
     const garrison = this.profile.garrisonMin + (rng() < 0.5 ? this.profile.garrisonVar : 0);
+    const fireteam = this._director.nextSquad(garrison);
     for (let i = 0; i < garrison; i++) {
       const ez = cz + (rng() - 0.5) * this.BLOCK_L * 0.7;
-      this._addEnemy(new THREE.Vector3(cx + (rng() - 0.5) * 3, 0, ez), {});
+      this._addEnemy(new THREE.Vector3(cx + (rng() - 0.5) * 3, 0, ez), { archetype: fireteam[i] });
     }
   }
 
@@ -1036,11 +1041,12 @@ export class Level {
     this._addCrate(cx, cz + halfL * 0.6, rng);
     // Medium-range garrison patrolling the central lane (kept off the vantage).
     const garrison = this.profile.garrisonMin + (rng() < 0.5 ? this.profile.garrisonVar : 0);
+    const fireteam = this._director.nextSquad(garrison);
     for (let i = 0; i < garrison; i++) {
       const ex = cx + (rng() - 0.5) * 2;
       const ez = cz + (rng() - 0.5) * this.BLOCK_L * 0.7;
       if (Math.hypot(ex - cx, ez - platZ) < 3.5) continue; // not inside the vantage stack
-      this._addEnemy(new THREE.Vector3(ex, 0, ez), {});
+      this._addEnemy(new THREE.Vector3(ex, 0, ez), { archetype: fireteam[i] });
     }
   }
 
@@ -1077,9 +1083,10 @@ export class Level {
     // Ground garrison ringed in the plaza, clear of the tower base footprint.
     const rad = widths[0] / 2 + 3.5;        // outside the base (±7) → in the surrounding street
     const garrison = 3 + this.profile.garrisonMin;
+    const fireteam = this._director.nextSquad(garrison);
     for (let i = 0; i < garrison; i++) {
       const a = (i / garrison) * Math.PI * 2;
-      this._addEnemy(new THREE.Vector3(cx + Math.cos(a) * rad, 0, cz + Math.sin(a) * rad), {});
+      this._addEnemy(new THREE.Vector3(cx + Math.cos(a) * rad, 0, cz + Math.sin(a) * rad), { archetype: fireteam[i] });
     }
     // Ledge ambushers: one grunt holds each tier ring (y = ledge top), idling in
     // place until the player climbs into view, then engaging — floor-by-floor.

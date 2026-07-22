@@ -1,5 +1,6 @@
 import gameState from "./GameState.js";
 import { WEAPONS } from "./Weapon.js";
+import { createCatalogThumbnail } from "./CatalogVisuals.js";
 
 /**
  * ShopTerminal
@@ -396,6 +397,22 @@ export class ShopTerminal {
         padding: 12px 14px; display: flex; flex-direction: column; gap: 6px;
         box-shadow: inset 0 0 12px rgba(51,255,102,0.05);
       }
+      .${PREFIX}thumb {
+        position: relative; height: 82px; display: grid; place-items: center;
+        overflow: hidden; margin: -2px -4px 4px;
+        color: var(--p-cyan); background: rgba(79,214,255,0.035);
+        border: 1px solid rgba(79,214,255,0.22);
+        box-shadow: inset 0 0 22px rgba(79,214,255,0.05);
+      }
+      .${PREFIX}thumb::before {
+        content: "+"; position: absolute; left: 6px; top: 1px;
+        color: var(--p-green-d); font-size: 12px;
+      }
+      .${PREFIX}thumb svg { width: min(150px, 62%); height: 68px; }
+      .${PREFIX}thumb span {
+        position: absolute; right: 7px; bottom: 4px;
+        color: var(--p-green-d); font-size: 0.72em; letter-spacing: 0.14em;
+      }
       .${PREFIX}card-name {
         color: var(--p-amber); font-weight: 700; letter-spacing: 0.06em; font-size: 1.05em;
         text-shadow: 0 0 6px rgba(255,176,0,0.45);
@@ -727,6 +744,7 @@ export class ShopTerminal {
    */
   _weaponCard(w, nameById) {
     const card = this._el("div", `${PREFIX}card`);
+    card.appendChild(createCatalogThumbnail(document, w.id, `${PREFIX}thumb`));
     card.appendChild(this._el("div", `${PREFIX}card-name`, w.name || w.id || "Unknown"));
 
     const stat = WEAPON_STATS[w.id];
@@ -764,6 +782,7 @@ export class ShopTerminal {
    */
   _upgradeCard(u) {
     const card = this._el("div", `${PREFIX}card`);
+    card.appendChild(createCatalogThumbnail(document, u.id, `${PREFIX}thumb`));
     card.appendChild(this._el("div", `${PREFIX}card-name`, u.name || u.id || "Mod"));
     if (u.desc) card.appendChild(this._el("div", `${PREFIX}card-desc`, u.desc));
 
@@ -793,6 +812,7 @@ export class ShopTerminal {
    */
   _bootCard(b) {
     const card = this._el("div", `${PREFIX}card`);
+    card.appendChild(createCatalogThumbnail(document, b.id, `${PREFIX}thumb`));
     card.appendChild(this._el("div", `${PREFIX}card-name`, b.name || b.id || "Boots"));
     if (b.desc) card.appendChild(this._el("div", `${PREFIX}card-desc`, b.desc));
     card.appendChild(this._el("div", `${PREFIX}card-ability`, `ABILITY: ${b.ability || "—"}`));

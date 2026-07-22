@@ -1,5 +1,19 @@
 [
   {
+    "id": "prologue_occupation",
+    "kind": "prologue",
+    "title": "The Night the Old Lines Broke",
+    "date": "Belfast · 1998 · Three days after the ceasefire",
+    "speaker": "Resistance Briefing",
+    "faction": "resistance",
+    "requires": { "unlockedLevels": 1 },
+    "lines": [
+      "Armoured craft descended over Belfast and sealed the city before either side had learned how to live with peace.",
+      "Ruairí had carried messages through the republican streets. Davy guarded the road across the peace wall. The occupation took both neighbourhoods, so the old enemies built one resistance.",
+      "You are Ruairí. These are not undead and this is not an outbreak: an organised invasion force holds homes, civilians and the route to Divis. Breach their cordons, get people out and take the city back one street at a time."
+    ]
+  },
+  {
     "id": "intro_alliance",
     "speaker": "Ruairí",
     "faction": "ira",

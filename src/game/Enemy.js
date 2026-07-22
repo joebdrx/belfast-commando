@@ -16,11 +16,33 @@ const KICK_DAMAGE = 80;
 // enemy always settles back to the floor (never floats or sinks). Matches the
 // player's GRAVITY (Player.js) for consistent feel.
 const GRAVITY = 26;
+const CORPSE_LAND_TOL = 0.03;
 
 const _toPlayer = new THREE.Vector3();
 const _flat = new THREE.Vector3();
 const _tangent = new THREE.Vector3();
 const _prevPos = new THREE.Vector3(); // enemy position before AI move (collision resolve)
+const _corpseBounds = new THREE.Box3(); // one precise visual grounding probe per model corpse
+
+/**
+ * Highest surface a falling corpse may land on at its current X/Z. Unlike the
+ * live-character resolver, this has no head-bump branch: a corpse only needs a
+ * stable support plane. Surfaces above the corpse's feet are deliberately
+ * ignored so a nearby wall cannot pull a body up onto its roof.
+ *
+ * @param {THREE.Box3[]} boxes
+ * @param {number} x @param {number} z @param {number} feetY @param {number} radius
+ */
+export function corpseSupportY(boxes, x, z, feetY, radius) {
+  let support = 0;
+  for (const box of boxes || []) {
+    if (x <= box.min.x - radius || x >= box.max.x + radius) continue;
+    if (z <= box.min.z - radius || z >= box.max.z + radius) continue;
+    const top = box.max.y;
+    if (top <= feetY + CORPSE_LAND_TOL && top > support) support = top;
+  }
+  return support;
+}
 
 /**
  * Enemy
@@ -91,6 +113,8 @@ export class Enemy {
     // Death topple animation state
     this._toppleAxis = new THREE.Vector3(1, 0, 0);
     this._toppleAmt = 0;
+    this._corpseRestOffset = null;
+    this._corpseSupportY = 0;
 
     this.group = new THREE.Group();
     this.group.position.copy(position);
@@ -327,11 +351,31 @@ export class Enemy {
     this.alive = false;
     this.knock.set(0, 0, 0); // stop sliding once dead so the corpse settles in place
     this._vy = 0;
-    if (dir) {
-      _flat.set(dir.x, 0, dir.z).normalize();
-      // Topple around an axis perpendicular to the push.
-      this._toppleAxis.set(-_flat.z, 0, _flat.x);
+    this._corpseRestOffset = null;
+    // Freeze locomotion at a repeatable planted frame. Leaving a rig on an
+    // arbitrary airborne stride frame makes an otherwise-grounded body read as
+    // suspended above the street.
+    if (this.mixer) {
+      this.mixer.stopAllAction();
+      const planted = (this.actions && (this.actions.idle || this.actions.walk)) || null;
+      if (planted) {
+        planted.reset().play();
+        this.mixer.update(0);
+      }
     }
+
+    // A hitscan normally supplies a horizontal direction, but explosions and
+    // scripted damage can supply a vertical/zero vector. Three.js requires a
+    // non-zero normalized rotation axis; fall back to the enemy's facing so a
+    // bad direction can never produce a degenerate corpse transform.
+    if (dir) _flat.set(dir.x, 0, dir.z);
+    else _flat.set(0, 0, 0);
+    if (_flat.lengthSq() <= 1e-6) {
+      _flat.set(Math.sin(this.group.rotation.y), 0, Math.cos(this.group.rotation.y));
+    } else {
+      _flat.normalize();
+    }
+    this._toppleAxis.set(-_flat.z, 0, _flat.x).normalize();
   }
 
   /** Crossfade to a named animation clip (walk/run/idle). */
@@ -388,7 +432,20 @@ export class Enemy {
       // sink ~half its thickness below the floor. Lift the group as it lies down so
       // the corpse rests flat ON the ground instead of clipping through it. A corpse
       // killed mid-air falls to that rest height first.
-      const restY = this.radius * Math.sin(this._toppleAmt);
+      const boxes = ctx.level && ctx.level.getColliders ? ctx.level.getColliders() : [];
+      const supportY = this._corpseRestOffset == null
+        ? corpseSupportY(
+          boxes,
+          this.group.position.x,
+          this.group.position.z,
+          this.group.position.y,
+          this.radius,
+        )
+        : this._corpseSupportY;
+      const restOffset = this._corpseRestOffset == null
+        ? this.radius * Math.sin(this._toppleAmt)
+        : this._corpseRestOffset;
+      const restY = supportY + restOffset;
       if (this.group.position.y > restY) {
         this._vy -= GRAVITY * dt;
         this.group.position.y = Math.max(restY, this.group.position.y + this._vy * dt);
@@ -396,6 +453,28 @@ export class Enemy {
       } else {
         this.group.position.y = restY;
         this._vy = 0;
+      }
+      // Capsule radius is only an approximation of a varied rig/model's width.
+      // Once the topple and fall finish, run ONE precise bounds probe and correct
+      // the remaining visual gap. Cache that offset so this never becomes a
+      // per-frame allocation/traversal and the body remains stable thereafter.
+      if (
+        this._corpseRestOffset == null &&
+        this._rigRoot &&
+        this._toppleAmt >= Math.PI / 2 &&
+        Math.abs(this.group.position.y - restY) <= 1e-5
+      ) {
+        const weaponVisible = this._weapon ? this._weapon.visible : false;
+        if (this._weapon) this._weapon.visible = false; // ground the body, not a dangling blade tip
+        this.group.updateWorldMatrix(true, true);
+        _corpseBounds.setFromObject(this.group, true);
+        if (this._weapon) this._weapon.visible = weaponVisible;
+        if (!_corpseBounds.isEmpty() && Number.isFinite(_corpseBounds.min.y)) {
+          const correction = THREE.MathUtils.clamp(supportY - _corpseBounds.min.y, -this.height, this.height);
+          this.group.position.y += correction;
+          this._corpseSupportY = supportY;
+          this._corpseRestOffset = this.group.position.y - supportY;
+        }
       }
       // Knockback never moves a corpse (cleared in _die), but resolve the snapshot
       // anyway so a body shoved at the instant of death can't end up inside a wall.

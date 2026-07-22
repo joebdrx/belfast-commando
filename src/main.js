@@ -215,6 +215,7 @@ class Game {
       onSelectSector: (i) => { this._pendingSkipIndex = i; this._startCampaign(); },
       onUpgrades: () => {},
       onStoryLogs: () => {},
+      onOpenLaptopShop: () => this._openLaptopShop(),
       onExit: () => {},
       // Landline dial accepted a valid code → remember the skip target for the
       // next "Start Operation" (door or button). indexForCode already bypassed
@@ -860,6 +861,7 @@ class Game {
       const it = interactables[i];
       const el = document.createElement("div");
       el.className = "hub-label";
+      el.dataset.action = it.id;
       el.textContent = it.label;
       el.style.opacity = "0";
       this._hubLabelsEl.appendChild(el);
