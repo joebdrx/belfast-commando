@@ -10,20 +10,22 @@
 use tauri::Manager;
 
 // ---------------------------------------------------------------------------
-// Constants — change STEAM_APP_ID to your real Steam AppID before shipping.
+// Steam configuration
 // ---------------------------------------------------------------------------
 
-/// Spacewar (480) is a public test app available on most Steam installs.
-/// Replace with your game's AppID once registered in the Steamworks portal.
-/// Only referenced under the `steam` feature, so gate it to keep the default
-/// build warning-clean.
-#[cfg(feature = "steam")]
-const STEAM_APP_ID: u32 = 480;
+/// Read the registered AppID from the build environment. Valve's public Spacewar
+/// test ID (480) is rejected so it can never reach a release by accident.
+#[cfg(any(feature = "steam", test))]
+fn parse_steam_app_id(value: Option<&str>) -> Option<u32> {
+    value
+        .and_then(|raw| raw.trim().parse::<u32>().ok())
+        .filter(|id| *id > 0 && *id != 480)
+}
 
-/// Name of the Steam leaderboard to post scores to.
-/// Must match the leaderboard you created in the Steamworks partner portal.
 #[cfg(feature = "steam")]
-const STEAM_LEADERBOARD_NAME: &str = "HighScores";
+fn configured_steam_app_id() -> Option<u32> {
+    parse_steam_app_id(option_env!("BELFAST_STEAM_APP_ID"))
+}
 
 // ---------------------------------------------------------------------------
 // Shared response type
@@ -48,6 +50,8 @@ struct SteamResponse {
 pub struct SteamState {
     #[cfg(feature = "steam")]
     client: std::sync::Mutex<Option<steamworks::Client>>,
+    #[cfg(feature = "steam")]
+    app_id: Option<u32>,
 }
 
 // ---------------------------------------------------------------------------
@@ -112,85 +116,18 @@ fn unlock_achievement(
     }
 }
 
-/// Post a score to the game's Steam leaderboard.
-///
-/// The leaderboard lookup + upload are callback-driven (async in Steamworks
-/// terms).  A background thread pumps `run_callbacks()` so the callbacks fire
-/// without blocking this command; the command returns immediately with
-/// ok:true / "queued" once the request is registered.
-///
-/// Stub behaviour (steam feature OFF):
-///   Returns ok:false with a message explaining the build flag.
+/// Client-owned JavaScript scores are not a trustable leaderboard input. Keep
+/// the command for frontend compatibility, but fail closed until a trusted
+/// service verifies runs and submits through Steam's Web API.
 #[tauri::command]
-fn update_leaderboard(
-    state: tauri::State<'_, SteamState>,
-    score: i32,
-) -> SteamResponse {
-    #[cfg(feature = "steam")]
-    {
-        let guard = state.client.lock().unwrap();
-        match guard.as_ref() {
-            None => SteamResponse {
-                ok: false,
-                message: "Steam not running".into(),
-            },
-            Some(client) => {
-                // `UserStats` wraps a raw pointer and is !Send, so it cannot be
-                // captured by the 'static + Send closure that find_leaderboard
-                // requires.  Instead we clone the Client (which IS Send+Sync —
-                // it is Arc-based and has static_assert_send/sync checks in the
-                // steamworks crate) and call user_stats() *inside* the callback,
-                // which executes on the background run_callbacks thread.
-                let client_for_closure = client.clone();
-                let us = client.user_stats();
+fn update_leaderboard(_state: tauri::State<'_, SteamState>, _score: i32) -> SteamResponse {
+    leaderboard_disabled_response()
+}
 
-                us.find_leaderboard(STEAM_LEADERBOARD_NAME, move |result| {
-                    match result {
-                        Ok(Some(lb)) => {
-                            // Obtain a fresh UserStats on this (background) thread.
-                            let us2 = client_for_closure.user_stats();
-                            us2.upload_leaderboard_score(
-                                &lb,
-                                steamworks::UploadScoreMethod::KeepBest,
-                                score,
-                                &[],
-                                |r| {
-                                    if let Err(e) = r {
-                                        eprintln!("[steam] leaderboard upload error: {e:?}");
-                                    }
-                                },
-                            );
-                        }
-                        Ok(None) => {
-                            eprintln!(
-                                "[steam] leaderboard '{}' not found",
-                                STEAM_LEADERBOARD_NAME
-                            );
-                        }
-                        Err(e) => {
-                            eprintln!("[steam] find_leaderboard error: {e:?}");
-                        }
-                    }
-                });
-
-                SteamResponse {
-                    ok: true,
-                    message: format!("Score {score} queued for leaderboard upload"),
-                }
-            }
-        }
-    }
-
-    // Graceful stub when compiled without the steam feature.
-    #[cfg(not(feature = "steam"))]
-    {
-        let _ = state; // suppress unused-variable warning
-        SteamResponse {
-            ok: false,
-            message: format!(
-                "Steam disabled (build with --features steam): would post score {score}"
-            ),
-        }
+fn leaderboard_disabled_response() -> SteamResponse {
+    SteamResponse {
+        ok: false,
+        message: "Leaderboard disabled until runs are validated by a trusted service".into(),
     }
 }
 
@@ -210,7 +147,7 @@ fn steam_status(state: tauri::State<'_, SteamState>) -> SteamResponse {
             },
             Some(_) => SteamResponse {
                 ok: true,
-                message: format!("Steam running (AppID {})", STEAM_APP_ID),
+                message: format!("Steam running (AppID {})", state.app_id.unwrap_or_default()),
             },
         }
     }
@@ -241,35 +178,47 @@ pub fn run() {
 
             #[cfg(feature = "steam")]
             {
-                match steamworks::Client::init_app(STEAM_APP_ID) {
-                    Ok(client) => {
-                        eprintln!(
-                            "[steam] Initialised successfully (AppID {})",
-                            STEAM_APP_ID
-                        );
+                if let Some(app_id) = configured_steam_app_id() {
+                    match steamworks::Client::init_app(app_id) {
+                        Ok(client) => {
+                            eprintln!(
+                                "[steam] Initialised successfully (AppID {})",
+                                app_id
+                            );
 
-                        // Manage state first — commands can now access the client.
-                        app.manage(SteamState {
-                            client: std::sync::Mutex::new(Some(client.clone())),
-                        });
+                            // Manage state first — commands can now access the client.
+                            app.manage(SteamState {
+                                client: std::sync::Mutex::new(Some(client.clone())),
+                                app_id: Some(app_id),
+                            });
 
-                        // Background thread: pump Steamworks callbacks at ~20 Hz.
-                        // This is required for async APIs (leaderboard find/upload)
-                        // to dispatch their result closures.
-                        std::thread::spawn(move || loop {
-                            client.run_callbacks();
-                            std::thread::sleep(std::time::Duration::from_millis(50));
-                        });
+                            // Background thread: pump Steamworks callbacks at ~20 Hz.
+                            // This is required for async APIs (leaderboard find/upload)
+                            // to dispatch their result closures.
+                            std::thread::spawn(move || loop {
+                                client.run_callbacks();
+                                std::thread::sleep(std::time::Duration::from_millis(50));
+                            });
+                        }
+                        Err(e) => {
+                            // Steam not running or AppID not owned — expected in dev.
+                            eprintln!(
+                                "[steam] Init failed (Steam may not be running): {e:?}"
+                            );
+                            app.manage(SteamState {
+                                client: std::sync::Mutex::new(None),
+                                app_id: Some(app_id),
+                            });
+                        }
                     }
-                    Err(e) => {
-                        // Steam not running or AppID not owned — expected in dev.
-                        eprintln!(
-                            "[steam] Init failed (Steam may not be running): {e:?}"
-                        );
-                        app.manage(SteamState {
-                            client: std::sync::Mutex::new(None),
-                        });
-                    }
+                } else {
+                    eprintln!(
+                        "[steam] Disabled: set BELFAST_STEAM_APP_ID to the registered AppID (480 is rejected)"
+                    );
+                    app.manage(SteamState {
+                        client: std::sync::Mutex::new(None),
+                        app_id: None,
+                    });
                 }
             }
 
@@ -289,4 +238,25 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{leaderboard_disabled_response, parse_steam_app_id};
+
+    #[test]
+    fn steam_app_id_must_be_registered_and_non_test() {
+        assert_eq!(parse_steam_app_id(None), None);
+        assert_eq!(parse_steam_app_id(Some("")), None);
+        assert_eq!(parse_steam_app_id(Some("480")), None);
+        assert_eq!(parse_steam_app_id(Some("not-a-number")), None);
+        assert_eq!(parse_steam_app_id(Some("1234567")), Some(1_234_567));
+    }
+
+    #[test]
+    fn client_leaderboard_uploads_fail_closed() {
+        let response = leaderboard_disabled_response();
+        assert!(!response.ok);
+        assert!(response.message.contains("trusted service"));
+    }
 }

@@ -83,12 +83,25 @@ export class Audio {
     this._drumSource = null; // gapless looping bodhrán
     this._whistleTimer = null; // intermittent whistle scheduler
     this._ambientPhase = null;
+    this._backgrounded = false;
+    this._onVisibilityChange = null;
+
+    // A WebView can keep HTMLAudioElements alive while requestAnimationFrame is
+    // throttled. Own the lifecycle here so every music source is silenced when
+    // the native app/browser tab is backgrounded.
+    if (typeof document !== "undefined" && document.addEventListener) {
+      this._onVisibilityChange = () => {
+        const hidden = document.hidden || document.visibilityState === "hidden";
+        this.setBackgrounded(hidden);
+      };
+      document.addEventListener("visibilitychange", this._onVisibilityChange);
+    }
   }
 
   /** Must be called from a user gesture (Start click) to satisfy autoplay. */
   init() {
     if (this.ctx) {
-      this.ctx.resume();
+      if (!this._backgrounded) this.ctx.resume();
       return;
     }
     const AC = window.AudioContext || window.webkitAudioContext;
@@ -108,6 +121,7 @@ export class Audio {
     this._voiceGain.connect(this.master);
     this._loadSamples();
     this._initMusic();
+    if (this._backgrounded) this.ctx.suspend().catch(() => {});
   }
 
   /** Build the music sub-graph + the streamed ambience elements (once). All music
@@ -142,8 +156,8 @@ export class Audio {
    * (never a continuous loop). Safe to call before init() (no-op until audio is up).
    */
   setAmbient(phase) {
-    if (!this._ok() || !this._ambientEls) return;
     this._ambientPhase = phase;
+    if (!this._ok() || !this._ambientEls) return;
     this._startDrum(); // continuous in both menu + level
     if (phase === "HUB") {
       this._loop("menu", true);
@@ -196,6 +210,32 @@ export class Audio {
 
   _stopWhistle() {
     if (this._whistleTimer) { clearTimeout(this._whistleTimer); this._whistleTimer = null; }
+  }
+
+  /**
+   * Suspend every audio path while the app is in the background, then restore
+   * only the previously selected ambience after it becomes visible again.
+   */
+  async setBackgrounded(backgrounded) {
+    this._backgrounded = !!backgrounded;
+    if (this._backgrounded) {
+      if (this._ambientEls) {
+        for (const { el } of Object.values(this._ambientEls)) el.pause();
+      }
+      this._stopWhistle();
+      if (typeof window !== "undefined" && window.speechSynthesis) {
+        try { window.speechSynthesis.cancel(); } catch (_) { /* unavailable */ }
+      }
+      if (this.ctx && this.ctx.state !== "suspended") {
+        try { await this.ctx.suspend(); } catch (_) { /* platform denied */ }
+      }
+      return;
+    }
+
+    if (!this.enabled || !this.ctx) return;
+    try { await this.ctx.resume(); } catch (_) { return; }
+    // A second visibility event may have arrived while resume() was pending.
+    if (!this._backgrounded && this._ambientPhase) this.setAmbient(this._ambientPhase);
   }
 
   /** Fetch + decode every MP3 in SAMPLES into this.buffers (best-effort). */
@@ -602,6 +642,6 @@ export class Audio {
   }
 
   _ok() {
-    return this.enabled && this.ctx;
+    return this.enabled && this.ctx && !this._backgrounded;
   }
 }

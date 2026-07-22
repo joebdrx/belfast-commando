@@ -64,6 +64,17 @@ describe("authored campaign map blueprints", () => {
     });
   });
 
+  it("reproduces enemy positions and archetypes from the same layout seed", () => {
+    const first = new Level(new THREE.Scene(), 4, null, 0xdecafbad);
+    const second = new Level(new THREE.Scene(), 4, null, 0xdecafbad);
+    const roster = (level) => level.enemies.map((enemy) => ({
+      archetype: enemy.archetype,
+      position: enemy.position.toArray(),
+    }));
+
+    expect(roster(second)).toEqual(roster(first));
+  });
+
   it("gives each sector an exclusive landmark/route vocabulary", () => {
     const kinds = (index) => new Set(MAP_BLUEPRINTS[index].blocks.map((block) => block.kind));
     expect(kinds(0).has("courtyard")).toBe(true);

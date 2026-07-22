@@ -6,6 +6,7 @@ import { sectorProfile } from "./SectorProfile.js";
 import { mapBlueprint } from "./MapBlueprints.js";
 import { Victim } from "./Victim.js";
 import { buildFacade } from "./BuildingFacade.js";
+import { instanceStaticMeshes } from "./StaticInstancing.js";
 import FURNITURE from "../data/furniture.json";
 import { BASE } from "../utils/constants.js";
 
@@ -177,9 +178,9 @@ export class Level {
     this.alarmRaised = false;
     this._combatTime = 0;
     this._initialEnemies = null;
-    // Archetype mix scales with sector index. Deterministic enough; uses the
-    // global RNG so each run varies. Drives _addEnemy when no archetype is given.
-    this._director = new EnemyDirector(index || 0);
+    // Created once the seeded layout stream exists in _buildProcedural. Enemy
+    // positions AND archetypes must derive from the same run seed.
+    this._director = null;
     /** @type {Array<{root:THREE.Object3D, hitbox:THREE.Box3, collider:THREE.Box3, pos:THREE.Vector3, exploded:boolean}>} */
     this.barrels = [];
     /** @type {Array<{root:THREE.Object3D, hitbox:THREE.Box3, collider:THREE.Box3, pos:THREE.Vector3, opened:boolean, loot:object}>} */
@@ -512,6 +513,7 @@ export class Level {
     this.group.add(floor);
 
     const rng = mulberry32(this.layoutSeed);
+    this._director = new EnemyDirector(this.index || 0, rng);
 
     // --- Authored sector skeleton. ----------------------------------------
     for (const plan of this.blueprint.blocks) {
@@ -579,6 +581,18 @@ export class Level {
 
     // --- Rescuable victims held by enemies. --------------------------------
     this._spawnVictims(rng);
+
+    // Collapse byte-identical static geometry/material pairs into hardware
+    // instances. Gameplay-owned roots remain independent and movable.
+    this.renderOptimization = instanceStaticMeshes(this.group, {
+      excludeRoots: [
+        ...this.doors.map((door) => door.pivot),
+        ...this.barrels.map((barrel) => barrel.root),
+        ...this.crates.map((crate) => crate.root),
+        ...this.enemies.map((enemy) => enemy.group),
+        ...this.victims.map((victim) => victim.group),
+      ],
+    });
   }
 
   /**
@@ -1967,7 +1981,7 @@ export class Level {
     // `_materials` may be owned by the AssetManager and reused across levels —
     // only dispose them if THIS level created its own flat-colour fallbacks.
     const shared = new Set(Object.values(this._materials));
-    if (!this.assets) shared.forEach((m) => m.dispose());
+    if (!this.assets) shared.forEach((m) => m && m.dispose());
     // Dispose victims (geometry/materials they own, if any).
     for (const v of this.victims) v.dispose(this.scene);
     this.group.traverse((o) => {

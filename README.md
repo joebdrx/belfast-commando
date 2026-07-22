@@ -5,7 +5,8 @@ A fast, kick-heavy first-person shooter MVP set in modern-day Belfast — inspir
 kills for a bigger multiplier, and reach the exit.
 
 Built with **Three.js** (engine/rendering), **Vite** (dev/build), and **Tauri v2**
-(native desktop wrapper), with optional **Steamworks** achievements + leaderboards.
+(native desktop wrapper), with optional **Steamworks** achievements. Public
+leaderboard uploads are disabled until runs can be validated by a trusted service.
 
 <img width="500" height="550" alt="belfast-survivor-final" src="https://raw.githubusercontent.com/joebdrx/belfast-commando/refs/heads/master/belfast-survivor-final.png" />
 
@@ -60,6 +61,9 @@ npm run tauri dev
 # Production build:
 npm run tauri build
 ```
+
+Steam-enabled builds must set `BELFAST_STEAM_APP_ID` to the game's registered
+AppID at compile time; the public Spacewar test ID (`480`) is rejected.
 
 ### Linux system dependencies (Tauri v2)
 
