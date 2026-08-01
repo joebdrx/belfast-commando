@@ -36,8 +36,13 @@ export class RetroMaterial {
   applyTextureFilter(tex) {
     if (!tex) return tex;
     tex.magFilter = THREE.NearestFilter;
-    tex.minFilter = THREE.LinearMipmapLinearFilter;
-    tex.generateMipmaps = true;
+    // KTX2/Basis textures carry mipmaps baked at encode time — the GPU cannot
+    // generate them for a compressed format, and asking makes three drop to a
+    // non-mipmapped minFilter (back to the sparkle this filter exists to fix).
+    const baked = tex.isCompressedTexture;
+    tex.generateMipmaps = !baked;
+    tex.minFilter =
+      baked && tex.mipmaps?.length <= 1 ? THREE.LinearFilter : THREE.LinearMipmapLinearFilter;
     tex.needsUpdate = true;
     return tex;
   }

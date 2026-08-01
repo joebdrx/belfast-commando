@@ -249,7 +249,7 @@ export class Hub {
     const panels = [
       // Republican — back wall (z≈-5.85), above the bar, facing +Z into the room.
       // (The loyalist/Ulster mural on the left wall was removed per request.)
-      { url: `${BASE}murals/republican.png`, pos: [-1.4, 1.95, -5.84], rotY: 0 },
+      { url: `${BASE}murals/republican.jpg`, pos: [-1.4, 1.95, -5.84], rotY: 0 },
     ];
     for (const p of panels) {
       loader.load(

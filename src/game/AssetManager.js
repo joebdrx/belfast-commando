@@ -1,6 +1,8 @@
 import * as THREE from "three";
 import { RGBELoader } from "three/examples/jsm/loaders/RGBELoader.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { DRACOLoader } from "three/examples/jsm/loaders/DRACOLoader.js";
+import { KTX2Loader } from "three/examples/jsm/loaders/KTX2Loader.js";
 import { MeshoptDecoder } from "three/examples/jsm/libs/meshopt_decoder.module.js";
 import { clone as cloneSkeleton } from "three/examples/jsm/utils/SkeletonUtils.js";
 import { RetroMaterial } from "./RetroMaterial.js";
@@ -105,7 +107,7 @@ const SPRITES = {
 };
 
 // Belfast sectarian wall murals, applied to building walls.
-const MURALS = ["murals/republican.png", "murals/loyalist.png"];
+const MURALS = ["murals/republican.jpg", "murals/loyalist.jpg"];
 
 // Pre-built city model (public/models/city_map.glb, produced by
 // scripts/optimize-map.sh). We do NOT use it as level geometry — its buildings
@@ -119,7 +121,15 @@ export class AssetManager {
   constructor(renderer) {
     this.renderer = renderer;
     this.texLoader = new THREE.TextureLoader();
-    this.gltfLoader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
+    // Compressed-asset decoders. scripts/compress-assets.sh writes Draco geometry
+    // + KTX2/Basis textures; meshopt stays wired because the anim_*.glb clips
+    // still ship as meshopt. detectSupport() must see the renderer before any
+    // .ktx2 load — it picks the GPU's transcode target (BC7/ASTC/ETC/…).
+    this.ktx2Loader = new KTX2Loader().setTranscoderPath(`${BASE}basis/`).detectSupport(renderer);
+    this.gltfLoader = new GLTFLoader()
+      .setMeshoptDecoder(MeshoptDecoder)
+      .setDRACOLoader(new DRACOLoader().setDecoderPath(`${BASE}draco/`))
+      .setKTX2Loader(this.ktx2Loader);
     this.retro = new RetroMaterial({ targetHeight: 240 });
     this.retro.setViewport(window.innerWidth, window.innerHeight);
     this.materials = {};
@@ -153,9 +163,28 @@ export class AssetManager {
     return this.materials[slug] || new THREE.MeshStandardMaterial({ color: 0x888888 });
   }
 
-  _loadTexture(url, { srgb = false, repeat = [1, 1] } = {}) {
+  /**
+   * Load a texture. Pass `ktx2: true` for the assets compress-assets.sh actually
+   * converts — it swaps the extension and still falls back to the original for
+   * uncompressed checkouts.
+   *
+   * This is opt-in rather than "try .ktx2 for everything" on purpose: a missing
+   * file is not a 404 here. Vite's preview server (and any SPA host) answers an
+   * unknown path with index.html and a 200, so a blind probe "succeeds", hands
+   * KTX2Loader a page of HTML, and only recovers because parsing it throws. One
+   * wasted request per texture, and the fallback rests on a parse error rather
+   * than on knowing what exists.
+   */
+  async _loadTexture(url, opts = {}) {
+    const ktx2 = opts.ktx2 ? url.replace(/\.(jpg|jpeg|png)$/i, ".ktx2") : url;
+    if (ktx2 !== url) return (await this._fetchTexture(ktx2, opts)) ?? this._fetchTexture(url, opts);
+    return this._fetchTexture(url, opts);
+  }
+
+  _fetchTexture(url, { srgb = false, repeat = [1, 1] } = {}) {
     return new Promise((resolve) => {
-      this.texLoader.load(
+      const loader = url.endsWith(".ktx2") ? this.ktx2Loader : this.texLoader;
+      loader.load(
         url,
         (tex) => {
           tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
@@ -182,9 +211,9 @@ export class AssetManager {
     const jobs = Object.entries(DEFS).map(async ([slug, def]) => {
       const dir = `${BASE}textures/${slug}/`;
       const [diffuse, normal, rough] = await Promise.all([
-        this._loadTexture(`${dir}diffuse.jpg`, { srgb: true, repeat: def.repeat }),
-        this._loadTexture(`${dir}normal.jpg`, { repeat: def.repeat }),
-        this._loadTexture(`${dir}rough.jpg`, { repeat: def.repeat }),
+        this._loadTexture(`${dir}diffuse.jpg`, { srgb: true, ktx2: true, repeat: def.repeat }),
+        this._loadTexture(`${dir}normal.jpg`, { ktx2: true, repeat: def.repeat }),
+        this._loadTexture(`${dir}rough.jpg`, { ktx2: true, repeat: def.repeat }),
       ]);
       const mat = this.materials[slug];
       if (diffuse) {
@@ -215,7 +244,7 @@ export class AssetManager {
 
   /** Load the photo face that gets billboarded onto each enemy's head. */
   async loadFace() {
-    const tex = await this._loadTexture(`${BASE}non-1.png`, { srgb: true });
+    const tex = await this._loadTexture(`${BASE}non-1.png`, { srgb: true, ktx2: true });
     if (tex) {
       tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
       this.faceTexture = tex;
@@ -224,7 +253,7 @@ export class AssetManager {
 
   /** Load the grimy tenement facade used to clad the long building side walls. */
   async loadHouseSide() {
-    const tex = await this._loadTexture(`${BASE}house_side.png`, { srgb: true });
+    const tex = await this._loadTexture(`${BASE}house_side.png`, { srgb: true, ktx2: true });
     if (tex) {
       tex.wrapS = tex.wrapT = THREE.RepeatWrapping; // tiled along the terrace
       this.houseSideTexture = tex;

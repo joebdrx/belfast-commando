@@ -30,7 +30,32 @@ or `git filter-branch --env-filter`) so no other email reaches the remote.
 - `npm run dev` — Vite dev server at `http://localhost:1420`
 - `npm run build` — production web build → `dist/`
 - `npm test` — Vitest suite (run before committing)
+- `npm run check:assets` — verify compressed assets against the originals in git
 - `npm run tauri dev` / `npm run tauri build` — native desktop app
+
+### Asset compression
+
+`public/` ships pre-compressed: **Draco** geometry and **KTX2/Basis** textures,
+produced by `scripts/compress-assets.sh` (needs `ktx` from KTX-Software v4+ and
+ImageMagick). It runs *after* the `optimize-*.sh` scripts and rewrites `public/`
+in place — the inputs are tracked in git, so `git checkout public/` starts over.
+Re-running it on already-compressed files re-encodes them lossily.
+
+Two rules that are easy to break:
+
+- **Only `AssetManager` can read `.ktx2`.** `Hub.js`, `Level.js` and `Decals.js`
+  build their own `THREE.TextureLoader`, and `TextureLoader.load()` returns a
+  texture synchronously while `KTX2Loader.load()` does not. Textures those files
+  load must stay `.jpg`/`.png`. `AssetManager._loadTexture` only reaches for the
+  `.ktx2` twin when passed `ktx2: true` — deliberately opt-in, because an SPA host
+  answers a missing path with `index.html` and a 200, so blind probing "succeeds".
+- **The decoders in `public/basis/` and `public/draco/` must ship.** They're
+  copied from `three/examples/jsm/libs/`; without them nothing loads.
+
+Always run `npm run check:assets` after compressing. It re-reads every model and
+texture against the pre-compression version in git and fails on geometry loss or
+a PSNR drop — it exists because a bad output path once turned every model into a
+3.6KB JSON stub while the byte counts looked like a great result.
 
 ## Releases — cross-platform desktop builds (GitHub Actions)
 
